@@ -13,6 +13,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $cargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
 $manifest = Join-Path $root "Cargo.toml"
+# cargo takes .cargo\config.toml (the statically linked C runtime) from the folder it is started
+# in, not from the manifest's folder: start it in the project's root, wherever this was run from.
+Set-Location -LiteralPath $root
 
 & $cargo build --workspace --release --manifest-path $manifest
 if ($LASTEXITCODE -ne 0) { Write-Host "The build failed; nothing was installed."; exit 1 }
