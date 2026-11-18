@@ -1,5 +1,7 @@
 # Builds Bevel95 and runs its tests on Windows for every push and pull request.
-# Kept minimal on purpose: it has not been tried on a hosted runner yet.
+# The Rust version is fixed to the one the project is developed with, so that a new
+# compiler's new lints cannot turn this red by themselves. Raise it here when you raise
+# your own toolchain.
 name: Build and test
 
 on:
@@ -14,8 +16,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Rust stable (MSVC)
-        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: Rust 1.99.1 (MSVC)
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy && rustup default 1.99.1
       - name: Test
         run: cargo test --workspace
       - name: Clippy

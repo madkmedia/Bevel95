@@ -334,9 +334,9 @@ impl Tree {
     /// them; here the unread ones are read as they open).
     pub fn open_all(&mut self, i: usize, page: usize) {
         let end = self.end_of(i);
-        for j in i..end {
-            if self.nodes[j].has_rows {
-                self.nodes[j].open = true;
+        for node in self.nodes.get_mut(i..end).into_iter().flatten() {
+            if node.has_rows {
+                node.open = true;
             }
         }
         self.reveal_rows(i, page);
