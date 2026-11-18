@@ -1,0 +1,11 @@
+[package]
+name = "bevel-art"
+description = "Windows 95, 98 and 2000's own pictures, sounds and logos that Bevel95 shows: data only"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+# No `license`: Windows' own pictures and sounds are Microsoft's, not covered by the project's
+# licence (README.md, "License").
+
+# Data and nothing else: no dependencies, on purpose.
+[dependencies]

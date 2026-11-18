@@ -1,0 +1,13 @@
+* text=auto
+*.png binary
+*.pcm binary
+*.glyphs binary
+*.i4 binary
+*.palrle binary
+*.rgba binary
+# Windows' pictures, sounds and fonts (bevel-art): never converted
+art/assets/** binary
+# font fixtures are ASCII art; keep LF so they diff cleanly
+*.font text eol=lf
+# the 16-color table is read by position (core::colors16): keep LF
+core/assets/vga-9x.txt text eol=lf

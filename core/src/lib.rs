@@ -1,0 +1,61 @@
+//! Platform-independent core of the Bevel95 taskbar: theme numbers, layout, and painting
+//! into a 1× pixel framebuffer. No `unsafe` and no Windows types, so all of it runs (and is
+//! tested) headless with `cargo test`; the platform layer only shows the pixels.
+#![forbid(unsafe_code)]
+
+pub mod about;
+mod art;
+pub mod banner;
+pub mod calculator;
+pub mod bar_menu;
+mod best_fit;
+pub mod bevel_icon;
+pub mod colors16;
+mod colors16_art;
+pub mod config;
+pub mod datetime;
+pub mod delete_confirm;
+pub mod desktop;
+pub mod desktop_art;
+pub mod desktop_icons;
+pub mod dialog;
+pub mod disk_box;
+pub mod drag;
+pub mod droplist;
+pub mod fb;
+pub mod find;
+pub mod flag;
+pub mod flyout;
+pub mod folder;
+pub mod gui_watch;
+pub mod help;
+pub mod html_help;
+pub mod icons;
+pub mod kit;
+pub mod layout;
+pub mod minefield;
+pub mod package;
+pub mod paint;
+pub mod programs;
+pub mod properties;
+pub mod quick;
+pub mod remove;
+pub mod rename_warning;
+pub mod scale;
+mod scroll;
+pub mod setup;
+mod shell_about;
+pub mod solitaire;
+pub mod start;
+pub mod status;
+pub mod tasks;
+pub mod text;
+pub mod theme;
+pub mod timezone;
+pub mod tooltip;
+pub mod tray_icon;
+pub mod tree;
+pub mod volume;
+pub mod window;
+pub mod window_icons;
+pub mod window_menu;

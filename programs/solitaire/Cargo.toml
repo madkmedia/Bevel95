@@ -1,0 +1,33 @@
+[package]
+name = "solitaire"
+build = "../../tools/build/program_icon.rs"
+description = "Solitaire for Bevel95's Windows 95, 98, and 2000 looks"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[test]]
+name = "program_icon"
+path = "../../platform/tests/program_icon.rs"
+
+[build-dependencies]
+bevel-core = { path = "../../core" }
+
+[dev-dependencies]
+# The tests never write the real data folder (decisions.md, "Milestone 1 decisions"): in a test
+# build the log and every state file go to a scratch folder.
+bevel-winkit = { path = "../../platform/winkit", features = ["test-scratch"] }
+
+[dependencies]
+bevel-core = { path = "../../core" }
+bevel-winkit = { path = "../../platform/winkit" }
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

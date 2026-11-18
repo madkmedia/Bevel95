@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in Bevel95 behaves or looks wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting. Bevel95's log holds no window titles or file names, but read
+        the lines before you paste them and remove anything you would rather not share.
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: "Settings > System > About, under Windows specifications (for example: Windows 11 Pro 24H2, build 26100)"
+    validations:
+      required: true
+  - type: input
+    id: bevel95
+    attributes:
+      label: Bevel95 version
+      description: "Right-click the taskbar > Bevel95 > About Bevel95 (for example: 0.1.0, build 1a2b3c4)"
+  - type: dropdown
+    id: look
+    attributes:
+      label: Look
+      options:
+        - Windows 95
+        - Windows 98
+        - Windows 2000
+    validations:
+      required: true
+  - type: input
+    id: size
+    attributes:
+      label: Size, colors and screens
+      description: "Bevel95's size (Auto, 1, 2, 3), True Color or 16 Colors, your screen scale (100%, 150%...) and how many screens"
+  - type: textarea
+    id: did
+    attributes:
+      label: What you did
+      description: Step by step, so that someone else can do the same.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: saw
+    attributes:
+      label: What you saw instead
+      description: A picture helps (only of Bevel95's own windows, if you can).
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The log's last lines
+      description: "Open %LOCALAPPDATA%\\Bevel95\\bevel95.log (a portable copy keeps it next to its bevel95.exe) and paste its last 30 lines."
+      render: text

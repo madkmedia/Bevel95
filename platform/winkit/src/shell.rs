@@ -1,0 +1,399 @@
+//! What the shell knows about the owner's files, for the classic desktop's icons and the folder
+//! windows: the known folders, Explorer's own name and type name of a file, its 32×32 picture
+//! (from the shell's list of large icons, without the shortcut arrow, which each look draws in its
+//! own way), and one icon's whole item. Nothing here writes anything.
+
+use std::cell::Cell;
+use std::ffi::c_void;
+use std::path::{Path, PathBuf};
+use std::ptr::null_mut;
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use bevel_core::desktop_icons::{Item, Picture, ShellPicture};
+use bevel_core::fb::Icon;
+use windows_sys::Win32::System::Com::CoTaskMemFree;
+use windows_sys::Win32::UI::Shell::{
+    FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_PublicDesktop, KF_FLAG_DEFAULT, SHFILEINFOW, SHGFI_DISPLAYNAME, SHGFI_SYSICONINDEX,
+    SHGFI_TYPENAME, SHGFI_USEFILEATTRIBUTES, SHGetFileInfoW, SHGetImageList, SHGetKnownFolderPath, SHIL_LARGE, SHIL_SMALL,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, HICON};
+use windows_sys::core::{GUID, HRESULT, PWSTR};
+
+use crate::font::DpiUnaware;
+use crate::log::log;
+use crate::util::wide;
+
+/// A known folder's path (FOLDERID_Desktop and the like).
+pub fn known_folder(id: &GUID) -> Option<PathBuf> {
+    let mut path: PWSTR = null_mut();
+    // SAFETY: Windows allocates the string; it is read up to its terminating null and then
+    // freed with CoTaskMemFree, as the API requires.
+    unsafe {
+        let ok = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT as u32, null_mut(), &mut path) == 0 && !path.is_null();
+        let result = ok.then(|| {
+            let len = (0..).take_while(|&i| *path.add(i) != 0).count();
+            PathBuf::from(String::from_utf16_lossy(std::slice::from_raw_parts(path, len)))
+        });
+        CoTaskMemFree(path as *const c_void);
+        result
+    }
+}
+
+/// The person's own folder (C:\Users\<name>): where Windows' Run starts programs.
+pub fn profile_folder() -> Option<PathBuf> {
+    known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Profile)
+}
+
+/// Every Bevel95 program makes the person's own folder its working folder when it starts (the
+/// second safety review of 2026-11-18, C2): started by the desktop shortcut it was Bevel95's own
+/// data folder (or System32 by the Run entry), so a relative name typed into Run or an address
+/// bar, and every program started from Bevel95 without a shortcut of its own, met Bevel95's
+/// files. Nothing of Bevel95 uses the working folder (every path it opens is whole). A program
+/// started from a shortcut still gets the shortcut's "Start in".
+pub fn start_in_profile() {
+    let Some(profile) = profile_folder() else {
+        log("the person's own folder was not found; the working folder stays as it was");
+        return;
+    };
+    if let Err(e) = std::env::set_current_dir(&profile) {
+        log(&format!("could not make the person's own folder the working folder ({e})"));
+    }
+}
+
+/// Windows' own program or panel `name` (control.exe, ncpa.cpl, SndVol.exe, ...) by its whole path
+/// in Windows' system folder: never a file of that name in the working folder (the person's own
+/// folder, where any program may write) or elsewhere on the search path (the third safety review
+/// of 2026-11-18, C1). What the person types into Run or an address bar keeps Windows' own rules.
+pub fn system_program(name: &str) -> String {
+    let mut buf = [0u16; 260];
+    // SAFETY: a buffer of the length passed; Windows writes at most that many characters.
+    let n = unsafe { windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32) } as usize;
+    let dir = if n > 0 && n < buf.len() {
+        PathBuf::from(String::from_utf16_lossy(&buf[..n]))
+    } else {
+        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from("C:\\Windows"), PathBuf::from).join("System32")
+    };
+    dir.join(name).to_string_lossy().into_owned()
+}
+
+/// The owner's Documents folder.
+pub fn documents_folder() -> Option<PathBuf> {
+    known_folder(&FOLDERID_Documents)
+}
+
+/// The owner's Desktop folder (where the desktop's New makes things).
+pub fn desktop_folder() -> Option<PathBuf> {
+    known_folder(&FOLDERID_Desktop)
+}
+
+/// The desktop folder every user shares (its items show on the desktop too).
+pub fn public_desktop_folder() -> Option<PathBuf> {
+    known_folder(&FOLDERID_PublicDesktop)
+}
+
+/// Explorer's display name and type name of a file.
+pub fn names(path: &str) -> Option<(String, String)> {
+    let p = wide(path);
+    let mut info = SHFILEINFOW::default();
+    // SAFETY: a null-terminated path and a correctly sized out-struct; nothing to free.
+    let ok = unsafe { SHGetFileInfoW(p.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_DISPLAYNAME | SHGFI_TYPENAME) };
+    if ok == 0 {
+        return None;
+    }
+    let text = |buf: &[u16]| String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())]);
+    Some((text(&info.szDisplayName), text(&info.szTypeName)))
+}
+
+/// Explorer's name for a file (as the desktop and the folder windows show it).
+pub fn display_name(path: &str) -> Option<String> {
+    names(path).map(|(name, _)| name)
+}
+
+/// IID_IImageList, from CommonControls.h.
+const IID_IMAGE_LIST: GUID = GUID::from_u128(0x46EB5926_582E_4017_9FDF_E8998DAA0950);
+/// IImageList::GetIcon: the 11th method (after IUnknown's three and Add, ReplaceIcon,
+/// SetOverlayImage, Replace, AddMasked, Draw, Remove).
+const GET_ICON_SLOT: usize = 10;
+type GetIcon = unsafe extern "system" fn(*mut c_void, i32, u32, *mut HICON) -> HRESULT;
+/// ILD_TRANSPARENT.
+const ILD_TRANSPARENT: u32 = 1;
+
+thread_local! {
+    /// The shell's list of large (32×32) icons (a COM IImageList, kept for the life of the
+    /// thread), asked for on each thread that reads pictures.
+    static LARGE_IMAGE_LIST: Cell<*mut c_void> = const { Cell::new(null_mut()) };
+}
+
+/// Where the shell keeps the picture of `path` in its list of icons.
+fn icon_index(path: &str) -> Option<i32> {
+    let p = wide(path);
+    let mut info = SHFILEINFOW::default();
+    // SAFETY: a null-terminated name and a correctly sized out-struct; with SYSICONINDEX nothing
+    // of the result needs freeing.
+    let found = unsafe { SHGetFileInfoW(p.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX) } != 0;
+    found.then_some(info.iIcon)
+}
+
+/// The 32×32 icon the shell shows for a file, without the shortcut arrow (the looks draw their
+/// own), read at 96 DPI from the shell's list of large icons. `None` when the shell has none. Not
+/// cached: the callers keep what they read. The thread needs COM (`com::init`).
+pub fn large_file_icon(path: &str) -> Option<Icon> {
+    let _dpi = DpiUnaware::enter();
+    let list = LARGE_IMAGE_LIST.with(|cell| {
+        if cell.get().is_null() {
+            let mut list: *mut c_void = null_mut();
+            // SAFETY: a valid IID and out-pointer; the reference is kept for good.
+            if unsafe { SHGetImageList(SHIL_LARGE as i32, &IID_IMAGE_LIST, &mut list) } == 0 {
+                cell.set(list);
+            } else {
+                log("SHGetImageList (large) failed: the owner's items get no pictures");
+            }
+        }
+        cell.get()
+    });
+    let index = icon_index(path)?;
+    if list.is_null() {
+        return None;
+    }
+    // SAFETY: the documented IImageList, called through its vtable; the icon is ours to destroy.
+    unsafe {
+        let get_icon: GetIcon = crate::com::method(list, GET_ICON_SLOT);
+        let mut handle: HICON = null_mut();
+        if get_icon(list, index, ILD_TRANSPARENT, &mut handle) != 0 || handle.is_null() {
+            return None;
+        }
+        let pixels = crate::icon::icon_pixels_at(handle, 32);
+        DestroyIcon(handle);
+        pixels
+    }
+}
+
+/// One file or folder as it was seen on the disk: its place, whether it is a folder, its size and
+/// the time of its last change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seen {
+    pub path: PathBuf,
+    pub folder: bool,
+    pub size: u64,
+    pub modified: u64,
+    /// The file's attributes (a read-only or system folder may have a name of its own:
+    /// desktop.ini's).
+    pub attributes: u32,
+}
+
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+
+/// What `list_folder` found besides the items shown: how many it left out (Windows 95's status
+/// bar counted them: "plus N hidden") and the size of all files, hidden ones too (its status bar
+/// added those up).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hidden {
+    pub count: usize,
+    pub total_size: u64,
+}
+
+/// Everything in `dir` that Explorer shows (not hidden, not system files such as desktop.ini), in
+/// no particular order, and what it leaves out. `None` if the folder could not be read.
+pub fn list_folder(dir: &Path) -> Option<(Vec<Seen>, Hidden)> {
+    use std::os::windows::fs::MetadataExt;
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut out = Vec::new();
+    let mut hidden = Hidden::default();
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_dir() {
+            hidden.total_size += meta.len();
+        }
+        if meta.file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0 {
+            hidden.count += 1;
+            continue;
+        }
+        out.push(Seen { path: entry.path(), folder: meta.is_dir(), size: meta.len(), modified: meta.last_write_time(), attributes: meta.file_attributes() });
+    }
+    Some((out, hidden))
+}
+
+/// The icon of a file or folder: Explorer's name for it (without ".lnk", and without the
+/// extension where Explorer hides it), its type, and its picture: the look's own folder for a
+/// folder, today's shell picture otherwise.
+pub fn read_item(s: &Seen) -> Item {
+    let path = s.path.to_string_lossy().into_owned();
+    let (name, type_name) = names(&path).unwrap_or_else(|| {
+        let name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        (name, String::new())
+    });
+    let extension = s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let shortcut = !s.folder && (extension == "lnk" || extension == "url");
+    let picture = if s.folder { Picture::Folder } else { Picture::Own(large_file_icon(&path)) };
+    Item { id: path, name, picture, shortcut, folder: s.folder, type_name, size: s.size, modified: s.modified }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A folder of thousands of files: names at once, pictures afterwards, each kind's picture once.
+
+const FILE_ATTRIBUTE_READONLY: u32 = 0x1;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+
+/// What the shell says about a kind of file without opening any (SHGetFileInfo with
+/// SHGFI_USEFILEATTRIBUTES on a made-up name): whether Explorer shows its extension, its type's
+/// name, and where its usual picture is in the shell's list of icons.
+#[derive(Clone, Debug)]
+pub struct Kind {
+    pub shows_extension: bool,
+    pub type_name: String,
+    pub index: Option<i32>,
+}
+
+/// The kind of files ending in `.extension` (lower case; empty: none), or of folders.
+pub fn kind_of(extension: &str, folder: bool) -> Kind {
+    let probe = if folder || extension.is_empty() { "x".to_string() } else { format!("x.{extension}") };
+    let p = wide(&probe);
+    let mut info = SHFILEINFOW::default();
+    let attributes = if folder { FILE_ATTRIBUTE_DIRECTORY } else { FILE_ATTRIBUTE_NORMAL };
+    let flags = SHGFI_USEFILEATTRIBUTES | SHGFI_DISPLAYNAME | SHGFI_TYPENAME | SHGFI_SYSICONINDEX;
+    // SAFETY: a null-terminated name and a correctly sized out-struct; nothing to free.
+    let ok = unsafe { SHGetFileInfoW(p.as_ptr(), attributes, &mut info, size_of::<SHFILEINFOW>() as u32, flags) } != 0;
+    let text = |buf: &[u16]| String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())]);
+    if !ok {
+        return Kind { shows_extension: true, type_name: String::new(), index: None };
+    }
+    Kind { shows_extension: text(&info.szDisplayName) == probe, type_name: text(&info.szTypeName), index: Some(info.iIcon) }
+}
+
+/// The shell's pictures, read once for each place in its list of icons and shared by every item
+/// that shows it. At most `STORE_MOST` are kept; the least used go first (items that show one keep
+/// their own reference until they go).
+pub const STORE_MOST: usize = 2048;
+
+struct Store {
+    pictures: HashMap<i32, (Arc<ShellPicture>, u64)>,
+    clock: u64,
+}
+
+static STORE: Mutex<Option<Store>> = Mutex::new(None);
+
+/// How many pictures the store holds now (for the log and the leak checks).
+pub fn store_size() -> usize {
+    STORE.lock().ok().and_then(|s| s.as_ref().map(|s| s.pictures.len())).unwrap_or(0)
+}
+
+thread_local! {
+    /// The shell's list of small (16×16) icons, as `LARGE_IMAGE_LIST`.
+    static SMALL_IMAGE_LIST: Cell<*mut c_void> = const { Cell::new(null_mut()) };
+}
+
+/// The picture at `index` of one of the shell's lists of icons, at `size`.
+fn list_icon(small: bool, index: i32) -> Option<Icon> {
+    let _dpi = DpiUnaware::enter();
+    let cell = if small { &SMALL_IMAGE_LIST } else { &LARGE_IMAGE_LIST };
+    let list = cell.with(|cell| {
+        if cell.get().is_null() {
+            let mut list: *mut c_void = null_mut();
+            let which = if small { SHIL_SMALL } else { SHIL_LARGE };
+            // SAFETY: a valid IID and out-pointer; the reference is kept for good.
+            if unsafe { SHGetImageList(which as i32, &IID_IMAGE_LIST, &mut list) } == 0 {
+                cell.set(list);
+            } else {
+                log("SHGetImageList failed: items get no pictures");
+            }
+        }
+        cell.get()
+    });
+    if list.is_null() {
+        return None;
+    }
+    // SAFETY: the documented IImageList, called through its vtable; the icon is ours to destroy.
+    unsafe {
+        let get_icon: GetIcon = crate::com::method(list, GET_ICON_SLOT);
+        let mut handle: HICON = null_mut();
+        if get_icon(list, index, ILD_TRANSPARENT, &mut handle) != 0 || handle.is_null() {
+            return None;
+        }
+        let pixels = crate::icon::icon_pixels_at(handle, if small { 16 } else { 32 });
+        DestroyIcon(handle);
+        pixels
+    }
+}
+
+/// The pictures at `index` of the shell's lists (large and small), from the store or read now.
+pub fn pictures_at(index: i32) -> Arc<ShellPicture> {
+    if let Ok(mut store) = STORE.lock() {
+        let s = store.get_or_insert_with(|| Store { pictures: HashMap::new(), clock: 0 });
+        s.clock += 1;
+        let now = s.clock;
+        if let Some((p, used)) = s.pictures.get_mut(&index) {
+            *used = now;
+            return p.clone();
+        }
+    }
+    let picture = Arc::new(ShellPicture { large: list_icon(false, index), small: list_icon(true, index) });
+    if let Ok(mut store) = STORE.lock() {
+        let s = store.get_or_insert_with(|| Store { pictures: HashMap::new(), clock: 0 });
+        s.clock += 1;
+        let now = s.clock;
+        s.pictures.insert(index, (picture.clone(), now));
+        if s.pictures.len() > STORE_MOST {
+            // The least used quarter goes.
+            let mut uses: Vec<(u64, i32)> = s.pictures.iter().map(|(&k, &(_, u))| (u, k)).collect();
+            uses.sort_unstable();
+            for (_, k) in uses.into_iter().take(STORE_MOST / 4) {
+                s.pictures.remove(&k);
+            }
+        }
+    }
+    picture
+}
+
+/// An item as soon as its folder is listed, without opening the file: its name as Explorer shows
+/// it (its extension hidden where Explorer hides that kind's), its kind's type name and picture
+/// (`kinds` keeps each kind once). Folders get the look's own picture; a read-only or system
+/// folder is asked for its own name (desktop.ini can give one).
+pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>) -> Item {
+    let path = s.path.to_string_lossy().into_owned();
+    let file_name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let extension = if s.folder { String::new() } else { s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default() };
+    let kind = kinds.entry((extension.clone(), s.folder)).or_insert_with(|| kind_of(&extension, s.folder)).clone();
+    let mut name = if !s.folder && !kind.shows_extension && !extension.is_empty() && file_name.len() > extension.len() + 1 {
+        file_name[..file_name.len() - extension.len() - 1].to_string()
+    } else {
+        file_name.clone()
+    };
+    if s.folder && s.attributes & (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM) != 0
+        && let Some(own) = display_name(&path)
+    {
+        name = own;
+    }
+    let shortcut = !s.folder && (extension == "lnk" || extension == "url");
+    let picture = if s.folder { Picture::Folder } else { kind.index.map_or(Picture::Own(None), |i| Picture::Shell(pictures_at(i))) };
+    Item { id: path, name, picture, shortcut, folder: s.folder, type_name: kind.type_name, size: s.size, modified: local_time(s.modified) }
+}
+
+/// A file's own picture (an application's, a shortcut's: read from the file), when it is not its
+/// kind's (`None`: the kind's picture is right, or the shell has none).
+pub fn own_picture(path: &str, kind_index: Option<i32>) -> Option<Arc<ShellPicture>> {
+    let index = icon_index(path)?;
+    (Some(index) != kind_index).then(|| pictures_at(index))
+}
+
+/// The place in the shell's list of icons a kind of file has (for `own_picture`).
+pub fn kind_index(path: &Path, kinds: &mut HashMap<(String, bool), Kind>) -> Option<i32> {
+    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    kinds.entry((extension.clone(), false)).or_insert_with(|| kind_of(&extension, false)).index
+}
+
+/// A file time in local time (as Explorer's Details wrote it).
+pub fn local_time(utc: u64) -> u64 {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::Storage::FileSystem::FileTimeToLocalFileTime;
+    let ft = FILETIME { dwLowDateTime: utc as u32, dwHighDateTime: (utc >> 32) as u32 };
+    let mut local = FILETIME::default();
+    // SAFETY: two valid FILETIME structs.
+    if unsafe { FileTimeToLocalFileTime(&ft, &mut local) } == 0 {
+        return utc;
+    }
+    (u64::from(local.dwHighDateTime) << 32) | u64::from(local.dwLowDateTime)
+}

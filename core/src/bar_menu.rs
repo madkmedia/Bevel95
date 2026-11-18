@@ -1,0 +1,388 @@
+//! The bar's right-click menu: what it says and what each entry does.
+//!
+//! The menu reads as the original Windows' plus one entry: everything of Bevel95's own sits in
+//! the "Bevel95" submenu (`own_menu`, the owner's request of 2026-11-16), with the Theme and Size
+//! submenus inside it.
+
+use crate::config::MENU_SCALES;
+use crate::paint::{Mark, Menu, MenuEntry};
+use crate::theme::{Depth, Era};
+
+/// What a bar menu entry does. The platform layer carries it out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarCommand {
+    /// Hide this bar and bring back the Windows taskbar (same as Ctrl+Win+T).
+    SwitchToWindowsTaskbar,
+    /// Open the Taskbar Properties window.
+    Properties,
+    Restart,
+    /// Exit; with Shift held, restart instead.
+    Exit,
+    /// Open Date/Time Properties (the clock's menu only).
+    AdjustDateTime,
+    /// Open the Bevel95 Settings window (everything that is Bevel95's own).
+    Settings,
+    /// Open Quick Search (also the Windows key, the Start menu's Find submenu, scripts).
+    Find,
+    // No menu entry: things Quick Search does (`quick`).
+    /// The Run dialog, as Start > Run... opens it.
+    Run,
+    /// The Shut Down dialog, as Start > Shut Down... opens it.
+    ShutDown,
+    /// Bevel95's Windows Explorer (the folder windows' two panes).
+    Explorer,
+    /// Bevel95's My Computer window, as its desktop icon opens it.
+    MyComputer,
+    /// Bevel95's classic desktop on (Bevel95 Settings' Desktop page has the same switch).
+    DesktopOn,
+    /// And off, as the desktop menu's Switch to Windows desktop.
+    DesktopOff,
+    /// The About Bevel95 window (the Bevel95 submenu's last entry; Quick Search).
+    About,
+    /// Back from Windows' taskbar to Bevel95's bar (the first entry of Bevel95's notification
+    /// icon's menu, `tray_icon`); nothing while Bevel95's bar shows.
+    SwitchToBevel95,
+}
+
+impl BarCommand {
+    /// In the order of their codes: new commands join the end, so the codes that scripts and
+    /// tests send to the bar stay what they were.
+    const ALL: [BarCommand; 15] = [
+        BarCommand::SwitchToWindowsTaskbar,
+        BarCommand::Properties,
+        BarCommand::Restart,
+        BarCommand::Exit,
+        BarCommand::AdjustDateTime,
+        BarCommand::Settings,
+        BarCommand::Find,
+        BarCommand::Run,
+        BarCommand::ShutDown,
+        BarCommand::Explorer,
+        BarCommand::MyComputer,
+        BarCommand::DesktopOn,
+        BarCommand::DesktopOff,
+        BarCommand::About,
+        BarCommand::SwitchToBevel95,
+    ];
+
+    /// A number standing for the command in a window message (`from_code` reads it back).
+    pub fn code(self) -> usize {
+        self as usize
+    }
+
+    pub fn from_code(code: usize) -> Option<BarCommand> {
+        BarCommand::ALL.get(code).copied()
+    }
+}
+
+/// What choosing a top-level entry does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarEntry {
+    Command(BarCommand),
+    /// Opens the Theme submenu (`theme_menu`).
+    Theme,
+    /// Opens the Colors submenu (`colors_menu`).
+    Colors,
+    /// Opens the Size submenu (`size_menu`).
+    Size,
+    /// Opens the Bevel95 submenu (`own_menu`).
+    Bevel95,
+}
+
+type Entry = Option<(&'static str, BarEntry)>;
+
+/// `None` is a separator. Bevel95's one entry stands where its settings stood, right above
+/// Windows' own Properties, which stays the last entry, as it was in Windows' taskbar menu.
+const ENTRIES: [Entry; 2] = [Some(("Bevel95", BarEntry::Bevel95)), Some(("Properties", BarEntry::Command(BarCommand::Properties)))];
+
+/// The key that switches Bevel95's classic desktop on and off, as Ctrl+Win+T switches the bar
+/// (the bar registers it; `DESKTOP_KEY_LETTER` is its letter). Chosen 2026-11-17 among the
+/// Ctrl+Win+letters that Windows 11 left free: W, as T is for the taskbar.
+pub const DESKTOP_KEY: &str = "Ctrl+Win+W";
+pub const DESKTOP_KEY_LETTER: u8 = b'W';
+
+/// What the Bevel95 submenu shows that changes: whether the classic desktop is on (its entry
+/// then switches it off) and whether `DESKTOP_KEY` could be registered (then it shows beside
+/// the entry, as Ctrl+Win+T does).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Own {
+    pub desktop: bool,
+    pub desktop_key: bool,
+}
+
+/// The desktop's entry, right under Switch back to Windows: what it switches to.
+fn desktop_entry(own: Own) -> Entry {
+    let label = match (own.desktop, own.desktop_key) {
+        (true, true) => "Switch to Windows desktop\tCtrl+Win+W",
+        (true, false) => "Switch to Windows desktop",
+        (false, true) => "Switch to classic desktop\tCtrl+Win+W",
+        (false, false) => "Switch to classic desktop",
+    };
+    let command = if own.desktop { BarCommand::DesktopOff } else { BarCommand::DesktopOn };
+    Some((label, BarEntry::Command(command)))
+}
+
+/// The Bevel95 submenu: everything of Bevel95's own that the menu held before it, nothing lost
+/// (PROVISIONAL: the order and the wording).
+fn own_entries(own: Own) -> [Entry; 13] {
+    [
+        Some(("Bevel95 Settings", BarEntry::Command(BarCommand::Settings))),
+        Some(("Theme", BarEntry::Theme)),
+        Some(("Colors", BarEntry::Colors)),
+        Some(("Size", BarEntry::Size)),
+        Some(("Quick Search", BarEntry::Command(BarCommand::Find))),
+        None,
+        Some(("Switch back to Windows\tCtrl+Win+T", BarEntry::Command(BarCommand::SwitchToWindowsTaskbar))),
+        desktop_entry(own),
+        None,
+        Some(("Restart", BarEntry::Command(BarCommand::Restart))),
+        Some(("Exit", BarEntry::Command(BarCommand::Exit))),
+        None,
+        Some((concat!("About ", crate::product_name!()), BarEntry::Command(BarCommand::About))),
+    ]
+}
+
+/// Menu entries for `entries`, a submenu arrow on those that open one.
+fn menu_of<'a>(entries: impl Iterator<Item = &'a Entry>) -> Menu {
+    let entries = entries
+        .map(|e| match e {
+            Some((label, BarEntry::Theme | BarEntry::Colors | BarEntry::Size | BarEntry::Bevel95)) => MenuEntry::submenu(label, None),
+            Some((label, _)) => MenuEntry::item(label, None),
+            None => MenuEntry::separator(),
+        })
+        .collect();
+    Menu::new(entries)
+}
+
+/// The Bevel95 submenu, nothing highlighted.
+pub fn own_menu(own: Own) -> Menu {
+    menu_of(own_entries(own).iter())
+}
+
+/// What entry `index` of `own_menu(own)` does (`None` for a separator).
+pub fn own_entry(own: Own, index: usize) -> Option<BarEntry> {
+    own_entries(own).get(index).copied().flatten().map(|(_, entry)| entry)
+}
+
+/// Where `entry` is in `own_menu(own)`.
+pub fn own_index_of(own: Own, entry: BarEntry) -> Option<usize> {
+    own_entries(own).iter().position(|e| e.is_some_and(|(_, e)| e == entry))
+}
+
+/// Right-clicked on the clock, Windows 95, 98 and 2000 put this first, then a separator.
+const CLOCK_ENTRIES: [Entry; 2] = [Some(("Adjust Date/Time", BarEntry::Command(BarCommand::AdjustDateTime))), None];
+
+/// The entries of the menu, for a right-click on the clock (`clock`) or elsewhere on the bar.
+fn entries(clock: bool) -> impl Iterator<Item = &'static Entry> {
+    let first: &'static [Entry] = if clock { &CLOCK_ENTRIES } else { &[] };
+    first.iter().chain(ENTRIES.iter())
+}
+
+/// The right-click menu of the bar (`clock`: right-clicked on the clock), nothing highlighted.
+pub fn menu(clock: bool) -> Menu {
+    menu_of(entries(clock))
+}
+
+/// What entry `index` of `menu(clock)` does (`None` for a separator).
+pub fn entry(clock: bool, index: usize) -> Option<BarEntry> {
+    entries(clock).nth(index).copied().flatten().map(|(_, entry)| entry)
+}
+
+/// Where `entry` is in `menu(clock)`.
+pub fn index_of(clock: bool, entry: BarEntry) -> Option<usize> {
+    entries(clock).position(|e| e.is_some_and(|(_, e)| e == entry))
+}
+
+/// A submenu of options with a bullet on the one in use.
+fn choices(labels: impl Iterator<Item = (String, bool)>) -> Menu {
+    let entries = labels
+        .map(|(label, current)| {
+            let mut entry = MenuEntry::item(&label, None);
+            if current {
+                entry.mark = Some(Mark::Bullet);
+            }
+            entry
+        })
+        .collect();
+    Menu::new(entries)
+}
+
+/// The Theme submenu: "Windows 95", "Windows 98", "Windows 2000", a bullet on the look in use.
+pub fn theme_menu(current: Era) -> Menu {
+    choices(Era::ALL.iter().map(|&era| (era.title().to_string(), era == current)))
+}
+
+/// The look chosen by entry `index` of `theme_menu`.
+pub fn theme_at(index: usize) -> Option<Era> {
+    Era::ALL.get(index).copied()
+}
+
+/// The Colors submenu: "16 Colors", "True Color" (the order of Windows' own Display Properties
+/// list), a bullet on the colors in use.
+pub fn colors_menu(current: Depth) -> Menu {
+    choices(Depth::ALL.iter().map(|&d| (d.title().to_string(), d == current)))
+}
+
+/// The colors chosen by entry `index` of `colors_menu`.
+pub fn colors_at(index: usize) -> Option<Depth> {
+    Depth::ALL.get(index).copied()
+}
+
+/// The Size submenu: "1×" to "4×", with a bullet on the size in use.
+pub fn size_menu(current: i32) -> Menu {
+    choices(MENU_SCALES.iter().map(|&s| (format!("{s}\u{d7}"), s == current)))
+}
+
+/// The scale chosen by entry `index` of `size_menu`.
+pub fn size_at(index: usize) -> Option<i32> {
+    MENU_SCALES.get(index).copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paint::EntryKind;
+
+    fn labels(m: &Menu) -> Vec<String> {
+        m.entries
+            .iter()
+            .map(|e| match e.kind {
+                EntryKind::Separator => "-".to_string(),
+                EntryKind::Submenu => format!("{}>", e.label),
+                _ => e.label.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_menu_is_windows_own_plus_one_entry() {
+        // The same in every look: Windows 95, 98 and 2000 each had Properties last (the
+        // entries they had that Bevel95 does not do are left out), and Bevel95's one entry.
+        assert_eq!(labels(&menu(false)), ["Bevel95>", "Properties"]);
+        assert_eq!(labels(&menu(true)), ["Adjust Date/Time", "-", "Bevel95>", "Properties"]);
+        for clock in [false, true] {
+            let m = menu(clock);
+            for (i, e) in m.entries.iter().enumerate() {
+                assert_eq!(e.kind == EntryKind::Separator, entry(clock, i).is_none(), "entry {i}");
+            }
+            let own = index_of(clock, BarEntry::Bevel95).unwrap();
+            assert_eq!(entry(clock, own), Some(BarEntry::Bevel95));
+            assert_eq!(own + 1, index_of(clock, BarEntry::Command(BarCommand::Properties)).unwrap());
+            assert_eq!(entry(clock, 99), None);
+            assert!(m.entries.iter().all(|e| e.mark.is_none()));
+            // Bevel95's own entries are only in its submenu.
+            for own in [BarEntry::Theme, BarEntry::Colors, BarEntry::Size, BarEntry::Command(BarCommand::Settings), BarEntry::Command(BarCommand::Exit)] {
+                assert_eq!(index_of(clock, own), None);
+            }
+        }
+        assert_eq!(index_of(false, BarEntry::Command(BarCommand::AdjustDateTime)), None);
+        assert_eq!(entry(true, 0), Some(BarEntry::Command(BarCommand::AdjustDateTime)));
+        assert_eq!(entry(true, 1), None, "then a separator");
+    }
+
+    #[test]
+    fn the_bevel95_submenu_holds_everything_of_ours() {
+        let on = Own { desktop: true, desktop_key: true };
+        let m = own_menu(on);
+        assert_eq!(
+            labels(&m),
+            [
+                "Bevel95 Settings",
+                "Theme>",
+                "Colors>",
+                "Size>",
+                "Quick Search",
+                "-",
+                "Switch back to Windows\tCtrl+Win+T",
+                "Switch to Windows desktop\tCtrl+Win+W",
+                "-",
+                "Restart",
+                "Exit",
+                "-",
+                "About Bevel95"
+            ]
+        );
+        for (i, e) in m.entries.iter().enumerate() {
+            assert_eq!(e.kind == EntryKind::Separator, own_entry(on, i).is_none(), "entry {i}");
+        }
+        for submenu in [BarEntry::Theme, BarEntry::Colors, BarEntry::Size] {
+            let i = own_index_of(on, submenu).unwrap();
+            assert_eq!(m.entries[i].kind, EntryKind::Submenu);
+            assert_eq!(own_entry(on, i), Some(submenu));
+        }
+        // Every command the menu held before, and Quick Search.
+        use BarCommand::*;
+        for c in [Settings, Find, SwitchToWindowsTaskbar, Restart, Exit, About] {
+            assert!(own_index_of(on, BarEntry::Command(c)).is_some(), "{c:?}");
+        }
+        assert_eq!(own_index_of(on, BarEntry::Command(Properties)), None, "Windows' own stays in the menu");
+        assert_eq!(own_entry(on, 99), None);
+    }
+
+    #[test]
+    fn the_desktop_entry_says_what_it_switches_to() {
+        // Right after Switch back to Windows (the taskbar); the key only when the bar
+        // could register it.
+        let taskbar = own_index_of(Own::default(), BarEntry::Command(BarCommand::SwitchToWindowsTaskbar)).unwrap();
+        for (own, label, command) in [
+            (Own { desktop: true, desktop_key: true }, "Switch to Windows desktop\tCtrl+Win+W", BarCommand::DesktopOff),
+            (Own { desktop: true, desktop_key: false }, "Switch to Windows desktop", BarCommand::DesktopOff),
+            (Own { desktop: false, desktop_key: true }, "Switch to classic desktop\tCtrl+Win+W", BarCommand::DesktopOn),
+            (Own { desktop: false, desktop_key: false }, "Switch to classic desktop", BarCommand::DesktopOn),
+        ] {
+            let m = own_menu(own);
+            assert_eq!(m.entries[taskbar + 1].label, label);
+            assert_eq!(own_entry(own, taskbar + 1), Some(BarEntry::Command(command)));
+            assert_eq!(own_index_of(own, BarEntry::Command(command)), Some(taskbar + 1));
+            assert_eq!(m.entries.len(), own_menu(Own::default()).entries.len(), "the entries stay where they are");
+        }
+        assert!(format!("\t{DESKTOP_KEY}").ends_with(&format!("+{}", DESKTOP_KEY_LETTER as char)));
+        assert!(own_menu(Own { desktop: true, desktop_key: true }).entries.iter().any(|e| e.label.ends_with(DESKTOP_KEY)));
+    }
+
+    #[test]
+    fn commands_survive_a_window_message() {
+        for c in BarCommand::ALL {
+            assert_eq!(BarCommand::from_code(c.code()), Some(c));
+        }
+        assert_eq!(BarCommand::from_code(99), None);
+        // The codes scripts send (tools/dev/dialogcaps.ps1) stay what they were.
+        assert_eq!((BarCommand::AdjustDateTime.code(), BarCommand::Settings.code()), (4, 5));
+        assert_eq!(BarCommand::Find.code(), 6);
+        assert_eq!((BarCommand::About.code(), BarCommand::SwitchToBevel95.code()), (13, 14));
+    }
+
+    #[test]
+    fn size_menu_marks_the_current_size() {
+        let m = size_menu(2);
+        let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["1\u{d7}", "2\u{d7}", "3\u{d7}", "4\u{d7}"]);
+        let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
+        assert_eq!(marked, [false, true, false, false]);
+        assert_eq!(size_at(3), Some(4));
+        assert_eq!(size_at(4), None);
+    }
+
+    #[test]
+    fn colors_menu_marks_the_colors_in_use() {
+        let m = colors_menu(Depth::Sixteen);
+        let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["16 Colors", "True Color"]);
+        let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
+        assert_eq!(marked, [true, false]);
+        assert_eq!(colors_at(1), Some(Depth::TrueColor));
+        assert_eq!(colors_at(2), None);
+    }
+
+    #[test]
+    fn theme_menu_marks_the_current_look() {
+        let m = theme_menu(Era::Win98);
+        let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
+        assert_eq!(labels, ["Windows 95", "Windows 98", "Windows 2000"]);
+        let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
+        assert_eq!(marked, [false, true, false]);
+        assert_eq!(theme_at(0), Some(Era::Win95));
+        assert_eq!(theme_at(2), Some(Era::Win2000));
+        assert_eq!(theme_at(3), None);
+    }
+}

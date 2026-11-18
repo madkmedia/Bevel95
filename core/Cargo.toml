@@ -1,0 +1,16 @@
+[package]
+name = "bevel-core"
+description = "Platform-independent theme, layout and painting for the Bevel95 taskbar"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# No runtime dependencies from outside, on purpose: only bevel-art, the project's own data library
+# holding Windows' pictures.
+[dependencies]
+bevel-art = { path = "../art" }
+
+[dev-dependencies]
+# Only used by tests, to read and write golden images.
+png = "=0.18.1"

@@ -1,0 +1,14 @@
+# Link the C runtime into each executable so the bundle needs no VC++ redistributable.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# The only two commands that rewrite test reference files. Plain `cargo test` never does.
+[alias]
+# Re-dump the font fixtures (core/tests/fixtures) from this PC's fonts via GDI.
+regen-fonts = "test -p bevel-winkit --lib -- --ignored --exact font::tests::regenerate_font_fixtures --nocapture"
+# Start the real bar and check the Windows taskbar always comes back (hides it for a few seconds).
+selftest = "test -p bevel95 --test selftest -- --ignored --nocapture"
+# Re-draw the golden images (core/tests/golden) from the current code, and docs/preview.html.
+regen-golden = "test -p bevel-core --test golden -- --ignored --exact regenerate_golden_images --nocapture"
+# Compare drawings with real Windows screenshots (BEVEL95_REFS, else reference/refs in BEVEL95_PRIVATE, else private/reference/refs; see core/tests/reference.rs).
+compare-refs = "test -p bevel-core --test reference -- --ignored --nocapture"

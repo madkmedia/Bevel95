@@ -1,0 +1,16 @@
+# Bevel95: a Windows 95/98/2000-style taskbar, and the programs that go with it.
+#   art/               Windows' own pictures, sounds and logos, data only
+#   core/              platform-independent drawing and layout (no unsafe, no Windows types)
+#   platform/winkit/   the Windows side every program shares (fonts, the window host, menus, log)
+#   platform/win/      the bar (bevel95.exe)
+#   programs/*/        the other programs, one exe each
+[workspace]
+resolver = "3"
+members = ["art", "core", "platform/winkit", "platform/win", "programs/minefield", "programs/help", "programs/solitaire", "programs/calculator", "programs/folders"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+# Bevel95's own code and writing; not the pictures and sounds in art/ (README.md, "License").
+license = "GPL-3.0-or-later"

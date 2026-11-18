@@ -1,0 +1,24 @@
+# Builds Bevel95 and runs its tests on Windows for every push and pull request.
+# Kept minimal on purpose: it has not been tried on a hosted runner yet.
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust stable (MSVC)
+        run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Release build
+        run: cargo build --workspace --release

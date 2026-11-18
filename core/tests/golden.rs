@@ -1,0 +1,2349 @@
+//! Golden-image tests: fixed states of the bar and Start menu, painted at 1× with the real
+//! Windows glyphs (from `tests/fixtures`), compared pixel for pixel with the PNGs in
+//! `tests/golden`. Any difference fails the test.
+//!
+//! The PNGs are only rewritten on request, with `cargo regen-golden`, which also rewrites
+//! `docs/preview.html`: the same pictures embedded in one self-contained page, for eyeballing.
+//! When a comparison fails, `<name>.actual.png` (what the code draws now) and
+//! `<name>.diff.png` (differences in red) are written next to the golden image.
+
+use std::fmt::Write as _;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+
+use bevel_core::desktop_icons::ViewMode;
+use bevel_core::bar_menu::{self, BarEntry};
+use bevel_core::dialog::{self, Dialog, DialogKind};
+use bevel_core::fb::{Framebuffer, Icon, Rect};
+use bevel_core::layout::{self, place_popup, place_start_menu, place_submenu};
+use bevel_core::paint::{self, Bar, Menu, MenuEntry, MenuLayout, MenuStyle, ScrollArrow, Task, TaskState};
+use bevel_core::programs::{self, Folder, Item, Shown};
+use bevel_core::scale::upscale;
+use bevel_core::tasks::{self, Group, TaskList, WindowInfo};
+use bevel_core::text::{Font, Fonts, fixture_name};
+use bevel_core::theme::{Depth, Era, Theme, WIN95, WIN98, WIN2000, rgb};
+use bevel_core::window_menu::{self, WindowState};
+use bevel_core::config::{StartOptions, TaskbarOptions};
+use bevel_core::properties;
+use bevel_core::window_icons::{self, ClassicWindow};
+use bevel_core::{icons, start};
+
+const WIDTH: i32 = 640;
+const SCREEN_H: i32 = 480;
+const CLOCK: &str = "3:45 PM";
+/// The widest time of day (the clock's part of the well is made this wide).
+const WIDEST: &str = "12:00 AM";
+
+fn test_dir(sub: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join(sub)
+}
+
+fn load_font(theme: &Theme, bold: bool) -> Font {
+    let path = test_dir("fixtures").join(fixture_name(theme.font_face, theme.font_px, bold));
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    Font::parse(&src).unwrap().with_period_glyphs()
+}
+
+// ---- test data: placeholder 16×16 icons (not real Windows icons) ----
+
+#[rustfmt::skip]
+const COMPUTER: [&str; 16] = [
+    "................",
+    ".KKKKKKKKKKKKK..",
+    ".KLLLLLLLLLLLK..",
+    ".KLKKKKKKKKKLK..",
+    ".KLKTTTTTTTKLK..",
+    ".KLKTTTTTTTKLK..",
+    ".KLKTTTTTTTKLK..",
+    ".KLKTTTTTTTKLK..",
+    ".KLKKKKKKKKKLK..",
+    ".KLLLLLLLLLLLK..",
+    ".KKKKKKKKKKKKK..",
+    "....KLLLLLK.....",
+    "..KKKKKKKKKKK...",
+    "..KLLLLLLLLLK...",
+    "..KKKKKKKKKKK...",
+    "................",
+];
+
+#[rustfmt::skip]
+const DOCUMENT: [&str; 16] = [
+    "................",
+    "..KKKKKKKK......",
+    "..KWWWWWWKK.....",
+    "..KWWWWWWKWK....",
+    "..KWNNNNWKKKK...",
+    "..KWWWWWWWWWK...",
+    "..KWNNNNNNNWK...",
+    "..KWWWWWWWWWK...",
+    "..KWNNNNNNNWK...",
+    "..KWWWWWWWWWK...",
+    "..KWNNNNNNNWK...",
+    "..KWWWWWWWWWK...",
+    "..KWNNNNNWWWK...",
+    "..KWWWWWWWWWK...",
+    "..KKKKKKKKKKK...",
+    "................",
+];
+
+#[rustfmt::skip]
+const MAIL: [&str; 16] = [
+    "................",
+    "................",
+    "................",
+    ".KKKKKKKKKKKKKK.",
+    ".KLKWWWWWWWWKLK.",
+    ".KWLKWWWWWWKLWK.",
+    ".KWWLKWWWWKLWWK.",
+    ".KWWWLKWWKLWWWK.",
+    ".KWWWWLKKLWWWWK.",
+    ".KWWWWWLLWWWWWK.",
+    ".KWWWWWWWWWWWWK.",
+    ".KWWWWWWWWWWWWK.",
+    ".KKKKKKKKKKKKKK.",
+    "................",
+    "................",
+    "................",
+];
+
+#[rustfmt::skip]
+const FOLDER: [&str; 16] = [
+    "................",
+    "................",
+    "..KKKKK.........",
+    ".KYYYYYK........",
+    "KYWYYYYYKKKKKK..",
+    "KWYYYYYYYYYYYYK.",
+    "KYYYYYYYYYYYYYK.",
+    "KYYYYYYYYYYYYYK.",
+    "KYYYYYYYYYYYYYK.",
+    "KYYYYYYYYYYYYYK.",
+    "KYYYYYYYYYYYYYK.",
+    "KYYYYYYYYYYYYYK.",
+    "KKKKKKKKKKKKKKK.",
+    "................",
+    "................",
+    "................",
+];
+
+/// An icon from ASCII art, each pixel repeated `scale` times (2 gives the 32×32 menu icons).
+fn icon(art: &[&str; 16], scale: i32) -> Icon {
+    let color = |b: u8| match b {
+        b'K' => rgb(0x000000),
+        b'W' => rgb(0xFFFFFF),
+        b'L' => rgb(0xC0C0C0),
+        b'N' => rgb(0x000080),
+        b'T' => rgb(0x008080),
+        b'Y' => rgb(0xFFFF00),
+        b'.' => 0,
+        _ => panic!("unknown icon color {}", b as char),
+    };
+    let size = 16 * scale;
+    let mut pixels = Vec::with_capacity((size * size) as usize);
+    for y in 0..size {
+        for x in 0..size {
+            pixels.push(color(art[(y / scale) as usize].as_bytes()[(x / scale) as usize]));
+        }
+    }
+    Icon { width: size, height: size, pixels }
+}
+
+fn task(title: &str, art: &[&str; 16], state: TaskState) -> Task {
+    Task { title: title.to_string(), icon: Some(icon(art, 1)), state }
+}
+
+/// "3 groups, one active, one flashing".
+fn three_groups() -> Vec<Task> {
+    vec![
+        task("My Computer", &COMPUTER, TaskState::Normal),
+        task("Microsoft Word - Document1", &DOCUMENT, TaskState::Active),
+        task("Inbox - Outlook Express", &MAIL, TaskState::Flashing),
+    ]
+}
+
+/// Enough buttons that they have to shrink.
+fn crowded() -> Vec<Task> {
+    vec![
+        task("My Computer", &COMPUTER, TaskState::Normal),
+        task("Exploring - C:\\", &FOLDER, TaskState::Normal),
+        task("Microsoft Word - Report.doc", &DOCUMENT, TaskState::Active),
+        task("Inbox - Outlook Express", &MAIL, TaskState::Normal),
+        task("Paint - untitled", &DOCUMENT, TaskState::Normal),
+        task("Notepad - todo.txt", &DOCUMENT, TaskState::Normal),
+        task("Calculator", &COMPUTER, TaskState::Normal),
+        task("MS-DOS Prompt", &COMPUTER, TaskState::Flashing),
+        task("Recycle Bin", &FOLDER, TaskState::Normal),
+    ]
+}
+
+/// More buttons than fit even at their narrowest: 24 apps, the 17th of them active.
+fn overfull() -> Vec<Task> {
+    let arts = [&COMPUTER, &FOLDER, &DOCUMENT, &MAIL];
+    (0..24)
+        .map(|i| {
+            let state = if i == 16 { TaskState::Active } else { TaskState::Normal };
+            task(&format!("Window {}", i + 1), arts[i % arts.len()], state)
+        })
+        .collect()
+}
+
+// ---- scenes ----
+
+fn bar_image(theme: &Theme, fonts: &Fonts, start_pressed: bool, tasks: Vec<Task>) -> Framebuffer {
+    let mut fb = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    paint::paint_bar(&mut fb, theme, fonts, &Bar { start_pressed, tasks, clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() });
+    fb
+}
+
+/// The overfull bar on its second row, the down arrow held down.
+fn second_row_image(theme: &Theme, fonts: &Fonts) -> Framebuffer {
+    let mut fb = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let state = Bar {
+        tasks: overfull(),
+        clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(),
+        row: 1,
+        scroll_pressed: Some(ScrollArrow::Down),
+        ..Bar::default()
+    };
+    paint::paint_bar(&mut fb, theme, fonts, &state);
+    fb
+}
+
+/// A drag in progress (Bevel95's own): My Computer, pressed 20 from its left, dragged right
+/// over Word, which covered more than half of it 10 ms after the drag's start; Word is halfway
+/// through its slide to the free place; Inbox stays. Positions from `tasks::drag_step` and
+/// `tasks::Motion`, as the bar computes them.
+fn drag_image(theme: &Theme, fonts: &Fonts) -> Framebuffer {
+    let [computer, word, inbox]: [Task; 3] = three_groups().try_into().unwrap();
+    let mut state = Bar { tasks: vec![computer.clone(), word.clone(), inbox.clone()], clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() };
+    let row: Vec<(i32, i32)> = paint::bar_layout(theme, fonts, WIDTH, &state).tasks.iter().map(|r| (r.x, r.w)).collect();
+    let mut motion = tasks::Motion::default();
+    let grab = 20;
+    let pointer = |moved: i32| row[0].0 + grab + moved;
+    let (place, left) = tasks::drag_step(&row, 0, grab, pointer(30)).unwrap();
+    assert_eq!(place, 0);
+    motion.frame(&["computer", "word", "inbox"], &row, Some((0, left)), 0);
+    let moved = row[1].0 - row[0].0 - 20;
+    let (place, left) = tasks::drag_step(&row, 0, grab, pointer(moved)).unwrap();
+    assert_eq!(place, 1, "past the line between the first two places");
+    motion.frame(&["word", "computer", "inbox"], &row, Some((1, left)), 10);
+    let x = motion.frame(&["word", "computer", "inbox"], &row, Some((1, left)), 10 + tasks::SLIDE_MS / 2);
+    assert!(x[0] > row[0].0 && x[0] < row[1].0, "Word on its way");
+    state.tasks = vec![word, computer, inbox];
+    state.task_x = x;
+    state.task_on_top = Some(1);
+    let mut fb = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    paint::paint_bar(&mut fb, theme, fonts, &state);
+    fb
+}
+
+/// A task button's right-click menu, placed the way the real one is for a right-click on
+/// the button at (button.x + 20, 466): for one window (pointer on Maximize), or the group menu.
+fn task_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, group: bool) -> Framebuffer {
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let mut bar = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let state = Bar { tasks: three_groups(), clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() };
+    let layout = paint::paint_bar(&mut bar, theme, fonts, &state);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    let menu = if group {
+        window_menu::group_menu()
+    } else {
+        let normal = WindowState {
+            resizable: true,
+            has_minimize_box: true,
+            has_maximize_box: true,
+            closable: true,
+            ..WindowState::default()
+        };
+        Menu { hover: Some(4), ..window_menu::menu(era, normal) }
+    };
+    let menu = Menu { show_keys: era.always_shows_keys(), ..menu };
+    let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+    let (x, y) = place_popup(layout.tasks[1].x + 20, SCREEN_H - 14, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+    screen
+}
+
+/// A menu laid out and painted on its own.
+fn menu_image(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle) -> (Framebuffer, MenuLayout) {
+    let layout = paint::layout_menu(theme, fonts, menu, style, SCREEN_H);
+    let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut fb, theme, fonts, menu, style, &layout);
+    (fb, layout)
+}
+
+/// The screen rectangle of entry `index` of a menu shown at `menu`.
+fn entry_on_screen(menu: Rect, layout: &MenuLayout, index: usize) -> Rect {
+    let r = layout.rects[index];
+    Rect::new(menu.x + r.x, menu.y + r.y, r.w, r.h)
+}
+
+/// A 640×480 "screen": desktop color, the bar at the bottom with Start pressed, the Start
+/// menu above it ("Start menu open with 10 items") with the pointer on Programs, and the
+/// Programs menu open beside it, pointer on its second entry.
+fn start_menu_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, true, three_groups());
+    let bar_top = SCREEN_H - bar.height;
+    screen.blit(&bar, 0, bar_top);
+
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
+    let programs_index = menu.entries.iter().position(|e| e.label == "&Programs").expect("Programs");
+    menu.hover = Some(programs_index);
+    menu.show_keys = era.always_shows_keys();
+    let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Start);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+
+    let group = icons::program_group(era);
+    let mut programs = Folder::default();
+    for folder in ["Accessories", "Games", "StartUp"] {
+        programs.folder_mut(&[folder]);
+    }
+    for (name, _) in [("Internet Explorer", 0), ("MS-DOS Prompt", 1), ("Outlook Express", 2), ("Windows Explorer", 3)] {
+        programs.add(&[], Item { name: name.to_string(), target: String::new() });
+    }
+    let art = [&COMPUTER, &DOCUMENT, &MAIL, &FOLDER];
+    let mut n = 0;
+    let mut sub = programs.menu(Some(&group), |_| {
+        n += 1;
+        Some(icon(art[(n - 1) % art.len()], 1))
+    });
+    sub.hover = Some(1);
+    sub.show_keys = menu.show_keys;
+    let (sub_fb, _) = menu_image(theme, fonts, &sub, MenuStyle::Cascade);
+    let parent = Rect::new(x, y, fb.width, fb.height);
+    let entry = entry_on_screen(parent, &layout, programs_index);
+    let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
+    screen.blit(&sub_fb, sx, sy);
+    screen
+}
+
+/// The Start menu with "Show small icons in Start menu" on (16×16 icons, no banner), pointer
+/// on Settings.
+fn start_menu_small_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, true, three_groups());
+    let bar_top = SCREEN_H - bar.height;
+    screen.blit(&bar, 0, bar_top);
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon_small(era, e));
+    menu.hover = menu.entries.iter().position(|e| e.label == "&Settings");
+    menu.show_keys = era.always_shows_keys();
+    let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::StartSmall);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+    screen
+}
+
+/// One of the two property sheets on page `page`: Taskbar Properties (0 Taskbar Options /
+/// General, 1 Start Menu Programs / Advanced) or Bevel95 Settings (0 General, 1 Taskbar, 2 Desktop; its
+/// Programs page has a scene of its own, `programs_scene`), as it opens: the usual settings,
+/// Start with Windows on, Bevel95's clock set 5 minutes ahead (so Use the PC's Time is on), its
+/// desktop switched on.
+fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::Sheet, page: usize) -> Framebuffer {
+    let values = properties::Values {
+        options: TaskbarOptions::default(),
+        start: StartOptions::default(),
+        era,
+        colors: theme.depth,
+        scale: 2,
+        start_with_windows: true,
+        clock_offset: 300,
+        desktop: true,
+        programs: Shown::Everything,
+        windows_key: bevel_core::config::WindowsKey::Find,
+        group: true,
+    };
+    let mut p = properties::Properties::new(sheet, era, values);
+    p.show_page(page);
+    let l = properties::layout(&p, fonts);
+    let mut fb = Framebuffer::new(l.width, l.height, 0);
+    properties::paint(&mut fb, theme, fonts, &p, &l);
+    fb
+}
+
+/// A small Programs menu for the trees of programs: Accessories with Games and System Tools
+/// (two programs each) and three programs of its own, an empty StartUp, three programs in
+/// Programs itself.
+fn sample_programs() -> Folder {
+    let item = |name: &str| Item { name: name.into(), target: format!("C:\\{name}.lnk") };
+    let mut tree = Folder::default();
+    for name in ["Minesweeper", "Solitaire"] {
+        tree.add(&["Accessories", "Games"], item(name));
+    }
+    for name in ["Character Map", "Disk Cleanup"] {
+        tree.add(&["Accessories", "System Tools"], item(name));
+    }
+    for name in ["Calculator", "Notepad", "Paint"] {
+        tree.add(&["Accessories"], item(name));
+    }
+    tree.folder_mut(&["StartUp"]);
+    for name in ["Internet Explorer", "MS-DOS Prompt", "Windows Explorer"] {
+        tree.add(&[], item(name));
+    }
+    tree.sort();
+    tree
+}
+
+/// The three of those programs that have pictures of the core's own.
+fn sample_program_icon(era: Era, item: &Item) -> Option<Icon> {
+    match item.name.as_str() {
+        "Minesweeper" => Some(bevel_core::minefield::art::icon(era, 16)),
+        "Solitaire" => Some(bevel_core::solitaire::art::icon(era, 16)),
+        "Notepad" => Some(window_icons::icon(era, ClassicWindow::Notepad)),
+        _ => None,
+    }
+}
+
+/// Quick Search with "p" typed: Paint begins with it, MS-DOS
+/// Prompt has a word that does, six more have it; the first is selected, the caret after the
+/// "p". The pictures are those of the sample programs that have one.
+fn find_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::find::{self, FindWindow};
+    use bevel_core::kit::Form;
+    let mut window = FindWindow::new(era, find::programs(&sample_programs()), true);
+    window.typed('p');
+    for i in window.wanted_icons() {
+        let item = Item { name: window.programs[i].name.clone(), target: window.programs[i].target.clone() };
+        window.set_icon(i, sample_program_icon(era, &item));
+    }
+    window.layout(fonts);
+    let (w, h) = window.size();
+    let mut fb = Framebuffer::new(w, h, 0);
+    window.paint(&mut fb, theme, fonts);
+    fb
+}
+
+/// "Remove Shortcuts/Folders" (Taskbar Properties, Remove...) with the same small Programs
+/// menu, every folder open (15 rows, so the tree scrolls), Solitaire selected and the focus
+/// moved on to Remove: the selection stays on gray, Remove is the framed button, and each
+/// program's picture has the shortcut arrow.
+fn remove_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::kit::Form;
+    use bevel_core::remove::{self, Part, RemoveWindow};
+    let rows = remove::rows(&sample_programs(), |item| sample_program_icon(era, item));
+    let mut window = RemoveWindow::new(era, rows);
+    window.typed('*');
+    window.sel = window.rows.iter().position(|row| row.name == "Solitaire").expect("Solitaire");
+    window.focus = Part::Remove;
+    window.show_keys = true;
+    window.layout(fonts);
+    let (w, h) = window.size();
+    let mut fb = Framebuffer::new(w, h, 0);
+    window.paint(&mut fb, theme, fonts);
+    fb
+}
+
+/// Bevel95 Settings' Programs page with a small Programs menu as its tree (three programs have
+/// pictures of the core's own; the StartUp folder has nothing in it and so gets no row).
+/// `Everything`: as the page opens, every box ticked and the folders closed. `Classic`: that
+/// choice just made, so the folders of Bevel95's own programs are open. `Ticked`: every folder
+/// opened (14 rows, so the list scrolls), System Tools' two programs and Paint unticked, so
+/// Accessories and Programs are half ticked, and the list has the focus, on Notepad.
+fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Framebuffer {
+    let rows = programs::rows(&sample_programs(), None, |item| {
+        (matches!(item.name.as_str(), "Minesweeper" | "Solitaire"), sample_program_icon(era, item))
+    });
+    let values = properties::Values {
+        options: TaskbarOptions::default(),
+        start: StartOptions::default(),
+        era,
+        colors: theme.depth,
+        scale: 2,
+        start_with_windows: true,
+        clock_offset: 300,
+        desktop: true,
+        programs: Shown::Everything,
+        windows_key: bevel_core::config::WindowsKey::Find,
+        group: true,
+    };
+    let mut p = properties::Properties::new(properties::Sheet::Bevel95, era, values);
+    p.show_page(3);
+    p.set_programs(rows);
+    if shown != Shown::Everything {
+        assert!(p.choose(properties::Part::Shown(shown)));
+        p.focus = properties::Part::Shown(shown);
+    }
+    if shown == Shown::Ticked {
+        let row = |name: &str| p.programs.rows.iter().position(|r| r.name == name).expect(name);
+        let (tools, paint, notepad) = (row("System Tools"), row("Paint"), row("Notepad"));
+        p.open_all_programs();
+        assert!(p.choose(properties::Part::ProgramRow(tools)) && p.choose(properties::Part::ProgramRow(paint)));
+        p.focus = properties::Part::Programs;
+        p.programs.sel = notepad;
+        p.show_keys = true;
+    }
+    let l = properties::layout(&p, fonts);
+    let mut fb = Framebuffer::new(l.width, l.height, 0);
+    properties::paint(&mut fb, theme, fonts, &p, &l);
+    fb
+}
+
+/// Windows 98's Start menu with Favorites open (two folders and a link) and the first folder's
+/// menu beside it (links only, so no room is kept for arrows).
+fn favorites_scene(theme: &Theme, fonts: &Fonts) -> Framebuffer {
+    let era = Era::Win98;
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, true, vec![]);
+    let bar_top = SCREEN_H - bar.height;
+    screen.blit(&bar, 0, bar_top);
+
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
+    let favorites_index = menu.entries.iter().position(|e| e.label == "F&avorites").expect("Favorites");
+    menu.hover = Some(favorites_index);
+    menu.show_keys = true;
+    let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Start);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+
+    let mut favorites = Folder::default();
+    for folder in ["Channels", "Links"] {
+        favorites.folder_mut(&[folder]);
+    }
+    favorites.add(&[], Item { name: "MSN".to_string(), target: String::new() });
+    for name in ["Microsoft Channel Guide", "Windows Update"] {
+        favorites.add(&["Channels"], Item { name: name.to_string(), target: String::new() });
+    }
+    let folder = icons::favorites_folder();
+    let mut sub = favorites.menu(Some(&folder), |_| Some(icon(&DOCUMENT, 1)));
+    sub.hover = Some(0);
+    sub.show_keys = true;
+    let (sub_fb, sub_layout) = menu_image(theme, fonts, &sub, MenuStyle::Cascade);
+    let parent = Rect::new(x, y, fb.width, fb.height);
+    let entry = entry_on_screen(parent, &layout, favorites_index);
+    let rule = theme.start_menu.submenu;
+    let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, rule, screen_rect);
+    screen.blit(&sub_fb, sx, sy);
+
+    let channels = favorites.folder_at(&[0]).expect("Channels").menu(Some(&folder), |_| Some(icon(&DOCUMENT, 1)));
+    let (ch_fb, _) = menu_image(theme, fonts, &channels, MenuStyle::Cascade);
+    let sub_rect = Rect::new(sx, sy, sub_fb.width, sub_fb.height);
+    let entry = entry_on_screen(sub_rect, &sub_layout, 0);
+    let (cx, cy) = place_submenu(sub_rect, entry, ch_fb.width, ch_fb.height, 3, rule, screen_rect);
+    screen.blit(&ch_fb, cx, cy);
+    screen
+}
+
+/// The bar's right-click menu, opened by a click on the bar at x = 300 and placed the way
+/// the real one is (it flips upward because there is no room below), pointer on the
+/// first entry, "Start with Windows" switched on.
+fn context_menu_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    let menu = Menu { hover: Some(0), ..bar_menu::menu(false) };
+    let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+    let (x, y) = place_popup(300, SCREEN_H - 14, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
+    screen.blit(&fb, x, y);
+    screen
+}
+
+/// Bevel95's desktop with its right-click menu, opened by a click at (200, 150) and placed the
+/// way Windows places such a menu (its corner at the pointer), pointer on the first entry.
+fn desktop_menu_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    let menu = Menu { hover: Some(0), ..bevel_core::desktop::menu(era, false) };
+    let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+    let (x, y) = place_popup(200, 150, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
+    screen.blit(&fb, x, y);
+    screen
+}
+
+/// Bevel95's desktop with its icons: the look's own, then sample items of the owner's (a
+/// folder, a shortcut and a text file with test pictures, a long name). The desktop has the
+/// keyboard; the long name is selected and has the focus, so it shows in full; the Recycle Bin
+/// is full.
+fn desktop_icons_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::desktop_icons::{Desktop, Item as DeskItem, Picture};
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    let item = |name: &str, picture: Picture, shortcut: bool, folder: bool| DeskItem {
+        id: format!("C:\\Users\\Owner\\Desktop\\{name}"),
+        name: name.to_string(),
+        picture,
+        shortcut,
+        folder,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    let mut d = Desktop::new(era, Rect::new(0, 0, WIDTH, SCREEN_H - bar.height));
+    d.set_files(vec![
+        item("Projects", Picture::Folder, false, true),
+        item("Notepad", Picture::Own(Some(icon(&DOCUMENT, 2))), true, false),
+        item("todo.txt", Picture::Own(Some(icon(&MAIL, 2))), false, false),
+        item("Zebra notes - the quick brown fox jumps over the lazy dog.txt", Picture::Own(Some(icon(&DOCUMENT, 2))), false, false),
+    ]);
+    d.recycle_full = true;
+    d.active = true;
+    d.select_only(d.index_of("C:\\Users\\Owner\\Desktop\\Zebra notes - the quick brown fox jumps over the lazy dog.txt"));
+    d.paint(&mut screen, theme, fonts, Rect::new(0, 0, WIDTH, SCREEN_H - bar.height));
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    screen
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ItemScene {
+    Menu,
+    Rename,
+    Cut,
+    Confirm,
+    ExtensionWarning,
+}
+
+/// Bevel95's desktop with some of the owner's items (test pictures) and the menu on an icon,
+/// a label being renamed, a cut icon, or the question before a delete.
+fn desktop_item_scene(theme: &Theme, era: Era, fonts: &Fonts, scene: ItemScene) -> Framebuffer {
+    use bevel_core::delete_confirm::{ConfirmWindow, Question};
+    use bevel_core::desktop::{self as desk, ItemKind};
+    use bevel_core::desktop_icons::{Desktop, EditKey, Item as DeskItem, Picture};
+    use bevel_core::kit::Form;
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    let item = |name: &str, picture: Picture, folder: bool| DeskItem {
+        id: format!("C:\\Users\\Owner\\Desktop\\{name}"),
+        name: name.to_string(),
+        picture,
+        shortcut: false,
+        folder,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    let area = Rect::new(0, 0, WIDTH, SCREEN_H - bar.height);
+    let mut d = Desktop::new(era, area);
+    d.set_files(vec![
+        item("Projects", Picture::Folder, true),
+        item("letter.txt", Picture::Own(Some(icon(&DOCUMENT, 2))), false),
+        item("mail.txt", Picture::Own(Some(icon(&MAIL, 2))), false),
+    ]);
+    d.active = true;
+    d.keys_used = true;
+    let letter = d.index_of("C:\\Users\\Owner\\Desktop\\letter.txt").unwrap();
+    d.select_only(Some(letter));
+    match scene {
+        ItemScene::Rename => {
+            d.begin_rename(letter);
+            for c in "Letter to Mum".chars() {
+                d.rename_key(EditKey::Char(c), false);
+            }
+            d.rename_key(EditKey::Left, true);
+            d.rename_key(EditKey::Left, true);
+            d.rename_key(EditKey::Left, true);
+        }
+        ItemScene::Cut => {
+            d.set_cut(["C:\\Users\\Owner\\Desktop\\mail.txt".to_string(), "C:\\Users\\Owner\\Desktop\\letter.txt".to_string()]);
+        }
+        ItemScene::ExtensionWarning => {
+            d.begin_rename(letter);
+            d.rename_paste("letter.dat");
+            d.rename_asking(true);
+        }
+        ItemScene::Menu | ItemScene::Confirm => {}
+    }
+    if matches!(scene, ItemScene::Confirm | ItemScene::ExtensionWarning) {
+        d.active = false;
+    }
+    d.paint(&mut screen, theme, fonts, area);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    match scene {
+        ItemScene::Menu => {
+            let r = d.icon_rect(letter);
+            let menu = Menu { hover: Some(0), ..desk::item_menu(era, &[ItemKind::File], false) };
+            let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+            let (x, y) = place_popup(r.x + 16, r.y + 16, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
+            screen.blit(&fb, x, y);
+        }
+        ItemScene::Confirm => {
+            let mut w = ConfirmWindow::new(era, Question::File("letter.txt".into()), false);
+            w.layout(fonts);
+            let (ww, wh) = w.size();
+            let mut fb = Framebuffer::new(ww, wh, 0);
+            w.paint(&mut fb, theme, fonts);
+            screen.blit(&fb, (WIDTH - ww) / 2, (SCREEN_H - wh) / 2);
+        }
+        ItemScene::ExtensionWarning => {
+            let mut w = bevel_core::rename_warning::RenameWarning::new(era, true);
+            w.layout(fonts);
+            let (ww, wh) = w.size();
+            let mut fb = Framebuffer::new(ww, wh, 0);
+            w.paint(&mut fb, theme, fonts);
+            let (x, y) = bevel_core::rename_warning::place((WIDTH, SCREEN_H), (ww, wh));
+            screen.blit(&fb, x, y);
+        }
+        _ => {}
+    }
+    screen
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Moving {
+    Select,
+    DragOne,
+    DragSeveral,
+}
+
+/// Bevel95's desktop after some icons were moved (by the real drag code: `Desktop::press`,
+/// `drag_to`, `release`), in the middle of a selection rectangle or a drag.
+fn desktop_moving_scene(theme: &Theme, era: Era, fonts: &Fonts, moving: Moving) -> Framebuffer {
+    use bevel_core::desktop_icons::{Button, Desktop, Item as DeskItem, Mods, Picture};
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    let item = |name: &str, picture: Picture, folder: bool| DeskItem {
+        id: format!("C:\\Users\\Owner\\Desktop\\{name}"),
+        name: name.to_string(),
+        picture,
+        shortcut: false,
+        folder,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    let area = Rect::new(0, 0, WIDTH, SCREEN_H - bar.height);
+    let mut d = Desktop::new(era, area);
+    d.set_files(vec![
+        item("Projects", Picture::Folder, true),
+        item("letter.txt", Picture::Own(Some(icon(&DOCUMENT, 2))), false),
+        item("mail.txt", Picture::Own(Some(icon(&MAIL, 2))), false),
+    ]);
+    d.active = true;
+    let f = fonts.regular;
+    let none = Mods::default();
+    let drag = |d: &mut Desktop, i: usize, dx: i32, dy: i32| {
+        let r = d.icon_rect(i);
+        d.press(f, r.x + 8, r.y + 8, Button::Left, none);
+        d.drag_to(f, r.x + 8 + dx, r.y + 8 + dy);
+        d.release(f, r.x + 8 + dx, r.y + 8 + dy);
+    };
+    let at = |d: &Desktop, name: &str| d.items.iter().position(|i| i.name == name).unwrap();
+    // Spread out: the folder to the middle, the letter beside it, the mail a little lower.
+    for (name, dx, dy) in [("Projects", 230, 40), ("letter.txt", 300, -60), ("mail.txt", 180, 30)] {
+        let i = at(&d, name);
+        drag(&mut d, i, dx, dy);
+    }
+    let r = d.icon_rect(at(&d, "Recycle Bin"));
+    d.press(f, r.x + 8, r.y + 8, Button::Left, none);
+    d.release(f, r.x + 8, r.y + 8);
+    let r = d.icon_rect(at(&d, "Projects"));
+    d.press(f, r.x + 8, r.y + 8, Button::Left, Mods { ctrl: true, shift: false });
+    d.release(f, r.x + 8, r.y + 8);
+    match moving {
+        Moving::Select => {
+            let r = d.icon_rect(at(&d, "letter.txt"));
+            d.press(f, r.right() + 60, r.y - 10, Button::Left, Mods { ctrl: true, shift: false });
+            d.drag_to(f, r.x - 70, r.y + 150);
+        }
+        Moving::DragOne => {
+            let r = d.icon_rect(at(&d, "Projects"));
+            d.press(f, r.x + 8, r.y + 8, Button::Left, none);
+            d.release(f, r.x + 8, r.y + 8);
+            d.press(f, r.x + 8, r.y + 8, Button::Left, none);
+            d.drag_to(f, r.x + 60, r.y + 25);
+        }
+        Moving::DragSeveral => {
+            let r = d.icon_rect(at(&d, "mail.txt"));
+            d.press(f, r.x + 8, r.y + 8, Button::Left, Mods { ctrl: true, shift: false });
+            d.release(f, r.x + 8, r.y + 8);
+            d.press(f, r.x + 8, r.y + 8, Button::Left, none);
+            d.drag_to(f, r.x + 8 + 150, r.y + 8 - 120);
+        }
+    }
+    d.paint(&mut screen, theme, fonts, area);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    screen
+}
+
+/// Dragging files: mail.txt carried over the Projects folder (drawn selected as the drop place),
+/// its dragged picture as the window beside the pointer shows it (laid over the screen with its
+/// see-through pixels), and the look's copy pointer; with `menu`, the right-button drag's menu
+/// opened at the drop instead, Move Here bold.
+fn drag_files_scene(theme: &Theme, era: Era, fonts: &Fonts, menu: bool) -> Framebuffer {
+    use bevel_core::desktop_icons::{Button, Desktop, Item as DeskItem, Mods, Picture};
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    let item = |name: &str, picture: Picture, folder: bool| DeskItem {
+        id: format!("C:\\Users\\Owner\\Desktop\\{name}"),
+        name: name.to_string(),
+        picture,
+        shortcut: false,
+        folder,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    let area = Rect::new(0, 0, WIDTH, SCREEN_H - bar.height);
+    let mut d = Desktop::new(era, area);
+    d.set_files(vec![item("Projects", Picture::Folder, true), item("mail.txt", Picture::Own(Some(icon(&MAIL, 2))), false)]);
+    d.active = true;
+    let f = fonts.regular;
+    let at = |d: &Desktop, name: &str| d.items.iter().position(|i| i.name == name).unwrap();
+    let mail = at(&d, "mail.txt");
+    let r = d.icon_rect(mail);
+    let from = (r.x + 8, r.y + 8);
+    d.press(f, from.0, from.1, Button::Left, Mods::default());
+    d.drag_to(f, from.0 + 40, from.1);
+    let (items, from, _) = d.take_drag().expect("a drag began");
+    let target = d.icon_rect(at(&d, "Projects"));
+    let pointer = (target.x + 14, target.y + 12);
+    d.drop_hover = d.drop_target(f, pointer.0, pointer.1, &[d.items[mail].id.clone()]);
+    assert!(d.drop_hover.is_some(), "the folder takes the file");
+    let picture = d.drag_picture(theme, f, &items, desktop(era));
+    d.drop_hover = d.drop_hover.filter(|_| !menu);
+    d.paint(&mut screen, theme, fonts, area);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    if menu {
+        let (m, _) = bevel_core::drag::drop_menu(era, bevel_core::drag::Effect::Move, &[bevel_core::drag::Effect::Move, bevel_core::drag::Effect::Copy, bevel_core::drag::Effect::Link]);
+        let (fb, _) = menu_image(theme, fonts, &Menu { hover: Some(0), ..m }, MenuStyle::Popup);
+        let (x, y) = place_popup(pointer.0, pointer.1, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
+        screen.blit(&fb, x, y);
+        return screen;
+    }
+    if let Some((pic, x0, y0)) = picture {
+        let (dx, dy) = (pointer.0 - from.0, pointer.1 - from.1);
+        for y in 0..pic.height {
+            for x in 0..pic.width {
+                let p = pic.get(x, y);
+                let a = p >> 24;
+                let (sx, sy) = (x0 + dx + x, y0 + dy + y);
+                if a == 0 || sx < 0 || sy < 0 || sx >= screen.width || sy >= screen.height {
+                    continue;
+                }
+                let under = screen.get(sx, sy);
+                let ch = |s: u32| ((((p >> s) & 0xFF) * a + ((under >> s) & 0xFF) * (255 - a)) / 255) << s;
+                screen.set(sx, sy, 0xFF00_0000 | ch(16) | ch(8) | ch(0));
+            }
+        }
+    }
+    let art = bevel_core::drag::pointer(era, Some(bevel_core::drag::Effect::Copy));
+    let (w, h) = art.size();
+    for y in 0..h {
+        for x in 0..w {
+            let p = art.pixel(x, y);
+            if p != 0 {
+                screen.set(pointer.0 + x, pointer.1 + y, p);
+            }
+        }
+    }
+    screen
+}
+
+/// Three apps, one of them with three windows (so its button reads "3 Notepad" and is the
+/// active one), and that app's list of windows open above its button, pointer on the
+/// second window. The buttons come from the real grouping code (`TaskList`).
+fn window_list_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let window = |id: u64, title: &str, app: &str, flashing: bool| WindowInfo {
+        id,
+        title: title.to_string(),
+        group: format!("C:\\Program Files\\{app}\\{app}.exe"),
+        app_name: app.to_string(),
+        flashing,
+        classic: None,
+    };
+    let windows = [
+        window(1, "My Computer", "Explorer", false),
+        window(2, "todo.txt - Notepad", "Notepad", false),
+        window(3, "Inbox - Outlook Express", "Outlook Express", true),
+        window(4, "notes.txt - Notepad", "Notepad", false),
+        window(5, "Untitled - Notepad", "Notepad", false),
+    ];
+    let art = |app: &str| match app {
+        "Explorer" => &COMPUTER,
+        "Notepad" => &DOCUMENT,
+        _ => &MAIL,
+    };
+    let groups = TaskList::default().update(&windows, Some(4));
+    let app_of = |group: &Group| windows.iter().find(|w| w.id == group.windows[0]).map(|w| w.app_name.clone());
+    let tasks = groups.iter().map(|g| task(&g.label, art(&app_of(g).unwrap_or_default()), g.state)).collect();
+
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let mut bar = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let layout = paint::paint_bar(&mut bar, theme, fonts, &Bar { tasks, clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() });
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+
+    let notepad = groups.iter().position(|g| g.windows.len() == 3).expect("the Notepad group");
+    let entries = groups[notepad]
+        .windows
+        .iter()
+        .filter_map(|id| windows.iter().find(|w| w.id == *id))
+        .map(|w| MenuEntry::item(&w.title, Some(icon(&DOCUMENT, 1))))
+        .collect();
+    let menu = Menu { hover: Some(1), ..Menu::new(entries) };
+    let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Cascade);
+    let button = layout.tasks[notepad];
+    let (x, y) = place_popup(button.x, SCREEN_H - bar.height, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
+    screen.blit(&fb, x, y);
+    screen
+}
+
+/// The right-click menu with the pointer on Bevel95 and its submenu open beside it; with
+/// `which` (Theme or Size), the pointer on that entry of the submenu and its own submenu open
+/// beside it, the current choice (this look; 2×) marked with a bullet. All placed as the real
+/// windows are.
+fn bar_submenu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: Option<BarEntry>) -> Framebuffer {
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+
+    let index = bar_menu::index_of(false, BarEntry::Bevel95).expect("the Bevel95 entry");
+    let menu = Menu { hover: Some(index), ..bar_menu::menu(false) };
+    let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+    let (x, y) = place_popup(300, SCREEN_H - 14, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+
+    // The classic desktop on (as it starts) and its key registered.
+    let on = bar_menu::Own { desktop: true, desktop_key: true };
+    let own_index = which.and_then(|e| bar_menu::own_index_of(on, e));
+    let own = Menu { hover: own_index, ..bar_menu::own_menu(on) };
+    let (own_fb, own_layout) = menu_image(theme, fonts, &own, MenuStyle::Popup);
+    let parent = Rect::new(x, y, fb.width, fb.height);
+    let entry = entry_on_screen(parent, &layout, index);
+    let (ox, oy) = place_submenu(parent, entry, own_fb.width, own_fb.height, 3, theme.popup.submenu, screen_rect);
+    screen.blit(&own_fb, ox, oy);
+    let (Some(which), Some(own_index)) = (which, own_index) else {
+        return screen;
+    };
+
+    let submenu = match which {
+        BarEntry::Theme => bar_menu::theme_menu(era),
+        BarEntry::Colors => bar_menu::colors_menu(theme.depth),
+        _ => bar_menu::size_menu(2),
+    };
+    let (sub, _) = menu_image(theme, fonts, &submenu, MenuStyle::Popup);
+    let parent = Rect::new(ox, oy, own_fb.width, own_fb.height);
+    let entry = entry_on_screen(parent, &own_layout, own_index);
+    let (sx, sy) = place_submenu(parent, entry, sub.width, sub.height, 3, theme.popup.submenu, screen_rect);
+    screen.blit(&sub, sx, sy);
+    screen
+}
+
+/// The menu of Bevel95's own notification icon (`tray_icon::menu`) as its window shows it, nothing
+/// highlighted (it opens over Windows' taskbar, which is not drawn here).
+fn own_icon_menu_image(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let menu = Menu { show_keys: era.always_shows_keys(), ..bevel_core::tray_icon::menu() };
+    menu_image(theme, fonts, &menu, MenuStyle::Popup).0
+}
+
+/// The desktop's right-click menu (as `desktop_menu_scene`) with the pointer on Bevel95 and its
+/// submenu open beside it.
+fn desktop_own_menu_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = bar_image(theme, fonts, false, vec![]);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    let menu = bevel_core::desktop::menu(era, false);
+    let index = menu.entries.len() - 1;
+    let menu = Menu { hover: Some(index), ..menu };
+    let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+    let (x, y) = place_popup(200, 150, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+    let (sub, _) = menu_image(theme, fonts, &bevel_core::desktop::own_menu(true), MenuStyle::Popup);
+    let parent = Rect::new(x, y, fb.width, fb.height);
+    let entry = entry_on_screen(parent, &layout, index);
+    let (sx, sy) = place_submenu(parent, entry, sub.width, sub.height, 3, theme.popup.submenu, screen_rect);
+    screen.blit(&sub, sx, sy);
+    screen
+}
+
+/// A dialog as it first opens (Run with "notepad" typed, to show the text and the caret).
+fn dialog_scene(theme: &Theme, fonts: &Fonts, kind: DialogKind, era: Era) -> Framebuffer {
+    let mut d = Dialog::new(kind, era);
+    if kind == DialogKind::Run {
+        d.text = "notepad".to_string();
+        d.caret = 7;
+    }
+    let l = dialog::layout(&d);
+    let mut fb = Framebuffer::new(l.width, l.height, 0);
+    dialog::paint_dialog(&mut fb, theme, fonts, &d, &l);
+    fb
+}
+
+/// Run with its list of earlier commands open under the field, on the desktop's color, as the
+/// window host shows it (the window and the list beside the window's bottom edge).
+fn run_list_scene(theme: &Theme, fonts: &Fonts, era: Era) -> Framebuffer {
+    use bevel_core::dialog::DialogWindow;
+    use bevel_core::kit::{Controller, Form, Key, Mods};
+    let history = [
+        "notepad", "calc", "winver", "charmap", "c:\\", "c:\\windows", "sol", "freecell", "winmine", "control desk.cpl",
+        "sndvol32 /t", "explorer",
+    ];
+    let mut w = DialogWindow::new(Dialog::new(DialogKind::Run, era), history.iter().map(|c| c.to_string()).collect());
+    w.layout(fonts);
+    let mut c = Controller::default();
+    let button = w.rect(dialog::Part::DropDown).unwrap();
+    c.mouse_down(&mut w, button.x + 8, button.y + 8);
+    c.mouse_up(&mut w, button.x + 8, button.y + 8);
+    for _ in 0..3 {
+        c.key(&mut w, Key::Down, Mods::default());
+    }
+    w.dialog.caret_on = false;
+    let (width, height) = w.size();
+    let drop = w.drop_rect().unwrap();
+    let mut fb = Framebuffer::new(width.max(drop.right()), height.max(drop.bottom()), theme.colors.desktop);
+    let mut own = Framebuffer::new(width, height, 0);
+    w.paint(&mut own, theme, fonts);
+    fb.blit(&own, 0, 0);
+    let mut list = Framebuffer::new(drop.w, drop.h, 0);
+    w.paint_drop(&mut list, theme, fonts);
+    fb.blit(&list, drop.x, drop.y);
+    fb
+}
+
+/// A known mine layout that fits the Beginner board in all three versions.
+const FIELD_MINES: [(usize, usize); 10] = [(3, 0), (0, 2), (7, 6), (6, 7), (5, 3), (1, 6), (2, 6), (7, 1), (4, 5), (7, 3)];
+
+/// About Bevel95 as it opens, the build shown as "1a2b3c4" (the real one is the commit).
+fn about_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::kit::Form;
+    let mut w = bevel_core::about::AboutWindow::new(era, "1a2b3c4");
+    w.layout(fonts);
+    let (width, height) = w.size();
+    let mut fb = Framebuffer::new(width, height, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
+}
+
+/// Bevel95 Setup's pages in `era`'s look, as they open: a first run, its second page (the
+/// questions, with this look chosen), and another copy over an installed one.
+fn setup_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::kit::Form;
+    use bevel_core::setup::{Setup, SetupKind, SetupWindow};
+    let setup = match which {
+        "first-run" => Setup::in_look(SetupKind::FirstRun, era),
+        "questions" => {
+            let mut s = Setup::in_look(SetupKind::FirstRun, era);
+            assert!(!s.ok());
+            s
+        }
+        "update" => Setup::in_look(SetupKind::OtherCopy { newer: true, can_run: true }, era),
+        "update-one-file" => Setup::in_look(SetupKind::OtherCopy { newer: true, can_run: false }, era),
+        _ => unreachable!("{which}"),
+    };
+    let mut w = SetupWindow::new(setup, fonts.regular);
+    w.layout(fonts);
+    let (width, height) = w.size();
+    let mut fb = Framebuffer::new(width, height, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
+}
+
+/// Deterministic play, loss, win and dialog scenes using the same forms as the game window.
+fn calculator_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::calculator::dialogs::About;
+    use bevel_core::calculator::form::{CalculatorWindow, Command, Part};
+    use bevel_core::kit::Form;
+    fn image<F: Form>(form: &mut F, theme: &Theme, fonts: &Fonts) -> Framebuffer {
+        form.layout(fonts);
+        let (w, h) = form.size();
+        let mut fb = Framebuffer::new(w, h, 0);
+        form.paint(&mut fb, theme, fonts);
+        fb
+    }
+    let mut w = CalculatorWindow::new(era);
+    match which {
+        "play" => {
+            w.paste_text("42:m1/3=");
+            w.press(Some(Part::Button(7)), 0, 0);
+            w.set_pressed(Some(Part::Button(7)));
+            image(&mut w, theme, fonts)
+        }
+        "menu" => {
+            w.command(Command::DigitGrouping);
+            w.paste_text("1234567.89");
+            w.show_menu(Some(1));
+            let window = image(&mut w, theme, fonts);
+            let (dropped, _) = menu_image(theme, fonts, &w.menu(1), MenuStyle::Popup);
+            let title = w.title_rect(1).expect("the View title");
+            let mut fb = Framebuffer::new(window.width.max(title.x + dropped.width), window.height, 0);
+            fb.blit(&window, 0, 0);
+            fb.blit(&dropped, title.x, title.bottom());
+            fb
+        }
+        "scientific" => {
+            w.command(Command::Scientific);
+            w.paste_text("7:m2*(3+FF");
+            w.engine.press(bevel_core::calculator::engine::Key::Radix(bevel_core::calculator::engine::Radix::Hex));
+            w.paste_text("ih");
+            image(&mut w, theme, fonts)
+        }
+        "statistics" => {
+            w.command(Command::Scientific);
+            w.engine.press(bevel_core::calculator::engine::Key::Sta);
+            w.paste_text("5\\7\\2.5\\");
+            let mut stats = bevel_core::calculator::stats::StatsBox::new(era);
+            stats.set_lines(w.engine.stats_lines());
+            image(&mut stats, theme, fonts)
+        }
+        _ => image(&mut About::new(era, Some(261_684)), theme, fonts),
+    }
+}
+
+fn minefield_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::kit::{Controller, Form};
+    use bevel_core::minefield::board::SQUARE;
+    use bevel_core::minefield::dialogs::Sheet;
+    use bevel_core::minefield::form::{MinefieldWindow, Part};
+    use bevel_core::minefield::game::{Field, Game, Level};
+    use bevel_core::minefield::scores::Settings;
+    fn image<F: Form>(form: &mut F, theme: &Theme, fonts: &Fonts) -> Framebuffer {
+        form.layout(fonts);
+        let (w, h) = form.size();
+        let mut fb = Framebuffer::new(w, h, 0);
+        form.paint(&mut fb, theme, fonts);
+        fb
+    }
+    let custom = Field { width: 20, height: 12, mines: 40 };
+    let mut w = MinefieldWindow::new(era, Level::Beginner, custom, true, 1);
+    w.layout(fonts);
+    let field = w.field();
+    w.game = Game::with_mines(field.width, field.height, &FIELD_MINES);
+    match which {
+        "play" => {
+            for (x, y) in [(0, 0), (6, 2), (5, 4), (6, 5)] {
+                w.game.open(x, y);
+            }
+            w.game.mark(3, 0, true);
+            w.game.mark(5, 3, true);
+            w.game.mark(7, 7, true);
+            w.game.mark(7, 7, true);
+            w.game.set_seconds(47);
+            let grid = w.rect(Part::Field).expect("the field's hit rectangle");
+            let mut held = Controller::default();
+            held.mouse_down(&mut w, grid.x + 4 * SQUARE + SQUARE / 2, grid.y + 7 * SQUARE + SQUARE / 2);
+            image(&mut w, theme, fonts)
+        }
+        "lost" => {
+            w.game.open(0, 0);
+            w.game.open(6, 5);
+            w.game.mark(3, 0, true);
+            w.game.mark(4, 4, true);
+            w.game.open(5, 3);
+            w.game.stop_clock(112);
+            w.set_active(false);
+            image(&mut w, theme, fonts)
+        }
+        "menu" => {
+            for y in 0..field.height {
+                for x in 0..field.width {
+                    if !FIELD_MINES.contains(&(x, y)) {
+                        w.game.open(x, y);
+                    }
+                }
+            }
+            w.game.stop_clock(318);
+            w.show_menu(Some(0));
+            let window = image(&mut w, theme, fonts);
+            // The Game menu drops from its title: under the menu bar, at the title's left edge.
+            let mut menu = w.menu(0);
+            menu.hover = Some(3);
+            let title = w.title_rect(0).expect("the Game title");
+            let (dropped, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+            let mut fb = Framebuffer::new(
+                window.width.max(title.x + dropped.width),
+                window.height.max(title.bottom() + dropped.height),
+                desktop(era),
+            );
+            fb.blit(&window, 0, 0);
+            fb.blit(&dropped, title.x, title.bottom());
+            fb
+        }
+        "custom" => image(&mut Sheet::custom(era, custom, (Field::MAX_WIDTH, Field::MAX_HEIGHT)), theme, fonts),
+        "best" => {
+            let mut settings = Settings::default();
+            settings.record(Level::Beginner, 12, "Ada");
+            settings.record(Level::Expert, 301, "Grace Hopper");
+            image(&mut Sheet::best_times(era, &settings), theme, fonts)
+        }
+        other => panic!("no Minesweeper scene called {other}"),
+    }
+}
+
+/// The bottom right of a 640×480 screen: the bar with three notification icons (two test
+/// drawings and the classic speaker), and either a tooltip over the first icon (the pointer
+/// resting on it) or the volume control opened from the speaker.
+fn tray_scene(theme: &Theme, era: Era, fonts: &Fonts, msans: &Font, volume_open: bool) -> Framebuffer {
+    use bevel_core::{tooltip, volume};
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let mut bar = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let state = Bar {
+        tray: vec![Some(icon(&MAIL, 1)), Some(icon(&FOLDER, 1)), Some(icons::speaker(false))],
+        clock: CLOCK.to_string(),
+        clock_widest: WIDEST.to_string(),
+        ..Bar::default()
+    };
+    let layout = paint::paint_bar(&mut bar, theme, fonts, &state);
+    let bar_y = SCREEN_H - bar.height;
+    screen.blit(&bar, 0, bar_y);
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    if volume_open {
+        let speaker = layout.tray[2];
+        let at = (speaker.x + 8, bar_y + speaker.y + 8);
+        let (x, y) = place_popup(at.0, at.1, volume::SIZE.0, volume::SIZE.1, screen_rect);
+        let mut popup = Framebuffer::new(volume::SIZE.0, volume::SIZE.1, 0);
+        let v = volume::VolumeControl {
+            level: 0.7,
+            muted: false,
+            focus: volume::Focus::Slider,
+            show_keys: era.always_shows_keys(),
+            mute_pressed: false,
+        };
+        volume::paint(&mut popup, theme, msans, &v);
+        screen.blit(&popup, x, y);
+    } else {
+        let first = layout.tray[0];
+        let tool = Rect::new(first.x, bar_y + first.y, first.w, first.h);
+        let text = "Inbox - 3 new messages";
+        let (w, h) = tooltip::size(fonts.regular, text);
+        let work = Rect::new(0, 0, WIDTH, bar_y);
+        let (x, y) = tooltip::place((first.x + 8, tool.y + 8), w, h, tool, screen_rect, work, 20, 1);
+        let mut tip = Framebuffer::new(w, h, 0);
+        tooltip::paint(&mut tip, theme, fonts.regular, text);
+        screen.blit(&tip, x, y);
+    }
+    // Only the bottom right corner matters.
+    let mut out = Framebuffer::new(320, 200, 0);
+    out.blit(&screen, -(WIDTH - 320), -(SCREEN_H - 200));
+    out
+}
+
+thread_local! {
+    /// The colors of the scenes being drawn (the 16-color scenes set it while they are drawn).
+    static DEPTH: std::cell::Cell<Depth> = const { std::cell::Cell::new(Depth::TrueColor) };
+}
+
+/// The desktop behind the scenes: each look's own desktop color, which Bevel95's desktop shows
+/// (in the colors of the scenes being drawn).
+fn desktop(era: Era) -> u32 {
+    bevel_core::theme::theme_in(era, DEPTH.get()).colors.desktop
+}
+
+/// One golden image, and where and how it appears in `docs/preview.html`.
+struct Scene {
+    section: &'static str,
+    name: String,
+    caption: &'static str,
+    image: Framebuffer,
+}
+
+fn scenes() -> Vec<Scene> {
+    let mut out = Vec::new();
+    let looks = [
+        (&WIN95, Era::Win95, "Windows 95"),
+        (&WIN98, Era::Win98, "Windows 98"),
+        (&WIN2000, Era::Win2000, "Windows 2000"),
+    ];
+    for (theme, era, section) in looks {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let mut add = |state: &str, caption: &'static str, image: Framebuffer| {
+            out.push(Scene { section, name: format!("{}-{state}", theme.slug), caption, image });
+        };
+        add("empty", "Empty bar", bar_image(theme, &fonts, false, vec![]));
+        add("three-groups", "Three groups: normal, active, flashing", bar_image(theme, &fonts, false, three_groups()));
+        add("start-pressed", "Start pressed", bar_image(theme, &fonts, true, vec![]));
+        add(
+            "crowded",
+            "Crowded: nine buttons shrink, all to the same width, and cut their titles",
+            bar_image(theme, &fonts, false, crowded()),
+        );
+        add(
+            "overfull",
+            "Too many buttons: they shrink to their icons, then scroll arrows page through rows (first row)",
+            bar_image(theme, &fonts, false, overfull()),
+        );
+        add("overfull-row-2", "The second row, down arrow held down", second_row_image(theme, &fonts));
+        add(
+            "drag",
+            "Dragging a task button (Bevel95's own, as from Windows 7): My Computer follows the pointer over the others, Word halfway through its slide to the free place",
+            drag_image(theme, &fonts),
+        );
+        add(
+            "window-menu",
+            "Right-click on a task button: its window's menu, pointer on Maximize (pictures in 98 and 2000)",
+            task_menu_scene(theme, era, &fonts, false),
+        );
+        add(
+            "group-menu",
+            "Right-click on a button with several windows: the group menu (Windows XP's)",
+            task_menu_scene(theme, era, &fonts, true),
+        );
+        add(
+            "start-menu",
+            "Start menu open, pointer on Programs, its menu open beside it (classic icons from the real Start menu; the app icons are test drawings; the desktop color is only scenery)",
+            start_menu_scene(theme, era, &fonts),
+        );
+        add(
+            "start-menu-small",
+            "Start menu with \"Show small icons in Start menu\" on, pointer on Settings (Windows 98's exact; 95's and 2000's provisional)",
+            start_menu_small_scene(theme, era, &fonts),
+        );
+        add(
+            "context-menu",
+            "Right-click menu on the bar, pointer on the first entry",
+            context_menu_scene(theme, era, &fonts),
+        );
+        add(
+            "properties",
+            "Properties (right-click the bar): Windows' own first page, its preview showing the options",
+            properties_scene(theme, era, &fonts, properties::Sheet::Taskbar, 0),
+        );
+        add(
+            "properties-start-menu",
+            "Properties, second page (Windows 2000: Advanced; entries Bevel95 does not do are grayed out)",
+            properties_scene(theme, era, &fonts, properties::Sheet::Taskbar, 1),
+        );
+        add(
+            "remove-shortcuts",
+            "Remove Shortcuts/Folders (Properties, second page, Remove...): Windows' own tree of the Programs menu",
+            remove_scene(theme, era, &fonts),
+        );
+        add(
+            "bevel95-settings",
+            "Bevel95 Settings (right-click the bar): look, size, starting with Windows, and the clock",
+            properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 0),
+        );
+        add(
+            "bevel95-settings-taskbar",
+            "Bevel95 Settings, Taskbar page: what the Windows key opens, and grouping a program's buttons (Windows XP's wording)",
+            properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 1),
+        );
+        add(
+            "bevel95-settings-desktop",
+            "Bevel95 Settings, Desktop page: the switch for Bevel95's own desktop",
+            properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 2),
+        );
+        add(
+            "bevel95-settings-programs",
+            "Bevel95 Settings, Programs page as it opens: the menu shows everything; the tree's folders are closed",
+            programs_scene(theme, era, &fonts, Shown::Everything),
+        );
+        add(
+            "bevel95-settings-programs-classic",
+            "Programs page, Bevel95's own classic programs chosen: their folders open to show them",
+            programs_scene(theme, era, &fonts, Shown::Classic),
+        );
+        add(
+            "bevel95-settings-programs-ticked",
+            "Programs page, only the ticked programs, every folder open: a folder with some unticked is half ticked",
+            programs_scene(theme, era, &fonts, Shown::Ticked),
+        );
+        add(
+            "desktop-icons",
+            "Bevel95's desktop icons: the look's own (Recycle Bin full), then the owner's items in columns (test pictures); the long name is selected and has the keyboard focus, so it shows in full",
+            desktop_icons_scene(theme, era, &fonts),
+        );
+        add(
+            "desktop-menu",
+            "Bevel95's desktop (each look's own color) with its right-click menu, pointer on the first entry",
+            desktop_menu_scene(theme, era, &fonts),
+        );
+        add(
+            "desktop-bevel95-menu",
+            "The desktop's right-click menu with its Bevel95 submenu open",
+            desktop_own_menu_scene(theme, era, &fonts),
+        );
+        add(
+            "desktop-select",
+            "Bevel95's desktop with icons moved to free places: Ctrl+click chose one, the dotted selection rectangle (being drawn) two more",
+            desktop_moving_scene(theme, era, &fonts, Moving::Select),
+        );
+        add(
+            "desktop-drag",
+            "One icon being dragged over another: Windows 95's checkerboard, 98's half-and-half, 2000's see-through picture; the icon stays behind, selected",
+            desktop_moving_scene(theme, era, &fonts, Moving::DragOne),
+        );
+        add(
+            "desktop-drag-several",
+            "Three selected icons being dragged: dotted outlines in Windows 95 and 98, see-through pictures in 2000",
+            desktop_moving_scene(theme, era, &fonts, Moving::DragSeveral),
+        );
+        add(
+            "drag-files",
+            "A file dragged with Ctrl onto a folder: the folder drawn selected as the drop place, the look's dragged picture beside the pointer, the copy pointer",
+            drag_files_scene(theme, era, &fonts, false),
+        );
+        add(
+            "drag-files-menu",
+            "The right-button drag's menu at the drop: Move Here (bold), Copy Here, Create Shortcut(s) Here, Cancel (2000: Copy Here first)",
+            drag_files_scene(theme, era, &fonts, true),
+        );
+        add(
+            "desktop-item-menu",
+            "The menu on a file's icon (each look's own entries that work here; Open in bold), pointer on Open",
+            desktop_item_scene(theme, era, &fonts, ItemScene::Menu),
+        );
+        add(
+            "desktop-rename",
+            "A label being renamed: the edit box over it, the end of the typed name selected, the caret after it",
+            desktop_item_scene(theme, era, &fonts, ItemScene::Rename),
+        );
+        add(
+            "desktop-cut",
+            "Two icons after Cut: their pictures faded as each look drew them (one of them selected)",
+            desktop_item_scene(theme, era, &fonts, ItemScene::Cut),
+        );
+        add(
+            "desktop-confirm-delete",
+            "The look's own Confirm File Delete window before a file goes to the Recycle Bin, Yes focused",
+            desktop_item_scene(theme, era, &fonts, ItemScene::Confirm),
+        );
+        add(
+            "desktop-rename-extension",
+            "Renaming letter.txt to letter.dat: the look's own Rename warning over the rename box, Yes focused",
+            desktop_item_scene(theme, era, &fonts, ItemScene::ExtensionWarning),
+        );
+        add(
+            "bevel95-menu",
+            "Right-click menu with its Bevel95 submenu open: everything of Bevel95's own in one entry",
+            bar_submenu_scene(theme, era, &fonts, None),
+        );
+        add("about", "About Bevel95 (Bevel95 > About Bevel95): name, version and build, what it is, the notice (wording provisional)", about_scene(theme, era, &fonts));
+        add(
+            "own-icon-menu",
+            "The menu of Bevel95's own icon in Windows' notification area (there only while switched to Windows' taskbar), alone; wording provisional",
+            own_icon_menu_image(theme, era, &fonts),
+        );
+        add("setup-first-run", "Bevel95 Setup on a PC without Bevel95 (the one file started): install or keep it portable", setup_scene(theme, era, &fonts, "first-run"));
+        add("setup-questions", "Bevel95 Setup's second page when installing: the look (the window is drawn in the one chosen), the classic desktop, the Windows key, Start with Windows; the owner's defaults ticked", setup_scene(theme, era, &fonts, "questions"));
+        add("setup-update", "Bevel95 Setup over an installed Bevel95 (drawn in its look): update, just run this copy, or remove", setup_scene(theme, era, &fonts, "update"));
+        add("setup-update-one-file", "Bevel95 Setup over an installed Bevel95, started from the one file: update or remove (its programs are only inside the file, so it cannot just run)", setup_scene(theme, era, &fonts, "update-one-file"));
+        add(
+            "theme-menu",
+            "Right-click menu, Bevel95, with the Theme submenu open; the look in use has a bullet (bullet shape provisional)",
+            bar_submenu_scene(theme, era, &fonts, Some(BarEntry::Theme)),
+        );
+        add(
+            "size-menu",
+            "Right-click menu, Bevel95, with the Size submenu open; the size in use (2×) has a bullet (bullet shape provisional)",
+            bar_submenu_scene(theme, era, &fonts, Some(BarEntry::Size)),
+        );
+        add("run", "Run, with \"notepad\" typed", dialog_scene(theme, &fonts, DialogKind::Run, era));
+        add(
+            "run-list",
+            "Run's list of earlier commands, dropped down by its button and moved down three with the arrow key (12 commands: a scroll bar; 2000 shows them all with the bar grayed)",
+            run_list_scene(theme, &fonts, era),
+        );
+        add(
+            "find-programs",
+            "Quick Search (Bevel95's own, opened by the Windows key) with \"p\" typed",
+            find_scene(theme, era, &fonts),
+        );
+        add("shut-down", "Shut Down Windows", dialog_scene(theme, &fonts, DialogKind::ShutDown, era));
+        if era != Era::Win95 {
+            add(
+                "log-off",
+                "Log Off Windows (Windows 98 and 2000)",
+                dialog_scene(theme, &fonts, DialogKind::LogOff, era),
+            );
+        }
+        if era == Era::Win98 {
+            add(
+                "favorites",
+                "Start menu with Favorites open: folders get Windows 98's folder icon, and a menu without submenus is narrower",
+                favorites_scene(theme, &fonts),
+            );
+        }
+        add(
+            "window-list",
+            "One button per app: Notepad has 3 windows (active), Outlook Express wants attention; Notepad's list of windows is open",
+            window_list_scene(theme, era, &fonts),
+        );
+        // The volume control's text is MS Sans Serif in every look.
+        let msans = load_font(&WIN95, false);
+        add(
+            "tray-tooltip",
+            "Notification area: two programs' icons (test drawings), the classic speaker, the clock; the pointer rests on the first icon, so its tooltip shows",
+            tray_scene(theme, era, &fonts, &msans, false),
+        );
+        add(
+            "volume",
+            "The speaker clicked: the classic volume control at 70% (Windows 2000's exact; 95's and 98's provisional)",
+            tray_scene(theme, era, &fonts, &msans, true),
+        );
+        add(
+            "minefield",
+            "Minesweeper in play, with flags, a question mark and a square held down",
+            minefield_scene(theme, era, &fonts, "play"),
+        );
+        add(
+            "minefield-lost",
+            "Minesweeper after a loss, inactive, with the detonated mine, remaining mines and a wrong flag",
+            minefield_scene(theme, era, &fonts, "lost"),
+        );
+        add(
+            "minefield-menu",
+            "Minesweeper after a win, with Intermediate highlighted in the Game menu",
+            minefield_scene(theme, era, &fonts, "menu"),
+        );
+        add("minefield-custom", "Minesweeper's Custom Field dialog", minefield_scene(theme, era, &fonts, "custom"));
+        add("minefield-best-times", "Minesweeper's best times", minefield_scene(theme, era, &fonts, "best"));
+        add(
+            "calculator",
+            "Calculator: 1 ÷ 3 = with a number in memory, the 7 held down with the mouse",
+            calculator_scene(theme, era, &fonts, "play"),
+        );
+        add(
+            "calculator-menu",
+            "Calculator's View menu (Windows 2000: Digit grouping on), a grouped number behind it",
+            calculator_scene(theme, era, &fonts, "menu"),
+        );
+        add("calculator-about", "About Calculator", calculator_scene(theme, era, &fonts, "about"));
+        add(
+            "calculator-scientific",
+            "Calculator's Scientific view: Hex, a parenthesis open, memory, Inv and Hyp ticked",
+            calculator_scene(theme, era, &fonts, "scientific"),
+        );
+        add(
+            "calculator-statistics",
+            "Calculator's Statistics Box with three numbers, the last one chosen",
+            calculator_scene(theme, era, &fonts, "statistics"),
+        );
+    }
+    // Windows 98's and 2000's folder windows: Explorer's toolbar and address bar.
+    for (era, theme, section) in [(Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let prefix = if era == Era::Win98 { "win98" } else { "win2000" };
+        for (state, caption) in [
+            ("folder-explorer", "A folder window gone from My Computer to a folder (Back and Up lit), a file selected, the pointer on a toolbar button"),
+            ("folder-explorer-list", "The address bar's list open: the Desktop, My Computer and its drives, the way down to the folder shown"),
+        ] {
+            out.push(Scene { section, name: format!("{prefix}-{state}"), caption, image: explorer_scene(theme, era, &fonts, state) });
+        }
+    }
+    // Explorer: the tree of all folders beside the icons, in each look.
+    for (era, theme, section) in [(Era::Win95, &WIN95, "Windows 95"), (Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let caption = "Explorer: the tree of all folders opened down to a folder (selected, the tree has the keyboard), its icons beside it";
+        out.push(Scene { section, name: format!("{}-explorer-tree", era_prefix(era)), caption, image: tree_scene(theme, era, &fonts) });
+    }
+    // Windows 95's folder windows.
+    {
+        let (regular, bold) = (load_font(&WIN95, false), load_font(&WIN95, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        for (state, caption) in [
+            ("folder-mycomputer", "A folder window: My Computer with its drives, Control Panel and Printers, the hard disk selected (its free space in the status bar)"),
+            ("folder-files", "A folder of files made narrower than its icons: they stay where they were and scroll bars come; the long name selected, in full"),
+            ("folder-menu", "A folder window's File menu with a file selected: the status bar shows the highlighted entry's help text"),
+        ] {
+            out.push(Scene { section: "Windows 95", name: format!("win95-{state}"), caption, image: folder_scene(&fonts, state) });
+        }
+    }
+    // Folder views in each look: Details sorted by size, reversed, a file selected; List and Small
+    // Icons of the same folder.
+    for (era, theme, section) in [(Era::Win95, &WIN95, "Windows 95"), (Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        for (mode, state, caption) in [
+            (ViewMode::Details, "folder-details", "Details: sorted by Size twice (biggest first, folders last), a file selected; 2000 shows the sort arrow"),
+            (ViewMode::List, "folder-list", "List: the items column after column, one selected"),
+            (ViewMode::Small, "folder-small", "Small Icons: rows of small pictures, the long label in full"),
+        ] {
+            out.push(Scene { section, name: format!("{}-{state}", era_prefix(era)), caption, image: views_scene(theme, era, &fonts, mode) });
+        }
+    }
+    // The web view panel of 98's and 2000's folder windows.
+    for (era, theme, section) in [(Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        for (state, caption) in [
+            ("folder-web", "The web view: a file selected, its name, type, date and size in the panel beside the icons"),
+            ("folder-web-drive", "The web view of My Computer with a drive selected: its capacity, used and free space, the pie chart"),
+            ("folder-web-warning", "The web view of the Windows folder: its files hidden behind the warning and Show Files"),
+        ] {
+            out.push(Scene { section, name: format!("{}-{state}", era_prefix(era)), caption, image: web_scene(theme, era, &fonts, state) });
+        }
+    }
+    // Windows 2000's Folder Options, classic folders just chosen (Apply alive).
+    {
+        use bevel_core::folder::options::{Choice, FolderOptions, Part as P};
+        use bevel_core::kit::Form;
+        let (regular, bold) = (load_font(&WIN2000, false), load_font(&WIN2000, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let mut w = FolderOptions::new(Choice::default(), true);
+        w.press(Some(P::Classic), 0, 0);
+        let mut fb = Framebuffer::new(w.size().0, w.size().1, 0);
+        w.paint(&mut fb, &WIN2000, &fonts);
+        out.push(Scene { section: "Windows 2000", name: "win2000-folder-options".into(), caption: "Folder Options (Tools menu): Web View and Browse Folders, classic folders just chosen", image: fb });
+    }
+    out.extend(sixteen_color_scenes());
+    // The integer upscaler, checked on a real image.
+    let three = out.iter().find(|s| s.name == "win95-three-groups").expect("scene exists").image.clone();
+    out.push(Scene {
+        section: "Scaling check",
+        name: "win95-three-groups-2x".to_string(),
+        caption: "The 95 three-groups bar, upscaled 2× by the taskbar's own code (what a 150–175% screen gets), \
+                  shown at half the zoom so it lines up with the pictures above",
+        image: upscale(&three, 2),
+    });
+    out
+}
+
+/// The 16 Colors option: a chosen set of scenes per look drawn with its 16-color theme
+/// (`theme_in(era, Depth::Sixteen)`), named `<look>-16-<state>`.
+fn sixteen_color_scenes() -> Vec<Scene> {
+    let mut out = Vec::new();
+    DEPTH.set(Depth::Sixteen);
+    for (era, section) in [(Era::Win95, "Windows 95, 16 Colors"), (Era::Win98, "Windows 98, 16 Colors"), (Era::Win2000, "Windows 2000, 16 Colors")] {
+        let theme = bevel_core::theme::theme_in(era, Depth::Sixteen);
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let mut add = |state: &str, caption: &'static str, image: Framebuffer| {
+            out.push(Scene { section, name: format!("{}-16-{state}", theme.slug), caption, image });
+        };
+        add("three-groups", "16 Colors: the bar with three groups: normal, active, flashing", bar_image(theme, &fonts, false, three_groups()));
+        add(
+            "start-menu",
+            "16 Colors: the Start menu with Programs open (pictures without a 16-color drawing converted by the look's rule)",
+            start_menu_scene(theme, era, &fonts),
+        );
+        add("colors-menu", "16 Colors: the bar's menu, Bevel95, with the Colors submenu open", bar_submenu_scene(theme, era, &fonts, Some(BarEntry::Colors)));
+        add("bevel95-settings", "16 Colors: Bevel95 Settings with 16 Colors chosen", properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 0));
+        add("properties", "16 Colors: Taskbar Properties", properties_scene(theme, era, &fonts, properties::Sheet::Taskbar, 0));
+        add("run", "16 Colors: Run (98 and 2000: a plain title bar)", dialog_scene(theme, &fonts, DialogKind::Run, era));
+        add("about", "16 Colors: About Bevel95", about_scene(theme, era, &fonts));
+        add("setup-first-run", "16 Colors: Bevel95 Setup, first page", setup_scene(theme, era, &fonts, "first-run"));
+        add("setup-questions", "16 Colors: Bevel95 Setup's questions", setup_scene(theme, era, &fonts, "questions"));
+        add("setup-update", "16 Colors: Bevel95 Setup over an installed Bevel95", setup_scene(theme, era, &fonts, "update"));
+        add("setup-update-one-file", "16 Colors: Bevel95 Setup over an installed Bevel95, from the one file", setup_scene(theme, era, &fonts, "update-one-file"));
+        add("shut-down", "16 Colors: Shut Down Windows", dialog_scene(theme, &fonts, DialogKind::ShutDown, era));
+        let msans = load_font(&WIN95, false);
+        add("tray-tooltip", "16 Colors: the notification area with a tooltip (95 and 98: white dotted with yellow)", tray_scene(theme, era, &fonts, &msans, false));
+        add("volume", "16 Colors: the classic volume control", tray_scene(theme, era, &fonts, &msans, true));
+        add("calculator", "16 Colors: Calculator (its pictures are 16-color drawings already)", calculator_scene(theme, era, &fonts, "play"));
+        add("calculator-scientific", "16 Colors: Calculator's Scientific view", calculator_scene(theme, era, &fonts, "scientific"));
+        add("minefield", "16 Colors: Minesweeper in play", minefield_scene(theme, era, &fonts, "play"));
+        add("minefield-lost", "16 Colors: Minesweeper after a loss, inactive", minefield_scene(theme, era, &fonts, "lost"));
+        add(
+            "desktop-icons",
+            "16 Colors: the desktop's icons, the long name selected: a navy checkerboard over its picture (98's and 2000's pictures by the look's rule until their own 16-color drawings come)",
+            desktop_icons_scene(theme, era, &fonts),
+        );
+        if era != Era::Win95 {
+            add(
+                "folder-explorer",
+                "16 Colors: a folder window with the look's own 16-color toolbar (black line art) and pictures",
+                explorer_scene(theme, era, &fonts, "folder-explorer"),
+            );
+            add(
+                "folder-web-drive",
+                "16 Colors: the web view (98: no watercolor picture, its line by the rule)",
+                web_scene(theme, era, &fonts, "folder-web-drive"),
+            );
+        }
+    }
+    DEPTH.set(Depth::TrueColor);
+    out
+}
+
+/// Sizes measured on Windows itself, run in the v86 emulator (docs/theme-spec.md, "Window
+/// menu"): the window menu of Windows 95 (127×117, "Alt+F4" 72 from the left of an entry)
+/// and 98 (144 wide with its pictures, "Alt+F4" at 89), and Windows 98 Notepad's Edit menu
+/// (137×186, shortcuts at 84).
+#[test]
+fn menus_measure_like_windows() {
+    let normal = WindowState { resizable: true, has_minimize_box: true, has_maximize_box: true, closable: true, ..WindowState::default() };
+    let measure = |theme: &Theme, menu: &Menu| {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let l = paint::layout_menu(theme, &Fonts { regular: &regular, bold: &bold }, menu, MenuStyle::Popup, SCREEN_H);
+        (l.width, l.height, l.shortcut_x)
+    };
+    assert_eq!(measure(&WIN95, &window_menu::menu(Era::Win95, normal)), (127, 117, 72));
+    assert_eq!(measure(&WIN98, &window_menu::menu(Era::Win98, normal)), (144, 117, 89));
+    let edit = [
+        "&Undo\tCtrl+Z", "-", "Cu&t\tCtrl+X", "&Copy\tCtrl+C", "&Paste\tCtrl+V", "De&lete\tDel", "-", "Select &All",
+        "Time/&Date\tF5", "-", "&Word Wrap", "Set &Font...",
+    ];
+    let entries = edit.iter().map(|&l| if l == "-" { MenuEntry::separator() } else { MenuEntry::item(l, None) });
+    assert_eq!(measure(&WIN98, &Menu::new(entries.collect())), (137, 186, 84));
+}
+
+// ---- PNG in/out (RGB, 8 bits) ----
+
+fn png_bytes(fb: &Framebuffer) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, fb.width as u32, fb.height as u32);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    let data: Vec<u8> = fb.pixels.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8]).collect();
+    writer.write_image_data(&data).unwrap();
+    writer.finish().unwrap();
+    bytes
+}
+
+fn write_png(path: &Path, fb: &Framebuffer) {
+    std::fs::write(path, png_bytes(fb)).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+}
+
+fn read_png(path: &Path) -> Result<Framebuffer, String> {
+    let file = BufReader::new(File::open(path).map_err(|e| e.to_string())?);
+    let mut reader = png::Decoder::new(file).read_info().map_err(|e| e.to_string())?;
+    let mut buf = vec![0; reader.output_buffer_size().ok_or("image too large")?];
+    let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    if info.color_type != png::ColorType::Rgb || info.bit_depth != png::BitDepth::Eight {
+        return Err(format!("expected 8-bit RGB, found {:?} {:?}", info.color_type, info.bit_depth));
+    }
+    let bytes = &buf[..info.line_size * info.height as usize];
+    let pixels = bytes.as_chunks::<3>().0.iter().map(|&[r, g, b]| rgb(u32::from_be_bytes([0, r, g, b]))).collect();
+    Ok(Framebuffer { width: info.width as i32, height: info.height as i32, pixels })
+}
+
+/// Number of differing pixels and a picture of them: red where different, faded elsewhere.
+fn diff(expected: &Framebuffer, actual: &Framebuffer) -> (usize, Framebuffer) {
+    if (expected.width, expected.height) != (actual.width, actual.height) {
+        return (expected.pixels.len().max(actual.pixels.len()), actual.clone());
+    }
+    let mut count = 0;
+    let pixels = expected
+        .pixels
+        .iter()
+        .zip(&actual.pixels)
+        .map(|(&e, &a)| {
+            if (e ^ a) & 0x00FF_FFFF != 0 {
+                count += 1;
+                rgb(0xFF0000)
+            } else {
+                let fade = |shift: u32| (((e >> shift) & 0xFF) + 3 * 255) / 4;
+                rgb((fade(16) << 16) | (fade(8) << 8) | fade(0))
+            }
+        })
+        .collect();
+    (count, Framebuffer { width: actual.width, height: actual.height, pixels })
+}
+
+// ---- the preview page ----
+
+fn preview_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/preview.html")
+}
+
+/// Standard base64 with `=` padding, for embedding the PNGs in the preview page.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, &b)| n | (u32::from(b) << (16 - 8 * i)));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() { ALPHABET[((n >> (18 - 6 * i)) & 63) as usize] as char } else { '=' });
+        }
+    }
+    out
+}
+
+/// Every golden image embedded in one self-contained page, so it opens anywhere (a browser,
+/// or a viewer that shows a copy of the file without the PNGs beside it).
+fn preview_html(figures: &[(&Scene, Vec<u8>)]) -> String {
+    let mut body = String::new();
+    let mut section = "";
+    for (scene, png) in figures {
+        if scene.section != section {
+            section = scene.section;
+            let _ = writeln!(body, "\n  <h2>{section}</h2>");
+        }
+        let native = if scene.name.ends_with("-2x") { r#" data-native-scale="2""# } else { "" };
+        let _ = writeln!(
+            body,
+            "  <figure><figcaption>{caption}: <code>{name}.png</code></figcaption>\n    \
+             <div class=\"frame\"><img{native} alt=\"{caption}\" src=\"data:image/png;base64,{data}\"></div></figure>",
+            caption = scene.caption,
+            name = scene.name,
+            data = base64(png),
+        );
+    }
+    PREVIEW_TEMPLATE.replace("{{FIGURES}}", &body)
+}
+
+const PREVIEW_TEMPLATE: &str = r##"<!doctype html>
+<!-- Generated by `cargo regen-golden` from core/tests/golden/*.png (see core/tests/golden.rs). Do not edit by hand. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bevel95 golden images</title>
+<style>
+  :root { --bg: #f4f4f2; --fg: #1d1d1b; --muted: #65655f; --line: #d6d6d0; --card: #ffffff; --accent: #000080; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ececea; --muted: #a3a39d; --line: #34342f; --card: #1f1f1d; --accent: #8fa8ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 32px 0 12px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  p { margin: 0 0 12px; color: var(--muted); max-width: 70ch; }
+  a { color: var(--accent); }
+  .zoom { display: flex; gap: 6px; align-items: center; margin: 16px 0 8px; flex-wrap: wrap; }
+  .zoom button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px;
+                 background: var(--card); color: var(--fg); cursor: pointer; }
+  .zoom button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  figure { margin: 0 0 20px; }
+  figcaption { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  figcaption code { color: var(--fg); }
+  .frame { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  img { display: block; image-rendering: pixelated; image-rendering: crisp-edges; max-width: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bevel95 golden images</h1>
+  <p>The exact pictures the tests compare against (<code>core/tests/golden</code>), enlarged with hard square
+     pixels. Compare them with real Windows 95 / 2000 screenshots. What to look at closely is listed under
+     "Flagged for your eyes" in <a href="theme-spec.md#flagged-for-your-eyes">docs/theme-spec.md</a>.</p>
+  <p>Zoom counts real screen pixels, whatever your Windows display scale: at 1× each picture pixel is exactly
+     one screen pixel, which is what a Bevel95 taskbar set to 1× looks like on this screen.</p>
+  <div class="zoom" role="group" aria-label="Zoom">
+    <span>Zoom:</span>
+    <button type="button" data-zoom="1">1×</button>
+    <button type="button" data-zoom="2">2×</button>
+    <button type="button" data-zoom="3">3×</button>
+    <button type="button" data-zoom="4">4×</button>
+    <span id="scale-note"></span>
+  </div>
+{{FIGURES}}</main>
+<script>
+  // Sizes are set in CSS pixels, which are devicePixelRatio screen pixels each (1.5 at 150%),
+  // so divide by it: zoom z then means exactly z screen pixels per picture pixel.
+  const images = [...document.querySelectorAll("img")];
+  const buttons = [...document.querySelectorAll("[data-zoom]")];
+  const note = document.getElementById("scale-note");
+  let zoom = 3;
+  function apply() {
+    const dpr = window.devicePixelRatio || 1;
+    for (const img of images) {
+      const size = () => {
+        img.style.width = (img.naturalWidth * zoom / (Number(img.dataset.nativeScale) || 1) / dpr) + "px";
+      };
+      if (img.complete) size(); else img.addEventListener("load", size, { once: true });
+    }
+    for (const b of buttons) b.setAttribute("aria-pressed", String(Number(b.dataset.zoom) === zoom));
+    // Same rule as the taskbar: max(1, round(dpi / 96)), halves rounding up.
+    note.textContent = "· this screen is at " + Math.round(dpr * 100) + "%, so the taskbar would draw at "
+      + Math.max(1, Math.round(dpr)) + "×";
+  }
+  function setZoom(z) {
+    zoom = z;
+    apply();
+    try { localStorage.setItem("bevel95-zoom", String(z)); } catch (e) {}
+  }
+  for (const b of buttons) b.addEventListener("click", () => setZoom(Number(b.dataset.zoom)));
+  // Re-fit when the scale changes (window moved to another monitor, or browser zoom).
+  (function watch() {
+    matchMedia("(resolution: " + window.devicePixelRatio + "dppx)")
+      .addEventListener("change", () => { apply(); watch(); }, { once: true });
+  })();
+  try { zoom = Number(localStorage.getItem("bevel95-zoom")) || 3; } catch (e) {}
+  apply();
+</script>
+</body>
+</html>
+"##;
+
+// ---- the tests ----
+
+#[test]
+fn base64_known_answers() {
+    // RFC 4648 test vectors.
+    let cases = [
+        ("", ""),
+        ("f", "Zg=="),
+        ("fo", "Zm8="),
+        ("foo", "Zm9v"),
+        ("foob", "Zm9vYg=="),
+        ("fooba", "Zm9vYmE="),
+        ("foobar", "Zm9vYmFy"),
+    ];
+    for (input, want) in cases {
+        assert_eq!(base64(input.as_bytes()), want, "{input:?}");
+    }
+}
+
+/// A 16-color screen shows nothing but the 16 colors: every pixel of every 16-color scene is one.
+#[test]
+fn sixteen_color_scenes_use_only_the_16() {
+    let mut wrong = Vec::new();
+    for scene in sixteen_color_scenes() {
+        let others: std::collections::BTreeSet<u32> =
+            scene.image.pixels.iter().filter(|&&p| bevel_core::colors16::index(p).is_none()).map(|p| p & 0xFF_FFFF).collect();
+        if !others.is_empty() {
+            let some: Vec<String> = others.iter().take(6).map(|c| format!("{c:06X}")).collect();
+            wrong.push(format!("{}: {} other colors, e.g. {}", scene.name, others.len(), some.join(" ")));
+        }
+    }
+    assert!(wrong.is_empty(), "\n{}\n", wrong.join("\n"));
+}
+
+#[test]
+fn golden_images_match() {
+    let preview = std::fs::read_to_string(preview_path()).unwrap_or_default();
+    let mut preview_is_stale = false;
+    let mut failures = Vec::new();
+    for Scene { name, image, .. } in scenes() {
+        let path = test_dir("golden").join(format!("{name}.png"));
+        if !std::fs::read(&path).is_ok_and(|bytes| preview.contains(&base64(&bytes))) {
+            preview_is_stale = true;
+        }
+        let actual_path = path.with_extension("actual.png");
+        let diff_path = path.with_extension("diff.png");
+        let expected = match read_png(&path) {
+            Ok(e) => e,
+            Err(e) => {
+                failures.push(format!("{name}: cannot read {} ({e}); `cargo regen-golden` creates it", path.display()));
+                continue;
+            }
+        };
+        let (count, picture) = diff(&expected, &image);
+        if count == 0 {
+            let _ = std::fs::remove_file(&actual_path);
+            let _ = std::fs::remove_file(&diff_path);
+        } else {
+            write_png(&actual_path, &image);
+            write_png(&diff_path, &picture);
+            failures.push(format!("{name}: {count} pixels differ; see {}", diff_path.display()));
+        }
+    }
+    if preview_is_stale {
+        failures
+            .push("docs/preview.html does not show the current golden images; `cargo regen-golden` rewrites it".into());
+    }
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
+#[test]
+#[ignore = "rewrites the golden images and docs/preview.html; run it with `cargo regen-golden`"]
+fn regenerate_golden_images() {
+    let dir = test_dir("golden");
+    std::fs::create_dir_all(&dir).unwrap();
+    let scenes = scenes();
+    let mut figures = Vec::new();
+    for scene in &scenes {
+        let bytes = png_bytes(&scene.image);
+        let path = dir.join(format!("{}.png", scene.name));
+        std::fs::write(&path, &bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        println!("wrote {}", path.display());
+        figures.push((scene, bytes));
+    }
+    std::fs::write(preview_path(), preview_html(&figures)).unwrap();
+    println!("wrote {}", preview_path().display());
+}
+
+/// The README's first picture, `docs/img/start-menus.png`: the three looks side by side, each
+/// showing what a real Bevel95 shows with its Programs menu set to Bevel95's own programs. It
+/// is not a golden image (no test compares it). Run it with
+/// `cargo test -p bevel-core --test golden -- --ignored --exact draw_readme_start_menus`.
+#[test]
+#[ignore = "rewrites docs/img/start-menus.png, the README's picture; run it on request"]
+fn draw_readme_start_menus() {
+    const GAP: i32 = 8;
+    let mut out = Framebuffer::new(3 * WIDTH + 2 * GAP, SCREEN_H, rgb(0xFFFFFF));
+    for (i, (era, theme)) in [(Era::Win95, &WIN95), (Era::Win98, &WIN98), (Era::Win2000, &WIN2000)].into_iter().enumerate() {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        out.blit(&own_programs_scene(theme, era, &fonts), i as i32 * (WIDTH + GAP), 0);
+    }
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("docs").join("img").join("start-menus.png");
+    write_png(&path, &out);
+    println!("wrote {}", path.display());
+}
+
+/// One look's screen for the README: the bar with three windows of Bevel95's own programs (My
+/// Computer, Minesweeper active, Calculator) and their own pictures, Start pressed, the Start
+/// menu open on Programs, and the Programs menu put together as the bar does it when it shows
+/// only Bevel95's own programs (`programs::add_own_programs`, each entry with its own picture,
+/// folders with the look's program group picture), opened down to Games.
+fn own_programs_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::programs::{OWN_PROGRAMS, add_own_programs};
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let own = |title: &str, icon: Icon, state: TaskState| Task { title: title.to_string(), icon: Some(icon), state };
+    let tasks = vec![
+        own("My Computer", window_icons::icon(era, ClassicWindow::MyComputer), TaskState::Normal),
+        own(bevel_core::minefield::form::TITLE, bevel_core::minefield::art::icon(era, 16), TaskState::Active),
+        own(bevel_core::calculator::form::TITLE, bevel_core::calculator::art::icon(era, 16), TaskState::Normal),
+    ];
+    let bar = bar_image(theme, fonts, true, tasks);
+    let bar_top = SCREEN_H - bar.height;
+    screen.blit(&bar, 0, bar_top);
+
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
+    let programs_index = menu.entries.iter().position(|e| e.label == "&Programs").expect("Programs");
+    menu.hover = Some(programs_index);
+    menu.show_keys = era.always_shows_keys();
+    let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Start);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+
+    // The Programs tree as the bar builds it (each program's target is its file here).
+    let mut programs = Folder::default();
+    add_own_programs(&mut programs, era, |program| Some(program.file.to_string()));
+    programs.sort();
+    let group = icons::program_group(era);
+    let picture = |item: &Item| OWN_PROGRAMS.iter().find(|p| p.file == item.target).map(|p| (p.icon)(era));
+    // Programs > Accessories > Games > Minesweeper, each menu placed beside the entry it opens from.
+    let mut parent = Rect::new(x, y, fb.width, fb.height);
+    let mut entry = entry_on_screen(parent, &layout, programs_index);
+    let mut path: Vec<usize> = Vec::new();
+    for wanted in ["Accessories", "Games", bevel_core::minefield::form::TITLE] {
+        let folder = programs.folder_at(&path).expect("folder");
+        let mut sub = folder.menu(Some(&group), picture);
+        let index = sub.entries.iter().position(|e| e.label == wanted).unwrap_or_else(|| panic!("{wanted}"));
+        sub.hover = Some(index);
+        sub.show_keys = menu.show_keys;
+        let (sub_fb, sub_layout) = menu_image(theme, fonts, &sub, MenuStyle::Cascade);
+        let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
+        screen.blit(&sub_fb, sx, sy);
+        parent = Rect::new(sx, sy, sub_fb.width, sub_fb.height);
+        entry = entry_on_screen(parent, &sub_layout, index);
+        path.push(index);
+    }
+    screen
+}
+
+/// Windows 95's folder windows: My Computer, a folder of files (test pictures) and one with its File
+/// menu open, on the look's desktop.
+fn folder_scene(fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::desktop_art::Art;
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::{FolderWindow, Space, menus};
+    use bevel_core::kit::Form;
+    let item = |id: &str, name: &str, picture: Picture, folder: bool, size: u64| Item {
+        id: id.to_string(),
+        name: name.to_string(),
+        picture,
+        shortcut: false,
+        folder,
+        type_name: String::new(),
+        size,
+        modified: 0,
+    };
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(Era::Win95));
+    let at = (40, 30);
+    let mut w = if which == "folder-mycomputer" {
+        let mut w = FolderWindow::new(Era::Win95, "My Computer", art::small(Era::Win95, Small::MyComputer), false, (265, 294));
+        w.layout(fonts);
+        w.set_items(vec![
+            item("A:\\", "3\u{bd} Floppy (A:)", Picture::Art(Art::Drive(DriveKind::Floppy)), false, 0),
+            item("C:\\", "Local (C:)", Picture::Art(Art::Drive(DriveKind::Fixed)), false, 0),
+            item("D:\\", "(D:)", Picture::Art(Art::Drive(DriveKind::CdRom)), false, 0),
+            item("E:\\", "Stick (E:)", Picture::Art(Art::Drive(DriveKind::Removable)), false, 0),
+            item("::control-panel", "Control Panel", Picture::Art(Art::ControlPanel), false, 0),
+            item("::printers", "Printers", Picture::Art(Art::Printers), false, 0),
+        ]);
+        w.spaces.insert("C:\\".into(), Space { free: 120 << 30, capacity: 476 << 30 });
+        w.view.select_only(Some(1));
+        w
+    } else {
+        let doc = icon(&DOCUMENT, 2);
+        let mut w = FolderWindow::new(Era::Win95, "Letters", art::small(Era::Win95, Small::Folder), true, (340, 294));
+        w.layout(fonts);
+        w.set_items(vec![
+            item("C:\\L\\Old", "Old", Picture::Folder, true, 0),
+            item("C:\\L\\To the bank about the account.txt", "To the bank about the account.txt", Picture::Own(Some(doc.clone())), false, 2_048),
+            item("C:\\L\\Notes.txt", "Notes.txt", Picture::Own(Some(doc.clone())), false, 489),
+            item("C:\\L\\Plans.txt", "Plans.txt", Picture::Own(Some(doc.clone())), false, 31_000),
+            item("C:\\L\\Lists.txt", "Lists.txt", Picture::Own(Some(doc)), false, 700),
+        ]);
+        w.hidden = 1;
+        w.total_size = 34_237;
+        if which == "folder-files" {
+            let long = w.view.index_of("C:\\L\\To the bank about the account.txt");
+            w.view.select_only(long);
+            w.resize((230, 220), false);
+        } else {
+            w.view.select_only(Some(2));
+            w.chosen = Some(0);
+        }
+        w
+    };
+    w.set_screen(at.0, at.1);
+    w.layout(fonts);
+    if which == "folder-menu" {
+        let rows = menus::bar_rows(&w.menu_state(false), 0);
+        w.help = Some(rows[0].help.to_string());
+    }
+    let (ww, wh) = w.size_now();
+    let mut fb = Framebuffer::new(ww, wh, 0);
+    w.paint(&mut fb, &WIN95, fonts);
+    screen.blit(&fb, at.0, at.1);
+    if which == "folder-menu" {
+        let rows = menus::bar_rows(&w.menu_state(false), 0);
+        let menu = Menu { hover: Some(0), ..menus::menu(&rows) };
+        let (img, _) = menu_image(&WIN95, fonts, &menu, MenuStyle::Popup);
+        let r = w.title_rect(0).unwrap();
+        screen.blit(&img, at.0 + r.x, at.1 + r.bottom());
+    }
+    screen
+}
+/// Windows 98's and 2000's folder window: a folder of files reached from My Computer (Back lit),
+/// a file selected and the pointer on a toolbar button, or the address bar's list open.
+fn explorer_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::menus::Nav;
+    use bevel_core::folder::{FolderWindow, ListRow, Tool};
+    use bevel_core::kit::Form;
+    let doc = icon(&DOCUMENT, 2);
+    let item = |name: &str, folder: bool, size: u64| Item {
+        id: format!("C:\\Letters\\{name}"),
+        name: name.to_string(),
+        picture: if folder { Picture::Folder } else { Picture::Own(Some(doc.clone())) },
+        shortcut: false,
+        folder,
+        type_name: "Text Document".into(),
+        size,
+        modified: 0,
+    };
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let at = (20, 20);
+    let mut w = FolderWindow::new(era, "Letters", art::small(era, Small::Folder), true, (420, 300));
+    w.layout(fonts);
+    w.show_place("Letters", art::small(era, Small::Folder), true, if era == Era::Win98 { "C:\\Letters" } else { "Letters" }, art::listed(era, Small::Folder));
+    w.set_nav(Nav { back: true, up: true, ..Nav::default() });
+    w.set_items(vec![item("Old", true, 0), item("Notes.txt", false, 489), item("Plans.txt", false, 31_000), item("To the bank about the account.txt", false, 2_048)]);
+    w.total_size = 33_537;
+    if which == "folder-explorer" {
+        w.view.select_only(Some(2));
+        w.bar.hot_tool = Some((if era == Era::Win98 { Tool::Copy } else { Tool::Delete }, false));
+    } else {
+        let row = |level: i32, small: Small, name: &str| ListRow { level, icon: art::listed(era, small), name: name.to_string() };
+        w.field.focus();
+        let rows = vec![
+            row(0, Small::Desktop, "Desktop"),
+            row(1, Small::MyComputer, "My Computer"),
+            row(2, Small::Drive(DriveKind::Floppy), "3\u{bd} Floppy (A:)"),
+            row(2, Small::Drive(DriveKind::Fixed), "Local Disk (C:)"),
+            row(3, Small::ClosedFolder, "Letters"),
+            row(2, Small::ControlPanel, "Control Panel"),
+            row(1, Small::RecycleBin, "Recycle Bin"),
+        ];
+        w.set_list(Some((rows, Some(4))));
+    }
+    w.set_screen(at.0, at.1);
+    w.layout(fonts);
+    let (ww, wh) = w.size_now();
+    let mut fb = Framebuffer::new(ww, wh, 0);
+    w.paint(&mut fb, theme, fonts);
+    screen.blit(&fb, at.0, at.1);
+    screen
+}
+
+fn era_prefix(era: Era) -> &'static str {
+    match era {
+        Era::Win95 => "win95",
+        Era::Win98 => "win98",
+        Era::Win2000 => "win2000",
+    }
+}
+
+/// An Explorer window in `era`: the tree read down to C:\Letters (its folders below it, a long
+/// name cut at the pane's edge, the scroll bar across), Letters selected with the keyboard in
+/// the tree, its icons on the right.
+fn tree_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::menus::Nav;
+    use bevel_core::folder::pane::{NodeKind as K, NodeSpec, Tree};
+    use bevel_core::folder::{FolderWindow, tree_art};
+    use bevel_core::kit::Form;
+    let spec = |id: &str, name: &str, kind: K, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows };
+    let mut tree = Tree::new();
+    let _ = tree.wanted();
+    let mut on_desktop = vec![spec("::my-computer", "My Computer", K::MyComputer, true), spec("::recycle-bin", "Recycle Bin", K::RecycleBin, false)];
+    if era != Era::Win95 {
+        on_desktop.insert(if era == Era::Win98 { 1 } else { 0 }, spec("::my-documents", "My Documents", K::MyDocuments, true));
+    }
+    tree.set_rows("::desktop", on_desktop);
+    tree.set_rows(
+        "::my-computer",
+        vec![
+            spec("A:\\", "3\u{bd} Floppy (A:)", K::Drive(DriveKind::Floppy), true),
+            spec("C:\\", "Local (C:)", K::Drive(DriveKind::Fixed), true),
+            spec("D:\\", "(D:)", K::Drive(DriveKind::CdRom), true),
+            spec("::control-panel", "Control Panel", K::ControlPanel, false),
+        ],
+    );
+    tree.set_rows("C:\\", vec![spec("C:\\Letters", "Letters", K::Folder, true), spec("C:\\Programs", "Programs", K::Folder, true)]);
+    tree.set_rows("C:\\Letters", vec![spec("C:\\Letters\\Old", "Old", K::Folder, false), spec("C:\\Letters\\To the bank about the account", "To the bank about the account", K::Folder, false)]);
+    tree.follow(vec!["::my-computer".into(), "C:\\".into(), "C:\\Letters".into()], 20);
+    let doc = icon(&DOCUMENT, 2);
+    let item = |name: &str, folder: bool, size: u64| Item {
+        id: format!("C:\\Letters\\{name}"),
+        name: name.to_string(),
+        picture: if folder { Picture::Folder } else { Picture::Own(Some(doc.clone())) },
+        shortcut: false,
+        folder,
+        type_name: "Text Document".into(),
+        size,
+        modified: 0,
+    };
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let at = (20, 20);
+    let title = if era == Era::Win2000 { "Letters".to_string() } else { "Exploring - Letters".to_string() };
+    let icon = tree_art::explorer(era);
+    let mut w = FolderWindow::new(era, &title, icon.clone(), true, (520, 330));
+    w.layout(fonts);
+    if era != Era::Win95 {
+        w.show_place("Letters", icon.clone(), true, if era == Era::Win98 { "C:\\Letters" } else { "Letters" }, art::listed(era, Small::Folder));
+        w.set_nav(Nav { back: true, up: true, ..Nav::default() });
+    }
+    w.title = title;
+    w.icon = icon;
+    w.place_name = "Letters".into();
+    w.exploring = true;
+    w.tree = tree;
+    w.show_tree(true);
+    w.set_items(vec![item("Old", true, 0), item("To the bank about the account", true, 0), item("Notes.txt", false, 489), item("Plans.txt", false, 31_000)]);
+    w.total_size = 31_489;
+    w.disk_free = Some(120 << 30);
+    w.tree_focus = true;
+    w.set_screen(at.0, at.1);
+    w.layout(fonts);
+    w.tree_selection_shown();
+    let (ww, wh) = w.size_now();
+    let mut fb = Framebuffer::new(ww, wh, 0);
+    w.paint(&mut fb, theme, fonts);
+    screen.blit(&fb, at.0, at.1);
+    screen
+}
+/// A folder window of `era` in `mode` (the golden pictures of the folder views).
+fn views_scene(theme: &Theme, era: Era, fonts: &Fonts, mode: ViewMode) -> Framebuffer {
+    use bevel_core::desktop_icons::{Item, Picture, local_filetime};
+    use bevel_core::folder::{FolderWindow, art};
+    use bevel_core::kit::Form;
+    let doc = icon(&DOCUMENT, 2);
+    let item = |name: &str, folder: bool, size: u64, kind: &str, day: i64| Item {
+        id: format!("C:\\L\\{name}"),
+        name: name.to_string(),
+        picture: if folder { Picture::Folder } else { Picture::Own(Some(doc.clone())) },
+        shortcut: false,
+        folder,
+        type_name: kind.to_string(),
+        size,
+        modified: local_filetime(2026, 11, day, 14, 39),
+    };
+    let items = vec![
+        item("Letters", true, 0, "File folder", 1),
+        item("Photos", true, 0, "File folder", 2),
+        item("To the bank about the account.txt", false, 2_048, "Text Document", 3),
+        item("Notes.txt", false, 489, "Text Document", 4),
+        item("Plans.txt", false, 31_000, "Text Document", 5),
+        item("Lists.txt", false, 1_638_400, "Text Document", 6),
+    ];
+    let small = art::Small::Folder;
+    let icon16 = art::small(era, small);
+    let mut w = FolderWindow::new(era, "Letters", icon16.clone(), true, (430, 300));
+    w.layout(fonts);
+    if era != Era::Win95 {
+        w.show_place("Letters", icon16, true, "C:\\Letters", art::listed(era, small));
+    }
+    w.set_view_mode(mode);
+    w.set_items(items);
+    w.view.keys_used = true;
+    if mode == ViewMode::Details {
+        w.header_click(1);
+        w.header_click(1);
+    }
+    let i = w.view.index_of("C:\\L\\Plans.txt").expect("item");
+    w.view.select_only(Some(i));
+    w.layout(fonts);
+    let mut fb = Framebuffer::new(430, 300, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
+}
+/// The web view's fonts from the fixtures (98: Verdana; 2000: the look's Tahoma and its 13pt bold).
+fn web_fonts(era: Era, fonts: &Fonts) -> std::sync::Arc<bevel_core::folder::web::WebFonts> {
+    use bevel_core::folder::web::WebFonts;
+    let fixture = |name: &str| {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+        Font::parse(&std::fs::read_to_string(&path).unwrap()).unwrap().with_period_glyphs()
+    };
+    std::sync::Arc::new(match era {
+        Era::Win2000 => WebFonts { body: fonts.regular.clone(), bold: fonts.bold.clone(), title: fixture("tahoma-17px-bold.font") },
+        _ => WebFonts { body: fixture("verdana-11px.font"), bold: fixture("verdana-11px-bold.font"), title: fixture("verdana-21px-bold.font") },
+    })
+}
+
+/// A 98 or 2000 folder window with its web view: a file selected, My Computer with a drive
+/// selected, the Windows folder's warning page.
+fn web_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::desktop_art::{self, Art};
+    use bevel_core::desktop_icons::{Item, Picture, local_filetime};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::web::{Guard, Kind};
+    use bevel_core::folder::{FolderWindow, Space};
+    use bevel_core::kit::Form;
+    let doc = icon(&DOCUMENT, 2);
+    let size = (560, 360);
+    let (title, small, files) = match which {
+        "folder-web-drive" => ("My Computer", Small::MyComputer, false),
+        "folder-web-warning" => ("Windows", Small::Folder, true),
+        _ => ("Letters", Small::Folder, true),
+    };
+    let icon16 = art::small(era, small);
+    let mut w = FolderWindow::new(era, title, icon16.clone(), files, size);
+    w.layout(fonts);
+    w.show_place(title, icon16, files, title, art::listed(era, small));
+    w.web.fonts = Some(web_fonts(era, fonts));
+    let (kind, picture, guard) = match which {
+        "folder-web-drive" => (Kind::MyComputer, Art::MyComputer, None),
+        "folder-web-warning" => (Kind::Folder, Art::Folder, Some(Guard::System)),
+        _ => (Kind::Folder, Art::Folder, None),
+    };
+    w.set_web_place(kind, desktop_art::picture(era, picture, false, 0), guard, false, None);
+    w.set_web(true);
+    let item = |name: &str, folder: bool, size: u64| Item {
+        id: format!("C:\\Letters\\{name}"),
+        name: name.trim_end_matches(".txt").to_string(),
+        picture: if folder { Picture::Folder } else { Picture::Own(Some(doc.clone())) },
+        shortcut: false,
+        folder,
+        type_name: if folder { "File Folder".into() } else { "Text Document".into() },
+        size,
+        modified: local_filetime(2026, 11, 15, 14, 39),
+    };
+    match which {
+        "folder-web-drive" => {
+            let drive = |id: &str, name: &str, kind: DriveKind| Item {
+                id: id.into(),
+                name: name.into(),
+                picture: Picture::Art(Art::Drive(kind)),
+                shortcut: false,
+                folder: false,
+                type_name: String::new(),
+                size: 0,
+                modified: 0,
+            };
+            w.spaces.insert("C:\\".into(), Space { free: 300 << 20, capacity: 1 << 30 });
+            w.set_items(vec![drive("A:\\", "3\u{bd} Floppy (A:)", DriveKind::Floppy), drive("C:\\", if era == Era::Win2000 { "Local Disk (C:)" } else { " (C:)" }, DriveKind::Fixed)]);
+            w.view.select_only(Some(1));
+        }
+        "folder-web-warning" => w.set_items(vec![item("System", true, 0), item("Notes.txt", false, 489)]),
+        _ => {
+            w.set_items(vec![item("Photos", true, 0), item("Notes.txt", false, 489), item("Plans.txt", false, 31_000)]);
+            w.view.select_only(Some(2));
+        }
+    }
+    w.view.keys_used = true;
+    w.layout(fonts);
+    let mut fb = Framebuffer::new(size.0, size.1, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
+}

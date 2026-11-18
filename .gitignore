@@ -1,0 +1,7 @@
+/target
+# written next to a golden image when a test fails, for comparison
+*.actual.png
+*.diff.png
+# the maintainer's own material (reference captures, test PCs, notes): never committed
+/private/
+/CLAUDE.local.md
