@@ -360,6 +360,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         desktop: true,
         programs: Shown::Everything,
         windows_key: bevel_core::config::WindowsKey::Find,
+        quick_search_all: false,
         group: true,
     };
     let mut p = properties::Properties::new(sheet, era, values);
@@ -463,6 +464,7 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         desktop: true,
         programs: Shown::Everything,
         windows_key: bevel_core::config::WindowsKey::Find,
+        quick_search_all: false,
         group: true,
     };
     let mut p = properties::Properties::new(properties::Sheet::Bevel95, era, values);

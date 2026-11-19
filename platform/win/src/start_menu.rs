@@ -599,6 +599,9 @@ pub fn read_icons_ahead(era: Era) {
             read_folder_icons(&tree, &mut count, era);
         }
         crate::log::log(&format!("start menu: read {count} icons ahead in {} ms", started.elapsed().as_millis()));
+        // Quick Search's list too (its shortcuts' targets are read on a thread of its own), so
+        // that its first opening already knows which entries are programs.
+        crate::find_window::refresh();
     });
     if let Err(e) = spawned {
         crate::log::log(&format!("could not start reading the Start menu's icons ahead: {e}"));

@@ -31,6 +31,36 @@ pub struct Config {
     /// A program's windows share one task button (Bevel95 Settings, Taskbar page: Windows XP's
     /// "Group similar taskbar buttons"); off, one button per window, as in 95, 98 and 2000.
     pub group: bool,
+    /// What Quick Search lists (Bevel95 Settings, Taskbar page).
+    pub quick_search: QuickSearch,
+}
+
+/// What Quick Search lists of the Programs menu's entries (`quick_search` in settings.txt; the
+/// owner, 2026-11-18: "a bunch of stuff in quick search that should probably be hidden by
+/// default"). Bevel95's own programs and commands are always listed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QuickSearch {
+    /// Only programs: no web pages, documents, uninstallers or About entries (`find::hidden`).
+    #[default]
+    Programs,
+    /// Every entry, as before 2026-11-18.
+    Everything,
+}
+
+impl QuickSearch {
+    pub const ALL: [QuickSearch; 2] = [QuickSearch::Programs, QuickSearch::Everything];
+
+    /// The name in settings.txt.
+    pub fn setting(self) -> &'static str {
+        match self {
+            QuickSearch::Programs => "programs",
+            QuickSearch::Everything => "everything",
+        }
+    }
+
+    pub fn from_setting(value: &str) -> Option<QuickSearch> {
+        QuickSearch::ALL.into_iter().find(|q| q.setting().eq_ignore_ascii_case(value.trim()))
+    }
 }
 
 /// What a lone press of the Windows key opens while Bevel95's bar shows (`windows_key` in
@@ -112,6 +142,7 @@ impl Default for Config {
             programs: Shown::Everything,
             windows_key: WindowsKey::Find,
             group: true,
+            quick_search: QuickSearch::Programs,
         }
     }
 }
@@ -177,6 +208,10 @@ windows_key = find
 # Task buttons: yes gives a program's windows one button (as Windows XP's \"Group similar
 # taskbar buttons\"), no gives every window a button of its own (as Windows 95, 98 and 2000).
 group = yes
+
+# What Quick Search lists: programs (only programs: no web pages, documents, uninstallers or
+# About entries) or everything (every entry of the Programs menu).
+quick_search = programs
 ";
 
 /// Where in a `Config` a yes/no setting lives.
@@ -262,6 +297,10 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 Some(key) => config.windows_key = key,
                 None => warn("windows_key must be find or start"),
             },
+            "quick_search" => match QuickSearch::from_setting(&value) {
+                Some(q) => config.quick_search = q,
+                None => warn("quick_search must be programs or everything"),
+            },
             "scale" => match value.as_str() {
                 "auto" => config.scale = None,
                 number => match number.parse::<i32>() {
@@ -337,6 +376,18 @@ mod tests {
         assert_eq!((c.windows_key, w.len()), (WindowsKey::Find, 1));
         for key in WindowsKey::ALL {
             assert_eq!(parse(&with_setting(DEFAULT_FILE, "windows_key", key.setting())).0.windows_key, key);
+        }
+    }
+
+    #[test]
+    fn reads_what_quick_search_lists() {
+        // A settings file from before the setting existed: programs only.
+        assert_eq!(parse("era = win98\n").0.quick_search, QuickSearch::Programs);
+        assert_eq!(parse("quick_search = Everything\n").0.quick_search, QuickSearch::Everything);
+        let (c, w) = parse("quick_search = all\n");
+        assert_eq!((c.quick_search, w.len()), (QuickSearch::Programs, 1));
+        for q in QuickSearch::ALL {
+            assert_eq!(parse(&with_setting(DEFAULT_FILE, "quick_search", q.setting())).0.quick_search, q);
         }
     }
 

@@ -9,10 +9,13 @@
 //! does). The first opening before any reading reads it right away (as the Start menu does each
 //! time it opens).
 
+use std::ffi::c_void;
+use std::ptr::null_mut;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+use bevel_core::config::QuickSearch;
 use bevel_core::find::{self, FindWindow, Part, Program};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
@@ -26,7 +29,8 @@ use bevel_core::theme::{Depth, Era};
 use crate::bar::{BAR_HWND, WM_BAR_COLORS, WM_BAR_COMMAND, WM_BAR_SIZE, WM_BAR_THEME, with_app};
 use crate::kit::{self, Hosted};
 use crate::log::log;
-use crate::util::take_focus;
+use crate::audio::{method, release};
+use crate::util::{take_focus, wide};
 use crate::{start_menu, window_list};
 
 /// Posted to the bar when a reading of the programs (on its own thread) is done.
@@ -95,12 +99,119 @@ fn fetch_icons(form: &mut FindWindow) -> bool {
 
 /// Reads every program the Programs menu could show (with "everything" chosen, whatever the
 /// owner's choice for the menu is). Bevel95's own are marked: they come first among equals.
-fn read_programs() -> Vec<Program> {
+/// Each entry's kind of target is found out (`find::Target`): with `look_inside`, a shortcut is
+/// opened and its target read (that reads the disk: only on a thread of its own); without, only
+/// the entry's own file name tells (an Internet shortcut is a web page, a shortcut is unknown).
+fn read_programs(look_inside: bool) -> Vec<Program> {
     let mut programs = find::programs(&start_menu::all_programs());
     for program in &mut programs {
         program.own = start_menu::is_own_program(&program.target);
+        program.kind = if program.own { find::Target::Program } else { target_kind(&program.target, look_inside) };
     }
     programs
+}
+
+/// What the Programs menu entry `entry` (a file's full path, or a Store-style app's name)
+/// really opens. A shortcut (.lnk) is read with Windows' ShellLink object when `look_inside`;
+/// a shortcut without a file target (a shell object, such as a Control Panel item) is
+/// `Unknown`. Any other entry is told by its own name.
+fn target_kind(entry: &str, look_inside: bool) -> find::Target {
+    let is_link = entry.len() > 4 && entry[entry.len() - 4..].eq_ignore_ascii_case(".lnk");
+    if !is_link {
+        return find::classify(entry);
+    }
+    if !look_inside {
+        return find::Target::Unknown;
+    }
+    match link_target(entry) {
+        // Windows Installer's "advertised" shortcut starts its program through the installer;
+        // the path it names is only the program's picture.
+        Some(Link::Advertised) => find::Target::Program,
+        Some(Link::Path(path)) if std::path::Path::new(&path).is_dir() => find::Target::Folder,
+        Some(Link::Path(path)) => find::classify(&path),
+        None => find::Target::Unknown,
+    }
+}
+
+/// What a shortcut was found to point at.
+enum Link {
+    /// A file or folder, as the shortcut names it.
+    Path(String),
+    /// Windows Installer's advertised shortcut (SLDF_HAS_DARWINID): a program of an installed
+    /// package.
+    Advertised,
+}
+
+/// IID_IShellLinkW, IID_IPersistFile and IID_IShellLinkDataList (ShObjIdl.h, ObjIdl.h).
+const IID_SHELL_LINK: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x000214F9_0000_0000_C000_000000000046);
+const IID_PERSIST_FILE: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x0000010B_0000_0000_C000_000000000046);
+const IID_SHELL_LINK_DATA_LIST: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x45E2B4AE_B1C3_11D0_B92F_00A0C90312E1);
+/// IShellLinkW::GetPath is the first method after IUnknown's three; IPersistFile::Load the
+/// third after them (GetClassID, IsDirty, Load); IShellLinkDataList::GetFlags the fourth
+/// (AddDataBlock, CopyDataBlock, RemoveDataBlock, GetFlags).
+const GET_PATH: usize = 3;
+const LOAD: usize = 5;
+const GET_FLAGS: usize = 6;
+/// SHELL_LINK_DATA_FLAGS' SLDF_HAS_DARWINID (ShlObj_core.h): an advertised shortcut.
+const HAS_DARWIN_ID: u32 = 0x1000;
+type QueryInterface = unsafe extern "system" fn(*mut c_void, *const windows_sys::core::GUID, *mut *mut c_void) -> windows_sys::core::HRESULT;
+type Load = unsafe extern "system" fn(*mut c_void, windows_sys::core::PCWSTR, u32) -> windows_sys::core::HRESULT;
+type GetPath = unsafe extern "system" fn(*mut c_void, *mut u16, i32, *mut c_void, u32) -> windows_sys::core::HRESULT;
+type GetFlags = unsafe extern "system" fn(*mut c_void, *mut u32) -> windows_sys::core::HRESULT;
+
+/// What the shortcut `link` points at, as it stands in the shortcut (nothing is searched for
+/// or repaired: the shortcut is only read). `None` when it cannot be read or has no file
+/// target. COM must be usable on this thread.
+fn link_target(link: &str) -> Option<Link> {
+    use windows_sys::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, STGM_READ};
+    use windows_sys::Win32::UI::Shell::ShellLink;
+    let mut shell_link: *mut c_void = null_mut();
+    // SAFETY: CoCreateInstance with valid GUIDs and out-pointer; every method is called through
+    // IShellLinkW's or IPersistFile's documented table with valid buffers, and every reference
+    // obtained is released.
+    unsafe {
+        let hr = CoCreateInstance(&ShellLink, null_mut(), CLSCTX_INPROC_SERVER, &IID_SHELL_LINK, &mut shell_link);
+        if hr < 0 || shell_link.is_null() {
+            return None;
+        }
+        let mut persist: *mut c_void = null_mut();
+        let hr = method::<QueryInterface>(shell_link, 0)(shell_link, &IID_PERSIST_FILE, &mut persist);
+        let mut found = None;
+        if hr >= 0 && !persist.is_null() {
+            let name = wide(link);
+            if method::<Load>(persist, LOAD)(persist, name.as_ptr(), STGM_READ) >= 0 {
+                let mut data_list: *mut c_void = null_mut();
+                let mut flags = 0u32;
+                if method::<QueryInterface>(shell_link, 0)(shell_link, &IID_SHELL_LINK_DATA_LIST, &mut data_list) >= 0
+                    && !data_list.is_null()
+                {
+                    if method::<GetFlags>(data_list, GET_FLAGS)(data_list, &mut flags) < 0 {
+                        flags = 0;
+                    }
+                    release(data_list);
+                }
+                let mut buf = [0u16; 1024];
+                // 0: the long path, environment names expanded; the found-file data is not wanted.
+                let hr = method::<GetPath>(shell_link, GET_PATH)(shell_link, buf.as_mut_ptr(), buf.len() as i32, null_mut(), 0);
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                if flags & HAS_DARWIN_ID != 0 {
+                    found = Some(Link::Advertised);
+                } else if hr == 0 && len > 0 {
+                    found = Some(Link::Path(String::from_utf16_lossy(&buf[..len])));
+                }
+            }
+            release(persist);
+        }
+        release(shell_link);
+        found
+    }
+}
+
+/// The programs as Quick Search lists them now: only programs, unless the setting
+/// `quick_search = everything` says otherwise (`find::listed`).
+fn as_listed(programs: Vec<Program>) -> Vec<Program> {
+    let everything = with_app(|app| app.quick_search == QuickSearch::Everything).unwrap_or(false);
+    find::listed(programs, everything)
 }
 
 /// Reads the programs again on a thread of its own (not if a reading is going on); the bar
@@ -111,7 +222,7 @@ pub fn refresh() {
     }
     let spawned = std::thread::Builder::new().name("find programs".into()).spawn(|| {
         crate::audio::init();
-        let programs = read_programs();
+        let programs = read_programs(true);
         if let Ok(mut known) = PROGRAMS.lock() {
             *known = Some(programs);
         }
@@ -135,6 +246,7 @@ pub fn programs_read() {
     let Some(programs) = PROGRAMS.lock().ok().and_then(|known| known.clone()) else {
         return;
     };
+    let programs = as_listed(programs);
     let with_commands = find::with_commands(programs.clone());
     let same = kit::with::<FindHost, _>(|h| h.form.programs == with_commands).unwrap_or(true);
     if !same {
@@ -164,14 +276,12 @@ pub fn open() {
     let known = PROGRAMS.lock().ok().and_then(|known| known.clone());
     let programs = match known {
         Some(programs) => programs,
-        None => {
-            let programs = read_programs();
-            if let Ok(mut known) = PROGRAMS.lock() {
-                *known = Some(programs.clone());
-            }
-            programs
-        }
+        // Not read yet (the bar reads it soon after it starts): read now, but without opening
+        // the shortcuts, which would read the disk on this window's thread. The reading on a
+        // thread of its own, started below, then tells their targets.
+        None => read_programs(false),
     };
+    let programs = as_listed(programs);
     let count = programs.len();
     let mut form = FindWindow::new(era, programs, true);
     fetch_icons(&mut form);
@@ -249,5 +359,53 @@ fn activate(part: Part) {
             close();
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// This PC's Programs menu as Quick Search sees it, in counts only (never a name): every
+    /// entry, how many each rule hides, and how many still listed look like documentation by
+    /// their name. Reads the Start Menu folders and their shortcuts, writes nothing.
+    /// `cargo test -p bevel95 quick_search_counts -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn quick_search_counts() {
+        crate::audio::init();
+        crate::apps::read_now();
+        let programs = read_programs(true);
+        let others: Vec<&Program> = programs.iter().filter(|p| !p.own).collect();
+        let by = |rule: find::Hidden| others.iter().filter(|p| find::hidden(&p.name, p.kind) == Some(rule)).count();
+        let shown: Vec<&&Program> = others.iter().filter(|p| find::hidden(&p.name, p.kind).is_none()).collect();
+        let words = ["help", "manual", "documentation", "readme", "website", "support", "license", "release notes"];
+        let doc_like = shown.iter().filter(|p| words.iter().any(|w| p.name.to_lowercase().contains(w))).count();
+        let kinds = [find::Target::Unknown, find::Target::Program, find::Target::Web, find::Target::Document, find::Target::Folder]
+            .map(|k| (k, others.iter().filter(|p| p.kind == k).count()));
+        println!(
+            "entries {} (Bevel95's own {}), hidden by target {}, hidden by name {}, still listed {}, of which named like documentation {}; kinds {kinds:?}",
+            programs.len(),
+            programs.len() - others.len(),
+            by(find::Hidden::ByTarget),
+            by(find::Hidden::ByName),
+            shown.len(),
+            doc_like
+        );
+        // The documents' extensions (an extension is no name), to see that no program hides.
+        let mut exts = std::collections::BTreeMap::new();
+        for p in others.iter().filter(|p| p.kind == find::Target::Document) {
+            let path = target_of(&p.target);
+            let ext = path.rsplit_once('.').map(|(_, e)| e.to_lowercase()).filter(|e| e.len() <= 8 && !e.contains('\\')).unwrap_or_default();
+            *exts.entry(ext).or_insert(0) += 1;
+        }
+        println!("documents by extension: {exts:?}");
+    }
+
+    fn target_of(entry: &str) -> String {
+        match link_target(entry) {
+            Some(Link::Path(path)) => path,
+            _ => entry.to_string(),
+        }
     }
 }

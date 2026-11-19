@@ -40,13 +40,106 @@ pub struct Program {
     pub command: Option<Action>,
     /// A command's other words it is found by (none for a program).
     pub words: &'static [&'static str],
+    /// What the entry really opens, as the host found out (`Target::Unknown` until it has).
+    pub kind: Target,
 }
 
 impl Program {
     /// The row of a command.
     pub fn of_command(c: &Command) -> Program {
-        Program { name: c.name.clone(), folder: quick::FOLDER.to_string(), target: c.key.clone(), own: true, command: Some(c.action), words: c.words }
+        Program {
+            name: c.name.clone(),
+            folder: quick::FOLDER.to_string(),
+            target: c.key.clone(),
+            own: true,
+            command: Some(c.action),
+            words: c.words,
+            kind: Target::Program,
+        }
     }
+}
+
+/// What a Programs menu entry really opens (the host reads a shortcut's target; `classify`
+/// tells the kind from it). Quick Search lists only programs unless the setting
+/// `quick_search = everything` says otherwise (`listed`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Target {
+    /// Not found out (a shortcut that could not be read, or one to a thing of the shell's own
+    /// with no file, such as a Control Panel item): listed, as nothing says it is not a program.
+    #[default]
+    Unknown,
+    /// A program's file (`PROGRAM_EXTENSIONS`), an installer-advertised shortcut, or one of
+    /// Windows' Store-style apps.
+    Program,
+    /// A web address, or an Internet shortcut (.url).
+    Web,
+    /// Any other file: a document, a Help book, a read-me.
+    Document,
+    /// A folder.
+    Folder,
+}
+
+/// The files that are programs: they start something rather than open a document. .pif (an
+/// MS-DOS program's settings) and .appref-ms (an app installed from the web by ClickOnce) start
+/// a program too.
+pub const PROGRAM_EXTENSIONS: [&str; 8] = ["exe", "com", "bat", "cmd", "msc", "cpl", "pif", "appref-ms"];
+
+/// The kind of thing `target` is: a path (a shortcut's target, or the entry's own file when it
+/// is no shortcut), a web address, or a Store-style app (`programs::APP_PREFIX`). An empty
+/// target is `Unknown`. Folders are told by the host (it asks the disk).
+pub fn classify(target: &str) -> Target {
+    let target = target.trim().trim_matches('"');
+    if target.is_empty() {
+        return Target::Unknown;
+    }
+    if target.len() >= crate::programs::APP_PREFIX.len()
+        && target[..crate::programs::APP_PREFIX.len()].eq_ignore_ascii_case(crate::programs::APP_PREFIX)
+    {
+        return Target::Program;
+    }
+    let lower = target.to_lowercase();
+    if ["http:", "https:", "ftp:", "mailto:", "www."].iter().any(|scheme| lower.starts_with(scheme)) {
+        return Target::Web;
+    }
+    // The file's extension: after the last dot of its last part.
+    let file = lower.rsplit(['\\', '/']).next().unwrap_or(&lower);
+    match file.rsplit_once('.') {
+        Some((_, "url" | "website")) => Target::Web,
+        Some((_, ext)) if PROGRAM_EXTENSIONS.contains(&ext) => Target::Program,
+        _ => Target::Document,
+    }
+}
+
+/// The words at the start of a name that hide the entry whatever it opens: an uninstaller or
+/// an About box is never what a person searches for to start a program.
+const HIDDEN_NAMES: [&str; 2] = ["uninstall", "about"];
+
+/// Why an entry is not listed (`None`: it is listed). Bevel95's own programs and commands are
+/// always listed; other entries only when they open a program (or nothing says otherwise) and
+/// their name begins with neither "Uninstall" nor "About" (case does not matter).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hidden {
+    /// What it opens is no program (`Target::Web`, `Document` or `Folder`).
+    ByTarget,
+    /// Its name begins with one of `HIDDEN_NAMES`.
+    ByName,
+}
+
+pub fn hidden(name: &str, target: Target) -> Option<Hidden> {
+    if matches!(target, Target::Web | Target::Document | Target::Folder) {
+        return Some(Hidden::ByTarget);
+    }
+    let name = name.trim_start().to_lowercase();
+    HIDDEN_NAMES.iter().any(|word| name.starts_with(word)).then_some(Hidden::ByName)
+}
+
+/// The entries Quick Search lists: with `everything`, all of them; else only those `hidden`
+/// does not hide, and always Bevel95's own and the commands.
+pub fn listed(programs: Vec<Program>, everything: bool) -> Vec<Program> {
+    if everything {
+        return programs;
+    }
+    programs.into_iter().filter(|p| p.own || p.command.is_some() || hidden(&p.name, p.kind).is_none()).collect()
 }
 
 /// The programs and, after them, every command of `quick::commands` but those that only repeat
@@ -74,6 +167,7 @@ pub fn programs(tree: &Folder) -> Vec<Program> {
                 own: false,
                 command: None,
                 words: &[],
+                kind: Target::Unknown,
             });
         }
         for inner in &folder.folders {
@@ -856,6 +950,88 @@ mod tests {
         assert_eq!(w.selected().unwrap().command, Some(Action::Size(3)));
         assert_eq!(w.programs.len(), 8 + quick::commands().len());
         assert!(w.wanted_icons().is_empty(), "the command's picture stays");
+    }
+
+    #[test]
+    fn the_kind_of_target_is_told_by_what_it_is() {
+        for program in [
+            "C:\\Program Files\\Tool\\tool.exe",
+            "C:\\WINDOWS\\system32\\CMD.EXE",
+            "C:\\old\\edit.com",
+            "C:\\scripts\\go.bat",
+            "\"C:\\scripts\\go.cmd\"",
+            "C:\\WINDOWS\\system32\\compmgmt.msc",
+            "C:\\WINDOWS\\system32\\main.cpl",
+            "C:\\old\\game.pif",
+            "C:\\Users\\x\\Start Menu\\App.appref-ms",
+            "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+            "SHELL:APPSFOLDER\\Some.App!App",
+        ] {
+            assert_eq!(classify(program), Target::Program, "{program}");
+        }
+        for web in ["https://example.com/help", "HTTP://example.com", "ftp://x", "mailto:a@b", "www.example.com", "C:\\Links\\Site.url", "C:\\x\\Pinned.website"] {
+            assert_eq!(classify(web), Target::Web, "{web}");
+        }
+        for document in [
+            "C:\\Program Files\\Tool\\readme.txt",
+            "C:\\Program Files\\Tool\\tool.chm",
+            "C:\\Program Files\\Tool\\manual.pdf",
+            "C:\\Program Files\\Tool\\help.hlp",
+            "C:\\Program Files\\Tool\\index.html",
+            "C:\\Program Files\\Tool\\LICENSE",
+            "C:\\Program Files\\Tool.d\\notes",
+            "C:\\Program Files\\Tool\\setup.msi",
+        ] {
+            assert_eq!(classify(document), Target::Document, "{document}");
+        }
+        assert_eq!(classify(""), Target::Unknown);
+        assert_eq!(classify("  "), Target::Unknown);
+    }
+
+    #[test]
+    fn only_programs_are_listed_unless_everything_is_chosen() {
+        // The target rule.
+        for kind in [Target::Program, Target::Unknown] {
+            assert_eq!(hidden("Tool", kind), None, "{kind:?}");
+        }
+        for kind in [Target::Web, Target::Document, Target::Folder] {
+            assert_eq!(hidden("Tool", kind), Some(Hidden::ByTarget), "{kind:?}");
+        }
+        // The name rule, whatever the target; case does not matter; only at the start.
+        for name in ["Uninstall Tool", "uninstall", "UNINSTALLER", "About Tool", "  about"] {
+            assert_eq!(hidden(name, Target::Program), Some(Hidden::ByName), "{name}");
+        }
+        for name in ["Tool Uninstaller", "All about Tool", "Abacus", "Unicode Tool"] {
+            assert_eq!(hidden(name, Target::Program), None, "{name}");
+        }
+        assert_eq!(hidden("About Tool", Target::Web), Some(Hidden::ByTarget), "the target rule first");
+
+        let entry = |name: &str, kind: Target, own: bool| Program {
+            name: name.into(),
+            folder: ROOT.into(),
+            target: format!("C:\\{name}.lnk"),
+            own,
+            command: None,
+            words: &[],
+            kind,
+        };
+        let all = vec![
+            entry("Tool", Target::Program, false),
+            entry("Tool Help", Target::Document, false),
+            entry("Tool Website", Target::Web, false),
+            entry("Uninstall Tool", Target::Program, false),
+            entry("About Bevel95", Target::Program, true),
+            entry("Shell thing", Target::Unknown, false),
+        ];
+        let names = |list: &[Program]| list.iter().map(|p| p.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&listed(all.clone(), false)), ["Tool", "About Bevel95", "Shell thing"], "Bevel95's own always");
+        assert_eq!(names(&listed(all.clone(), true)), names(&all));
+        // A hidden entry is not found by typing either; the commands are always there.
+        let w = FindWindow::new(Era::Win98, listed(all, false), true);
+        let found = |text: &str| find(&w.programs, text).iter().map(|&i| w.programs[i].name.clone()).collect::<Vec<_>>();
+        assert_eq!(found("tool"), ["Tool"]);
+        assert!(found("uninstall").is_empty());
+        assert_eq!(found("bevel95 settings"), ["Bevel95 Settings"]);
     }
 
     #[test]

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use bevel_core::bar_menu::{self, BarCommand};
-use bevel_core::config::{self, Config, StartOptions, TaskbarOptions, WindowsKey};
+use bevel_core::config::{self, Config, QuickSearch, StartOptions, TaskbarOptions, WindowsKey};
 use bevel_core::datetime::Moment;
 use bevel_core::desktop::DesktopCommand;
 use bevel_core::dialog::DialogKind;
@@ -277,6 +277,8 @@ pub struct App {
     /// A program's windows share one task button (Bevel95 Settings, Taskbar page); the task
     /// list carries it out (`TaskList::group`).
     pub group: bool,
+    /// What Quick Search lists (Bevel95 Settings, Taskbar page).
+    pub quick_search: QuickSearch,
     /// Auto hide: how many pixels of the bar are on the screen now, how many it is sliding
     /// to, and how many ticks the pointer has been away from it.
     shown_px: i32,
@@ -606,6 +608,7 @@ pub fn run() -> u32 {
             programs_shown: settings.programs,
             windows_key: settings.windows_key,
             group: settings.group,
+            quick_search: settings.quick_search,
             shown_px: 0,
             target_px: 0,
             away_ticks: 0,
@@ -1925,6 +1928,12 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     if with_app(|app| std::mem::replace(&mut app.windows_key, values.windows_key) != values.windows_key).unwrap_or(false) {
         save_setting("windows_key", values.windows_key.setting());
         log(&format!("the Windows key now opens {}", values.windows_key.setting()));
+    }
+    let quick_search = if values.quick_search_all { QuickSearch::Everything } else { QuickSearch::Programs };
+    if with_app(|app| std::mem::replace(&mut app.quick_search, quick_search) != quick_search).unwrap_or(false) {
+        save_setting("quick_search", quick_search.setting());
+        log(&format!("Quick Search now lists {}", quick_search.setting()));
+        find_window::programs_read();
     }
     if with_app(|app| app.clock_offset != values.clock_offset).unwrap_or(false) {
         set_clock_offset(values.clock_offset);

@@ -49,6 +49,9 @@ pub struct Values {
     pub windows_key: WindowsKey,
     /// A program's windows share one task button (Bevel95 Settings, Taskbar page).
     pub group: bool,
+    /// Quick Search lists every entry of the Programs menu, not only its programs (Bevel95
+    /// Settings, Taskbar page; `quick_search = everything`).
+    pub quick_search_all: bool,
 }
 
 /// The check boxes.
@@ -66,6 +69,8 @@ pub enum Check {
     Desktop,
     /// Bevel95 Settings, Taskbar page: a program's windows share one button.
     Group,
+    /// Bevel95 Settings, Taskbar page: Quick Search lists documents and web pages too.
+    QuickSearchAll,
 }
 
 /// The entries of Windows 2000's Start Menu Settings list (Advanced page).
@@ -257,6 +262,8 @@ fn check_label(check: Check) -> &'static str {
         Check::Desktop => "&Show the classic desktop",
         // Windows XP's own wording.
         Check::Group => "&Group similar taskbar buttons",
+        // Ours (PROVISIONAL), under the group's title "Quick Search".
+        Check::QuickSearchAll => "Also list &documents, web pages and uninstallers",
     }
 }
 
@@ -732,6 +739,7 @@ fn check_value(v: &mut Values, c: Check) -> &mut bool {
         Check::StartWithWindows => &mut v.start_with_windows,
         Check::Desktop => &mut v.desktop,
         Check::Group => &mut v.group,
+        Check::QuickSearchAll => &mut v.quick_search_all,
     }
 }
 
@@ -759,7 +767,11 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
             .chain([Part::Check(Check::StartWithWindows), Part::UsePcTime])
             .collect(),
         Page::OwnTaskbar => {
-            WindowsKey::ALL.iter().map(|&k| Part::WinKey(k)).chain([Part::Check(Check::Group)]).collect()
+            WindowsKey::ALL
+                .iter()
+                .map(|&k| Part::WinKey(k))
+                .chain([Part::Check(Check::Group), Part::Check(Check::QuickSearchAll)])
+                .collect()
         }
         Page::Desktop => vec![Part::Check(Check::Desktop)],
         Page::Programs => Shown::ALL.iter().map(|&s| Part::Shown(s)).chain([Part::Programs]).collect(),
@@ -923,6 +935,10 @@ const KEY_ROWS: [(WindowsKey, i32, i32); 2] = [(WindowsKey::Find, 36, 84), (Wind
 const BUTTONS_GROUP: Rect = Rect::new(24, 144, 296, 69);
 const GROUP_CHECK: (i32, i32) = (36, 161);
 const GROUP_TEXT: &str = "Off: every window has a button of its own.";
+/// 8 below the Buttons group, the Quick Search group (as high as Startup on the General page),
+/// its check box as Startup's.
+const SEARCH_GROUP: Rect = Rect::new(24, 221, 296, 47);
+const SEARCH_CHECK: (i32, i32) = (36, 238);
 
 /// Bevel95 Settings' Desktop page (ours): one group in the General page's manner, its check box
 /// and three lines saying what the desktop is.
@@ -1051,6 +1067,7 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
                 parts.push((part, Rect::new(x, y, 17 + label_w(part) + 1, 16)));
             }
             parts.push(check(Part::Check(Check::Group), GROUP_CHECK.0, GROUP_CHECK.1));
+            parts.push(check(Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1));
         }
         Page::Desktop => parts.push(check(Part::Check(Check::Desktop), DESKTOP_CHECK.0, DESKTOP_CHECK.1)),
         Page::Programs => {
@@ -1415,6 +1432,8 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             group_box(fb, c, font, BUTTONS_GROUP, "Buttons", false);
             check(fb, Part::Check(Check::Group), GROUP_CHECK.0, GROUP_CHECK.1);
             lines(fb, 36, GROUP_CHECK.1 + 22, &[GROUP_TEXT]);
+            group_box(fb, c, font, SEARCH_GROUP, "Quick Search", false);
+            check(fb, Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1);
         }
         Page::Desktop => {
             group_box(fb, c, font, DESKTOP_GROUP, "Desktop", false);
@@ -1804,6 +1823,7 @@ mod tests {
             programs: Shown::Everything,
             windows_key: WindowsKey::Find,
             group: true,
+            quick_search_all: false,
         }
     }
 
@@ -1905,7 +1925,14 @@ mod tests {
         let mut p = Properties::new(Sheet::Bevel95, Era::Win95, values());
         p.show_page(1);
         assert_eq!(page_title(Era::Win2000, Page::OwnTaskbar), "Taskbar");
-        let stops = [Part::Tab(1), Part::WinKey(WindowsKey::Find), Part::Check(Check::Group), Part::Ok, Part::Cancel];
+        let stops = [
+            Part::Tab(1),
+            Part::WinKey(WindowsKey::Find),
+            Part::Check(Check::Group),
+            Part::Check(Check::QuickSearchAll),
+            Part::Ok,
+            Part::Cancel,
+        ];
         assert_eq!(p.tab_stops(), stops);
         assert_eq!(p.access_key('g'), Some(Part::Check(Check::Group)));
         assert!(p.is_checked(Check::Group), "grouped, as the bar always was");
@@ -1915,6 +1942,19 @@ mod tests {
         let now = Values { group: false, ..values() };
         assert!(!Sheet::Taskbar.merge(values(), now).group);
         assert!(Sheet::Bevel95.merge(values(), now).group);
+    }
+
+    #[test]
+    fn the_taskbar_page_says_what_quick_search_lists() {
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win98, values());
+        p.show_page(1);
+        assert!(!p.is_checked(Check::QuickSearchAll), "programs only by default");
+        assert_eq!(p.access_key('d'), Some(Part::Check(Check::QuickSearchAll)));
+        assert!(p.choose(Part::Check(Check::QuickSearchAll)));
+        assert!(p.values.quick_search_all && p.enabled(Part::Apply));
+        let now = Values { quick_search_all: true, ..values() };
+        assert!(Sheet::Taskbar.merge(values(), now).quick_search_all);
+        assert!(!Sheet::Bevel95.merge(values(), now).quick_search_all);
     }
 
     #[test]

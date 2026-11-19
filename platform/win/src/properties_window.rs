@@ -110,6 +110,7 @@ fn current_values() -> Option<(Values, bevel_core::theme::Era)> {
             programs: app.programs_shown,
             windows_key: app.windows_key,
             group: app.group,
+            quick_search_all: app.quick_search == bevel_core::config::QuickSearch::Everything,
         };
         (values, app.era)
     })

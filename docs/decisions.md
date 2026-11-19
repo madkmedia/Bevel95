@@ -2210,7 +2210,8 @@ it, but write nothing).
 - **It is not above every window**, unlike the bar's other windows (a kit `Tool` window is
   topmost; Find is set back right after it opens): another program brought forward covers it,
   and the Windows key brings it back. It has no taskbar button.
-- **What it lists** (`find::programs`): every program the Programs menu could show with
+- **What it lists** (`find::programs`; since 2026-11-18 only the programs among them unless
+  `quick_search = everything`: "Quick Search lists only programs by default" below): every program the Programs menu could show with
   "everything" chosen (`start_menu::all_programs`: both Start Menu folders' shortcuts,
   Windows' Store-style apps, Bevel95's own programs). The owner's choice of what the menu
   shows (classic, ticked, programs.txt) does not narrow it. One row per program; the same name
@@ -4289,6 +4290,40 @@ it, but write nothing).
     Theme submenus opened and closed 20 times by the arrow keys: USER 37 → 37, GDI 44 → 44.
   - Not tried by Claude: Restart, Exit and Switch back to Windows (from the submenu or Quick
     Search), so that the owner's bar never went away; they are on the owner's checklist.
+- **Quick Search lists only programs by default** (2026-11-18, the owner after the release: "a
+  bunch of stuff in quick search that should probably be hidden by default. Lots of about and
+  documentation etc."). The Programs menu itself is unchanged; only Quick Search's list is
+  narrowed, and a hidden entry is not found by typing either.
+  - The rule is the core's (`find::hidden`, `find::listed`, unit-tested): an entry is hidden
+    when what it opens is no program (`find::Target`: `Web`, a web address or an Internet
+    shortcut; `Document`, any other file; `Folder`), or when its name begins with "Uninstall"
+    or "About" (case does not matter), whatever it opens. Programs are .exe, .com, .bat, .cmd,
+    .msc and .cpl files, and also .pif and .appref-ms (an MS-DOS program's settings and an app
+    installed by ClickOnce: both start a program), Windows' Store-style apps and Windows
+    Installer's advertised shortcuts (`find::classify` tells the kind from a path). Bevel95's own
+    programs and the things to do (`core::quick`) are never hidden. An entry whose target cannot
+    be found out (`Unknown`: a shortcut that cannot be read, or one to a shell object with no
+    file, such as a Control Panel item) stays listed: nothing says it is no program.
+  - The Windows side tells the target (`find_window::target_kind`): a shortcut (.lnk) is opened
+    with Windows' ShellLink object and only read (IPersistFile::Load, IShellLinkW::GetPath with
+    no flags; nothing is searched for or repaired); IShellLinkDataList::GetFlags' SLDF_HAS_DARWINID
+    marks an advertised shortcut, whose path is only its program's picture; any other entry is
+    told by its own name. Reading shortcuts reads the disk, so it is done only on the "find
+    programs" thread that already reads the list; the bar starts one such reading after its
+    icons are read ahead, so the first opening finds the kinds known. Should a window open before
+    any reading, the list is read without opening shortcuts (every shortcut `Unknown`, so listed)
+    and corrected when the reading comes.
+  - **The setting**: `quick_search = programs | everything` in settings.txt
+    (`config::QuickSearch`, default `programs`, which a file without the line also means), and on
+    Bevel95 Settings' Taskbar page a group "Quick Search" under Buttons (8 below it, as high as
+    the General page's Startup group) with one check box, "Also list &documents, web pages and
+    uninstallers", ticked for `everything`. It applies at once to an open Quick Search.
+    PROVISIONAL: the words of the group and the box (the brief's were "Quick Search also lists
+    documents, web pages and uninstallers"; under a group titled Quick Search the shorter form
+    reads without repeating the name). The golden pictures `<look>-bevel95-settings-taskbar`
+    changed by the new group; no other picture changed.
+  - On the PC it was built on: 268 entries in all (4 of them Bevel95's own), 45 hidden by the
+    target rule (24 web pages, 19 documents, 2 folders), 16 by the name rule, 207 listed.
 ## 16 Colors (2026-11-16, the owner: "a 16 color and True Color option")
 - What the owner asked for: "I think we should have a 16 color and True Color option ... As a kid, I
   recall the 16 color icons (so that's the nostalgia)". A PC without its proper display driver showed
