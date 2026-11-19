@@ -1408,6 +1408,29 @@ it, but write nothing).
   looks (etched like 2000's; the emulator's 16 and 256 colors had shown them plain gray, and
   Bevel95 draws True Color), **Windows 98's menu separators** (1px short at both ends) and
   **Windows 2000's check mark** (2px further left). Twelve golden images changed with them.
+- **The edges flashed while moving between a menu bar's menus** (2026-11-18, the owner, 2000 look
+  at size 2: "when I flip through win exp menu items, the edges of that window ui flash a bit";
+  "It's like the outermost stroke of the window"). Measured before anything was changed
+  (`private/probes/menuflash`: a scratch copy of folders.exe on a test folder of its own, keys
+  posted to its own windows only, the screen around the window photographed about 36 times a
+  second during each change, each frame compared with the frames before and after the change):
+  moving from one menu to the next (Right), some frames showed the window's outer edge (two
+  screen pixels at size 2, a few more on the left and top) in Windows' own system colors
+  (E3E3E3, A0A0A0, 696969, and the inactive sizing border F4F7FC) instead of the look's frame:
+  in 3 of 5 changes in the 2000 look's Windows Explorer, 3 of 7 in the 98 look's, 8 of 12 in the
+  95 look's plain folder window. Moving through one menu's entries (Down) showed none: the
+  window's activation does not change then. **The cause**: a menu takes the focus while it is open
+  (`menu::track`), so between two menus the folder window becomes active and inactive again;
+  each time Windows' default handling of WM_NCACTIVATE painted today's sizing frame over the
+  window's outer pixels (a window with a sizing frame, WS_THICKFRAME, though `kit` gives it no
+  frame area), until the form painted again. **The repair** (`kit::kit_proc`): for a window
+  with a sizing frame, WM_NCACTIVATE goes to the default handling with lParam -1, which keeps
+  its answer and its activation work but paints nothing (Windows' documented meaning of -1); the
+  form draws its own active or inactive title bar as before. After it: 0 frames with pixels of
+  neither picture in every run (2000 Explorer: 6 changes of menu and 6 of entry; 98 Explorer: 6;
+  95 and 2000 plain folder windows: 6 each). The other kit windows with a sizing frame (the Help
+  viewer) are repaired by the same line; Minesweeper, Solitaire and the Calculator have no
+  sizing frame (their windows were never painted over) and were not measured.
 
 ## Minesweeper
 

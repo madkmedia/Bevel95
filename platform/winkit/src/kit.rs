@@ -46,7 +46,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GWL_STYLE, GetWindowLongW, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT,
     HTTOPRIGHT, IDC_HELP, IsZoomed, LoadCursorW, MINMAXINFO, SIZE_MAXIMIZED, SIZE_RESTORED, SPI_SETWORKAREA,
     SW_MAXIMIZE, SW_RESTORE, SetCursor, WM_DISPLAYCHANGE, WM_EXITSIZEMOVE, WM_SETTINGCHANGE,
-    WM_GETMINMAXINFO, WM_MOVE, WM_NCCALCSIZE, WM_NCHITTEST, WM_SETCURSOR, WS_MAXIMIZEBOX, WS_THICKFRAME,
+    WM_GETMINMAXINFO, WM_MOVE, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WM_SETCURSOR, WS_MAXIMIZEBOX, WS_THICKFRAME,
     CreateIconIndirect, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow, FindWindowExW, GetCaretBlinkTime,
     GetClassNameW, GetWindowPlacement, GetWindowRect, GetWindowThreadProcessId, HICON, HTCAPTION, ICON_BIG, ICON_SMALL,
     ICONINFO, IsIconic, SetWindowPlacement, WINDOWPLACEMENT,
@@ -1143,6 +1143,18 @@ pub unsafe extern "system" fn kit_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
     if msg == WM_PAINT && kind.is_some() {
         log("a kit window could not paint (its state was busy); it paints again next time");
     }
+    // A sizing frame's window going behind or coming to the front (a menu of its own taking
+    // the focus and giving it back, say): Windows' default handling would paint today's sizing
+    // frame, in the system's 3-D colors, over the window's outer pixels until the form paints
+    // again, a visible flash at the edges. lParam -1 keeps the default handling (the answer
+    // that lets the activation change) without that painting: the form draws every pixel
+    // itself and shows its own active or inactive title bar.
+    // SAFETY: read the style of the window whose procedure Windows is calling.
+    let lparam = if msg == WM_NCACTIVATE && unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32 & WS_THICKFRAME != 0 {
+        -1
+    } else {
+        lparam
+    };
     // SAFETY: default handling for everything else.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
