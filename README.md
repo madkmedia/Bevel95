@@ -115,8 +115,9 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
   safety copy of that list.
 - `desktop.txt` and `folders.txt`: where the classic desktop's icons lie, and each folder
   window's place, size and view.
-- `undo.txt`, `task-order.txt`, `run-history.txt`: the folder windows' list of recent file
-  operations, the order of the task buttons, the commands typed into Run.
+- `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
+  of recent file operations, the order of the task buttons, the commands typed into Run, the
+  width of Quick Search's Name column.
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options
   and scores.
 - `bevel95.log` and `bevel95.old.log`: the log (see below).

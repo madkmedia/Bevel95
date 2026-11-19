@@ -399,7 +399,7 @@ impl ViewMode {
 }
 
 mod views;
-pub use views::{Columns, HEADER_H, HeaderPart, ROW_H, SMALL_PICTURE, date_text, header_hit, kb_text, local_filetime, paint_header};
+pub use views::{Columns, DIVIDER_LEFT, DIVIDER_RIGHT, HEADER_H, HeaderPart, ROW_H, SMALL_PICTURE, date_text, header_hit, kb_text, local_filetime, paint_header};
 
 /// A label being renamed: Windows' edit box over it (measured on the Reference PCs: a black
 /// frame, white inside, the text centered, all of it selected at the start).

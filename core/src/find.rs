@@ -274,8 +274,14 @@ const HEADER_H: i32 = 17;
 const ROW_H: i32 = 16;
 /// Rows the list shows (the scroll bar's page).
 const PAGE: usize = 10;
-/// The Name column's width; In Folder takes the rest.
-const NAME_W: i32 = 150;
+/// The Name column's width as it opens the first time; In Folder takes the rest. The line
+/// between them can be dragged (as a folder window's Details header: `desktop_icons::header_hit`)
+/// and the width is remembered (`FindWindow::name_w`, `state_text`).
+pub const NAME_W: i32 = 150;
+/// The narrowest the two columns may be made: Name keeps its picture and a few letters, In
+/// Folder a few letters (so neither can vanish under the other).
+const MIN_NAME_W: i32 = NAME_X + 16;
+const MIN_FOLDER_W: i32 = 40;
 const STATUS: Rect = Rect::new(3, 241, 324, 20);
 const COLUMNS: [&str; 2] = ["Name", "In Folder"];
 /// What the list says until the programs are read.
@@ -300,6 +306,10 @@ pub enum Part {
     ScrollPageUp,
     ScrollPageDown,
     ScrollThumb,
+    /// The line between the header's Name and In Folder: dragged, it sets Name's width; a
+    /// double-click fits Name to the longest name found. The host hears of a new width by
+    /// `Effect::Activate(Part::Divider)` and remembers it.
+    Divider,
     /// Starting the selected program (Enter, a double-click): no place of its own.
     Open,
 }
@@ -334,6 +344,13 @@ pub struct FindWindow {
     field_x: i32,
     advances: Vec<i32>,
     parts: Vec<(Part, Rect)>,
+    /// The Name column's width as chosen (`NAME_W` until the line is dragged; the host sets the
+    /// remembered one). It is kept within the limits where it is used (`name_width`).
+    pub name_w: i32,
+    /// The line being dragged: the pointer's x where it was grabbed and where it is now.
+    divider_drag: Option<(i32, i32)>,
+    /// The font the names are drawn in (from the first layout), to fit Name to them.
+    font: Option<crate::text::Font>,
 }
 
 impl FindWindow {
@@ -358,6 +375,9 @@ impl FindWindow {
             field_x: 0,
             advances: Vec::new(),
             parts: Vec::new(),
+            name_w: NAME_W,
+            divider_drag: None,
+            font: None,
         };
         w.refind();
         w
@@ -476,9 +496,38 @@ impl FindWindow {
         Self::inside().w - if self.scroll().is_some() { 16 } else { 0 }
     }
 
+    /// `width` kept within the limits: neither column narrower than its least.
+    fn clamp_name(&self, width: i32) -> i32 {
+        width.clamp(MIN_NAME_W, (self.rows_width() - MIN_FOLDER_W).max(MIN_NAME_W))
+    }
+
+    /// The Name column's width as shown (`name_w` within the limits).
+    pub fn name_width(&self) -> i32 {
+        self.clamp_name(self.name_w)
+    }
+
+    /// Where the line being dragged is drawn (x in the list's inside), if one is.
+    fn drag_line(&self) -> Option<i32> {
+        self.divider_drag.map(|(from, to)| self.clamp_name(self.name_width() + to - from))
+    }
+
+    /// The width a double-click on the line gives Name: the longest name found, its picture
+    /// and the room after it (as a folder window's Details fits its Name column).
+    fn fitted_width(&self) -> Option<i32> {
+        let font = self.font.as_ref()?;
+        let widest = self.found.iter().map(|&i| font.measure(&self.programs[i].name)).max()?;
+        Some(self.clamp_name(widest + NAME_X + CELL_PAD))
+    }
+
     fn lay_out(&mut self) {
         let (inside, w) = (Self::inside(), self.rows_width());
-        let mut parts = Vec::new();
+        // The line between the columns takes the mouse 8 left to 7 right of In Folder's first
+        // pixel, as a Details header's divider does (`desktop_icons::header_hit`); first, so
+        // the list under it does not take the press.
+        let edge = inside.x + self.name_width();
+        let left = edge - crate::desktop_icons::DIVIDER_LEFT;
+        let right = (edge + crate::desktop_icons::DIVIDER_RIGHT).min(inside.x + w - 1);
+        let mut parts = vec![(Part::Divider, Rect::new(left, inside.y, right - left + 1, HEADER_H))];
         for at in self.top..self.found.len().min(self.top + PAGE) {
             let y = inside.y + HEADER_H + (at - self.top) as i32 * ROW_H;
             parts.push((Part::Row(at), Rect::new(inside.x, y, w, ROW_H)));
@@ -522,6 +571,9 @@ impl kit::Form for FindWindow {
         SIZE
     }
     fn layout(&mut self, fonts: &Fonts) {
+        if self.font.as_ref() != Some(fonts.regular) {
+            self.font = Some(fonts.regular.clone());
+        }
         self.field_x = self.text_x();
         self.advances = self.text.chars().map(|c| fonts.regular.glyph(c).advance).collect();
         self.lay_out();
@@ -556,8 +608,9 @@ impl kit::Form for FindWindow {
         fb.frame(LIST, c.shadow, c.highlight);
         fb.frame(LIST.inset(1, 1, 1, 1), c.dark_shadow, c.light);
         let (inside, w) = (Self::inside(), self.rows_width());
+        let name_w = self.name_width();
         let mut list = Framebuffer::new(w, inside.h, rgb(0xFFFFFF));
-        let cells = [Rect::new(0, 0, NAME_W, HEADER_H), Rect::new(NAME_W, 0, w - NAME_W, HEADER_H)];
+        let cells = [Rect::new(0, 0, name_w, HEADER_H), Rect::new(name_w, 0, w - name_w, HEADER_H)];
         for (cell, label) in cells.iter().zip(COLUMNS) {
             list.fill(*cell, c.face);
             dialog::raised(&mut list, *cell, c);
@@ -573,15 +626,23 @@ impl kit::Form for FindWindow {
                 crate::colors16::draw_picture(&mut list, theme, icon, ICON_X, y);
             }
             // The name, highlighted when selected (as a list's chosen label is).
-            let name = font.elide(&p.name, NAME_W - NAME_X - CELL_PAD);
+            let name = font.elide(&p.name, name_w - NAME_X - CELL_PAD);
             let mut color = c.text;
             if row == self.sel {
                 list.fill(Rect::new(NAME_X - 2, y, font.measure(&name) + 4, ROW_H), c.menu_highlight);
                 color = c.menu_highlight_text;
             }
             font.draw(&mut list, NAME_X, y + text_y, &name, color);
-            let folder = font.elide(&p.folder, w - NAME_W - 2 * CELL_PAD);
-            font.draw(&mut list, NAME_W + CELL_PAD, y + text_y, &folder, c.text);
+            let folder = font.elide(&p.folder, w - name_w - 2 * CELL_PAD);
+            font.draw(&mut list, name_w + CELL_PAD, y + text_y, &folder, c.text);
+        }
+        // The line being dragged: inverted, from the header's top down the list, as a folder
+        // window's Details draws it (`folder`, `*-view-v1-hdr-divider-drag`).
+        if let Some(lx) = self.drag_line() {
+            for y in 0..inside.h {
+                let p = list.get(lx, y);
+                list.set(lx, y, (p & 0xFF00_0000) | (!p & 0x00FF_FFFF));
+            }
         }
         fb.blit(&list, inside.x, inside.y);
         if let Some(scroll) = self.scroll() {
@@ -707,18 +768,34 @@ impl kit::Form for FindWindow {
                 self.scroll_by(if part == Part::ScrollPageUp { -(PAGE as i32) } else { PAGE as i32 });
             }
             Some(Part::ScrollThumb) => return Press::Grab(Part::ScrollThumb, self.top as i32),
+            Some(Part::Divider) => {
+                self.divider_drag = Some((x, x));
+                return Press::Grab(Part::Divider, 0);
+            }
             Some(Part::TitleClose) => return Press::Hold(Part::TitleClose),
             Some(_) => {}
             None => return Press::Nothing,
         }
         Press::Done
     }
-    /// A double-click on a row starts its program.
+    /// A double-click on a row starts its program; on the line between the columns it fits Name
+    /// to the longest name found.
     fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
-        let Some(Part::Row(at)) = self.hit(x, y) else { return None };
-        self.sel = at;
-        self.show_selected();
-        Some(vec![Effect::Activate(Part::Open)])
+        match self.hit(x, y) {
+            Some(Part::Row(at)) => {
+                self.sel = at;
+                self.show_selected();
+                Some(vec![Effect::Activate(Part::Open)])
+            }
+            Some(Part::Divider) => {
+                self.divider_drag = None;
+                let width = self.fitted_width()?;
+                self.name_w = width;
+                self.lay_out();
+                Some(vec![Effect::Activate(Part::Divider)])
+            }
+            _ => None,
+        }
     }
     fn release(&mut self, part: Part) -> Vec<Effect<Part>> {
         match part {
@@ -726,13 +803,40 @@ impl kit::Form for FindWindow {
             _ => Vec::new(),
         }
     }
-    fn drag(&mut self, _part: Part, grab_y: i32, grab_top: i32, _x: i32, y: i32) -> bool {
+    fn drag(&mut self, part: Part, grab_y: i32, grab_top: i32, x: i32, y: i32) -> bool {
+        if part == Part::Divider {
+            let before = self.drag_line();
+            if let Some(d) = self.divider_drag.as_mut() {
+                d.1 = x;
+            }
+            return self.drag_line() != before;
+        }
         let Some(scroll) = self.scroll() else { return false };
         let top = scroll.dragged(grab_top, y - grab_y);
         let changed = top != self.top;
         self.top = top;
         self.lay_out();
         changed
+    }
+    /// The line let go: Name takes the width the line shows (as a folder window's Details).
+    fn dropped(&mut self, part: Part, _x: i32, _y: i32) -> Vec<Effect<Part>> {
+        if part != Part::Divider {
+            return Vec::new();
+        }
+        let Some(width) = self.drag_line() else { return Vec::new() };
+        self.divider_drag = None;
+        if width == self.name_width() {
+            return Vec::new();
+        }
+        self.name_w = width;
+        self.lay_out();
+        vec![Effect::Activate(Part::Divider)]
+    }
+    fn pointer(&self, x: i32, y: i32) -> kit::Pointer {
+        match self.hit(x, y) {
+            Some(Part::Divider) => kit::Pointer::HeaderDivider,
+            _ => kit::Pointer::Arrow,
+        }
     }
     fn wheel(&mut self, notches: i32) {
         self.scroll_by(-3 * notches);
@@ -750,6 +854,20 @@ impl kit::Form for FindWindow {
     fn blink(&mut self, on: bool) {
         self.caret_on = on;
     }
+}
+
+/// What Quick Search keeps between runs (the host's `quick-search.txt`): the Name column's width.
+pub fn state_text(name_w: i32) -> String {
+    format!("# Quick Search: the width of its Name column (the line between Name and In Folder).\nname_width = {name_w}\n")
+}
+
+/// The Name column's width kept in `text` (`state_text`), if it holds a sensible one.
+pub fn read_state(text: &str) -> Option<i32> {
+    text.lines()
+        .filter_map(|line| line.split_once('='))
+        .find(|(key, _)| key.trim() == "name_width")
+        .and_then(|(_, value)| value.trim().parse::<i32>().ok())
+        .filter(|w| (MIN_NAME_W..=SIZE.0).contains(w))
 }
 
 /// A held scroll bar button scrolls on (the window's host calls this at each tick of its timer
@@ -1129,6 +1247,70 @@ mod tests {
         assert_eq!((w.found.len(), w.top, w.sel), (7, 0, 0));
         assert_eq!(w.rect(Part::Row(0)).unwrap().w, 308);
         assert!(w.rect(Part::ScrollThumb).is_none());
+    }
+
+    /// Every character 6 pixels wide.
+    fn test_font() -> crate::text::Font {
+        let glyph = crate::text::Glyph { ch: '?', advance: 6, ink_x: 0, ink_w: 0, ink: Vec::new() };
+        crate::text::Font::new("test".into(), false, 13, 11, vec![glyph]).unwrap()
+    }
+
+    #[test]
+    fn the_line_between_the_columns_drags_and_fits() {
+        let mut w = FindWindow::new(Era::Win98, programs(&menu()), true);
+        let f = test_font();
+        w.layout(&Fonts { regular: &f, bold: &f });
+        let mut c = Controller::default();
+        // 8 rows, no scroll bar: the rows 308 wide from x 11; In Folder starts at 11 + 150.
+        let (edge, y) = (11 + NAME_W, 59 + 5);
+        assert_eq!(w.name_width(), NAME_W);
+        // It takes the mouse 8 left to 7 right of In Folder's first pixel, with the double bar.
+        for x in [edge - 8, edge, edge + 7] {
+            assert_eq!(w.hit(x, y), Some(Part::Divider), "{x}");
+            assert_eq!(w.pointer(x, y), kit::Pointer::HeaderDivider);
+        }
+        assert_eq!(w.hit(edge - 9, y), Some(Part::List));
+        assert_eq!(w.pointer(edge - 9, y), kit::Pointer::Arrow);
+        assert_eq!(w.hit(edge, 59 + 17 + 4), Some(Part::Row(0)), "only in the header");
+        // Dragged 30 right: the line moves, the column only when let go.
+        assert_eq!(c.mouse_down(&mut w, edge + 2, y), vec![Effect::Capture]);
+        assert!(c.mouse_move(&mut w, edge + 32, y));
+        assert_eq!(w.name_width(), NAME_W);
+        assert_eq!(w.drag_line(), Some(NAME_W + 30));
+        assert_eq!(c.mouse_up(&mut w, edge + 32, y), vec![Effect::Release, Effect::Activate(Part::Divider)]);
+        assert_eq!((w.name_width(), w.drag_line()), (NAME_W + 30, None));
+        assert_eq!(w.hit(edge + 30, y), Some(Part::Divider), "the line's place follows");
+        // Neither column can vanish: far right leaves In Folder 40, far left leaves Name 38.
+        let edge = 11 + w.name_width();
+        c.mouse_down(&mut w, edge, y);
+        c.mouse_move(&mut w, 2000, y);
+        c.mouse_up(&mut w, 2000, y);
+        assert_eq!(w.name_width(), 308 - 40);
+        let edge = 11 + w.name_width();
+        c.mouse_down(&mut w, edge, y);
+        c.mouse_move(&mut w, -2000, y);
+        c.mouse_up(&mut w, -2000, y);
+        assert_eq!(w.name_width(), NAME_X + 16);
+        // A press let go where it was changes nothing (and tells nothing).
+        let edge = 11 + w.name_width();
+        c.mouse_down(&mut w, edge, y);
+        assert_eq!(c.mouse_up(&mut w, edge, y), vec![Effect::Release]);
+        // A double-click fits Name to the longest name found (6 pixels a letter here).
+        let longest = w.found.iter().map(|&i| w.programs[i].name.chars().count() as i32).max().unwrap();
+        assert_eq!(w.double_click(edge, y), Some(vec![Effect::Activate(Part::Divider)]));
+        assert_eq!(w.name_width(), longest * 6 + NAME_X + CELL_PAD);
+        // A remembered width out of reach (the list grew a scroll bar) is shown within reach.
+        w.name_w = 400;
+        assert_eq!(w.name_width(), 308 - 40);
+    }
+
+    #[test]
+    fn the_name_width_is_kept_as_text() {
+        assert_eq!(read_state(&state_text(212)), Some(212));
+        assert_eq!(read_state("name_width=90\n"), Some(90));
+        for bad in ["", "name_width = wide", "name_width = 5", "name_width = 99999", "other = 120"] {
+            assert_eq!(read_state(bad), None, "{bad}");
+        }
     }
 
     #[test]

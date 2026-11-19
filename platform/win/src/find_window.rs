@@ -28,7 +28,8 @@ use bevel_core::theme::{Depth, Era};
 
 use crate::bar::{BAR_HWND, WM_BAR_COLORS, WM_BAR_COMMAND, WM_BAR_SIZE, WM_BAR_THEME, with_app};
 use crate::kit::{self, Hosted};
-use crate::log::log;
+use crate::log::{data_dir, log};
+use bevel_winkit::state_file;
 use crate::audio::{method, release};
 use crate::util::{take_focus, wide};
 use crate::{start_menu, window_list};
@@ -284,6 +285,9 @@ pub fn open() {
     let programs = as_listed(programs);
     let count = programs.len();
     let mut form = FindWindow::new(era, programs, true);
+    if let Some(width) = state_file::load(&state_path()).text().and_then(|text| find::read_state(&text)) {
+        form.name_w = width;
+    }
     fetch_icons(&mut form);
     // Where Run opens: in the lower left, above the Start button.
     let opened = kit::open(FindHost { form, held: 0 }, |_, h| (monitor_left + 12 * scale, bar_top - h - 12 * scale));
@@ -327,10 +331,26 @@ fn run_command(action: Action) {
     unsafe { PostMessageW(bar, msg, wparam, 0) };
 }
 
-/// Carries out Enter, a double-click and the title bar's "X".
+/// The file that keeps Quick Search's Name column width between runs (`find::state_text`).
+fn state_path() -> std::path::PathBuf {
+    data_dir().join("quick-search.txt")
+}
+
+/// The line between the columns was moved or fitted: the width is remembered.
+fn save_name_width() {
+    let Some(width) = kit::with::<FindHost, _>(|h| h.form.name_width()) else { return };
+    if let Err(e) = state_file::save(&state_path(), &find::state_text(width))
+        && !state_file::is_read_only(&e)
+    {
+        log(&format!("could not save Quick Search's column width: {e}"));
+    }
+}
+
+/// Carries out Enter, a double-click, the title bar's "X" and a new column width.
 fn activate(part: Part) {
     match part {
         Part::TitleClose => close(),
+        Part::Divider => save_name_width(),
         Part::Open => {
             let Some((target, command)) =
                 kit::with::<FindHost, _>(|h| h.form.selected().map(|p| (p.target.clone(), p.command))).flatten()

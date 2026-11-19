@@ -4324,6 +4324,23 @@ it, but write nothing).
     changed by the new group; no other picture changed.
   - On the PC it was built on: 268 entries in all (4 of them Bevel95's own), 45 hidden by the
     target rule (24 web pages, 19 documents, 2 folders), 16 by the name rule, 207 listed.
+- **Quick Search's column line can be dragged** (2026-11-18, the owner: "the attribute divider
+  can't be moved in quick search"). The line between Name and In Folder works as a folder
+  window's Details header divider (`find::Part::Divider`): it takes the mouse 8 left to 7 right of
+  In Folder's first pixel (`desktop_icons::DIVIDER_LEFT`, `DIVIDER_RIGHT`, the Reference PCs'
+  measure), shows the header's double-bar pointer (`Pointer::HeaderDivider`), draws an inverted
+  line through the header and the rows while dragged, and Name takes the width the line shows
+  when it is let go; a double-click on it fits Name to the longest name found (as a Details
+  column fits its widest entry). Limits, ours: Name at least 38 (its picture and a few letters),
+  In Folder at least 40; a remembered width that no longer fits (the scroll bar came) is shown
+  within them. The width is remembered in a state file of its own, `quick-search.txt`
+  (`name_width = N`, `find::state_text` and `read_state`, written whole through
+  `winkit::state_file`; one of `state_file::OWN_FILES` and Setup's Remove list): it is the
+  window's state, not a setting, as `task-order.txt` and the games' files are. Golden pictures:
+  none changed (the window opens at 150 as before). Tried live (the 2000 look at size 2): one real
+  drag 40 to the right (the line drawn, the column wider on release, the file written), one real
+  double-click on the line (fitted, here to the limit), the window opened again with the width
+  kept; the test's file was removed again afterwards.
 ## 16 Colors (2026-11-16, the owner: "a 16 color and True Color option")
 - What the owner asked for: "I think we should have a 16 color and True Color option ... As a kid, I
   recall the 16 color icons (so that's the nostalgia)". A PC without its proper display driver showed

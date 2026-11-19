@@ -80,12 +80,13 @@ const LEGACY_FILES: &str = include_str!("../../../tools/legacy-files.txt");
 /// The files Bevel95 and its programs write into the data folder, which Remove deletes (and
 /// with them gone, the folder itself goes; files the owner put there stay, and so does it).
 /// README's "Files it uses" lists the same.
-const DATA_FILES: [&str; 15] = [
+const DATA_FILES: [&str; 16] = [
     "settings.txt",
     "desktop.txt",
     "folders.txt",
     "undo.txt",
     "task-order.txt",
+    "quick-search.txt",
     "programs.txt",
     "programs.old.txt",
     "minefield.txt",
