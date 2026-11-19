@@ -1360,6 +1360,21 @@ it, but write nothing).
     entry gone. **Untried against a running bar**: a second bar cannot run beside the owner's, so
     the race of step 3 itself was not repeated; the owner's checklist for a clean PC has "the
     folder is gone after Remove".
+- **The same version started again says so** (2026-11-18, the owner after the release: the one
+  file downloaded again and started while that build was installed and running showed nothing;
+  the log said "this copy is the installed one; starting that", then the started bar "another
+  Bevel95 bar is already running; this one exits"). Now, when the one file (or a copy as built) is
+  the very build that is installed and the bar running is the installed copy's
+  (`install::running_bar_is`: the bar's window, its program file the installed `bevel95.exe`, as
+  `close_running_bar` already asked), Setup shows the look's own message box
+  (`confirm::show_message`: the installed copy's look and colors, in the middle of the main
+  screen, title "Bevel95", OK) with "Bevel95 <version> is already installed and running."
+  (`setup::already_running`) and ends; nothing else happens. Installed but not running: it starts
+  the installed copy, as before, with no message. The installed copy started a second time (the
+  desktop shortcut) never reaches Setup (`here_installed`) and stays silent; `--setup` skips the
+  comparison as before; `--restore`, `--after`, `--uninstall` and the other switches never reach
+  this code. Windows' own message box only if the look's font cannot be had. PROVISIONAL: the
+  words.
 
 ## Programs: the shared Windows side and program windows (2026-11-09, the owner: "do minesweeper")
 

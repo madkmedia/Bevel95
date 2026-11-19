@@ -110,6 +110,13 @@ pub const INCOMPLETE: &str = concat!(
     " is incomplete: its other programs are missing. A download that stopped early looks like this.\n\n\
      Download it again. Nothing was changed."
 );
+/// What the one file says, and does nothing else, when it is the very build that is installed and
+/// the installed bar is already running (the owner, 2026-11-18: the download started again showed
+/// nothing). PROVISIONAL wording.
+pub fn already_running(version: &str) -> String {
+    format!("{} {version} is already installed and running.", crate::product_name!())
+}
+
 /// What Portable says, and does nothing else, in a folder that already holds another program's
 /// settings.txt (the safety review of 2026-11-18, A3). PROVISIONAL wording.
 pub const FOREIGN_SETTINGS: &str = concat!(

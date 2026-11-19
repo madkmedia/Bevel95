@@ -195,6 +195,14 @@ pub fn setup(forced: bool) -> bool {
     } else if installed_set_up {
         let old = fs::read(&installed).unwrap_or_default();
         if !forced && bundle.bar == old && bundle.programs.iter().all(|p| same_bytes_as(&p.bytes, &dir.join("programs").join(p.file))) {
+            // Started again while that very build runs: starting it would show nothing (a second
+            // bar ends at once), so the person is told, in the installed copy's look.
+            if running_bar_is(&installed) {
+                log("setup: this copy is the installed one, and its bar is already running; said so");
+                let settings = bevel_core::config::parse(&state_file::read(&dir.join("settings.txt")).text().unwrap_or_default()).0;
+                say_in_look(settings.era, settings.colors, &bevel_core::setup::already_running(bevel_core::about::VERSION));
+                return false;
+            }
             log("setup: this copy is the installed one; starting that");
             if start(&installed, &dir) {
                 return false;
@@ -1157,13 +1165,44 @@ fn delete_after_exit(dir: &Path) -> bool {
 /// Closes a running bar (Windows' taskbar comes back) the way the desktop shortcut "Restore
 /// Windows taskbar" does, and waits for it.
 fn close_running_bar(installed: &Path) -> bool {
-    let class = wide(bar::BAR_CLASS);
-    // SAFETY: a valid class name.
-    let window = unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) };
-    if !window.is_null() && same_file(Path::new(&crate::window_list::program_path(window)), installed) {
+    if running_bar_is(installed) {
         return std::process::Command::new(installed).arg("--restore").status().is_ok_and(|status| status.success());
     }
     false
+}
+
+/// Whether the bar running now (its window) is the program file `installed`.
+fn running_bar_is(installed: &Path) -> bool {
+    let class = wide(bar::BAR_CLASS);
+    // SAFETY: a valid class name.
+    let window = unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) };
+    !window.is_null() && same_file(Path::new(&crate::window_list::program_path(window)), installed)
+}
+
+/// Shows the look's own message box (`confirm::show_message`: the look's frame, text and OK) in
+/// the middle of the main screen and waits until it is gone. Falls back to Windows' message box
+/// when the look's font cannot be had.
+#[cfg(not(test))]
+fn say_in_look(era: Era, depth: Depth, text: &str) {
+    use bevel_winkit::confirm::{self, MessageHost, Place};
+    bevel_winkit::look::dpi_aware();
+    let (screen, dpi) = bevel_winkit::look::main_screen();
+    let look = match bevel_winkit::look::for_look(era, depth, scale_for_dpi(dpi)) {
+        Ok(look) => look,
+        Err(e) => {
+            log(&format!("setup: cannot use the look's font ({e}); Windows' message box instead"));
+            message(text, MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+    };
+    confirm::show_message(Place { look, era, kind: kit::Kind::Tool, work: screen }, NAME, text);
+    kit::run_until_closed::<MessageHost>();
+}
+
+/// The tests show no window: what it would say is kept (`SAID`), as if OK was pressed.
+#[cfg(test)]
+fn say_in_look(_era: Era, _depth: Depth, text: &str) {
+    SAID.with(|s| s.borrow_mut().push(text.to_string()));
 }
 
 /// Starts the installed copy; true if it started.
@@ -1280,6 +1319,25 @@ fn save_shortcut(link: &Path, target: &Path, arguments: &str, description: &str,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one file started again while that very build runs tells so (the owner, 2026-11-18):
+    /// the bar running is told by its window's program file. Only read: a file elsewhere is never
+    /// the running bar; and when a bar runs on this PC, its own file is.
+    #[test]
+    fn the_running_bar_is_told_by_its_file() {
+        let elsewhere = std::env::temp_dir().join(format!("bevel95-not-running-{}", std::process::id())).join("bevel95.exe");
+        assert!(!running_bar_is(&elsewhere));
+        let class = wide(bar::BAR_CLASS);
+        // SAFETY: a valid class name.
+        let window = unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) };
+        let file = if window.is_null() { String::new() } else { crate::window_list::program_path(window) };
+        if !file.is_empty() {
+            assert!(running_bar_is(Path::new(&file)), "the running bar's own file");
+        }
+        assert_eq!(bevel_core::setup::already_running("0.1.0"), "Bevel95 0.1.0 is already installed and running.");
+        say_in_look(Era::Win2000, Depth::TrueColor, "said");
+        assert_eq!(SAID.with(|s| s.borrow().last().cloned()), Some("said".to_string()));
+    }
 
     /// A downloaded copy beside another program's settings.txt is not portable, and Setup's
     /// Portable there refuses and writes nothing (it took the folder as Bevel95's: the safety
