@@ -35,7 +35,7 @@ here is promised, and an issue is the place to say what matters to you.
 - Windows 95's small "Topics Found" window in Help's index.
 
 ## Platforms
-- Windows 10 is untried; Windows 7 and 8.1 would need Rust's Windows 7 target and fallbacks for
-  a few newer Windows calls.
+- Windows 10 is reported to work by one user and has not been tried here; Windows 7 and 8.1 would
+  need Rust's Windows 7 target and fallbacks for a few newer Windows calls.
 - Linux: the core (every look, every rule) has no Windows in it by design, but the Windows layers
   would need counterparts there.

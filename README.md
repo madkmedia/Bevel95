@@ -45,7 +45,7 @@ What it deliberately does **not** do:
 ## What you need
 
 - **Windows 11**, 64-bit (x64). That is where it is made and tried.
-- Windows 10 is untried: it may work, nobody has checked yet.
+- Windows 10: one user reports that it works. It has not been tried here.
 
 ## Download and install
 
