@@ -128,8 +128,10 @@ fn target_kind(entry: &str, look_inside: bool) -> find::Target {
         // Windows Installer's "advertised" shortcut starts its program through the installer;
         // the path it names is only the program's picture.
         Some(Link::Advertised) => find::Target::Program,
-        Some(Link::Path(path)) if std::path::Path::new(&path).is_dir() => find::Target::Folder,
-        Some(Link::Path(path)) => find::classify(&path),
+        // "A folder" as the shortcut itself recorded it: the target is never asked (a dead
+        // network place would stall the reading, a sleeping disk would wake).
+        Some(Link::Path { folder: true, .. }) => find::Target::Folder,
+        Some(Link::Path { path, .. }) => find::classify(&path),
         None => find::Target::Unknown,
     }
 }
@@ -144,8 +146,9 @@ fn is_shortcut(entry: &str) -> bool {
 
 /// What a shortcut was found to point at.
 enum Link {
-    /// A file or folder, as the shortcut names it.
-    Path(String),
+    /// A file or folder, as the shortcut names it, and whether the shortcut recorded it as a
+    /// folder (the target's attributes kept in the shortcut when it was made).
+    Path { path: String, folder: bool },
     /// Windows Installer's advertised shortcut (SLDF_HAS_DARWINID): a program of an installed
     /// package.
     Advertised,
@@ -172,6 +175,7 @@ type GetFlags = unsafe extern "system" fn(*mut c_void, *mut u32) -> windows_sys:
 /// or repaired: the shortcut is only read). `None` when it cannot be read or has no file
 /// target. COM must be usable on this thread.
 fn link_target(link: &str) -> Option<Link> {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, WIN32_FIND_DATAW};
     use windows_sys::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, STGM_READ};
     use windows_sys::Win32::UI::Shell::ShellLink;
     let mut shell_link: *mut c_void = null_mut();
@@ -200,13 +204,23 @@ fn link_target(link: &str) -> Option<Link> {
                     release(data_list);
                 }
                 let mut buf = [0u16; 1024];
-                // 0: the long path, environment names expanded; the found-file data is not wanted.
-                let hr = method::<GetPath>(shell_link, GET_PATH)(shell_link, buf.as_mut_ptr(), buf.len() as i32, null_mut(), 0);
+                // 0: the long path, environment names expanded. The find data is the target's
+                // as the shortcut recorded it (MS-SHLLINK's header keeps its attributes); the
+                // target itself is not asked (only Resolve would look for it).
+                let mut data: WIN32_FIND_DATAW = std::mem::zeroed();
+                let hr = method::<GetPath>(shell_link, GET_PATH)(
+                    shell_link,
+                    buf.as_mut_ptr(),
+                    buf.len() as i32,
+                    (&mut data as *mut WIN32_FIND_DATAW).cast(),
+                    0,
+                );
                 let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
                 if flags & HAS_DARWIN_ID != 0 {
                     found = Some(Link::Advertised);
                 } else if hr == 0 && len > 0 {
-                    found = Some(Link::Path(String::from_utf16_lossy(&buf[..len])));
+                    let folder = data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+                    found = Some(Link::Path { path: String::from_utf16_lossy(&buf[..len]), folder });
                 }
             }
             release(persist);
@@ -230,8 +244,15 @@ pub fn refresh() {
         return;
     }
     let spawned = std::thread::Builder::new().name("find programs".into()).spawn(|| {
-        crate::audio::init();
+        use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
+        // SAFETY: plain calls on this thread; every COM object the reading makes is released
+        // before it returns, and a successful initialisation (S_OK or S_FALSE) is balanced.
+        let com = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
         let programs = read_programs(true);
+        if com >= 0 {
+            // SAFETY: balances the CoInitializeEx above, on the same thread.
+            unsafe { CoUninitialize() };
+        }
         if let Ok(mut known) = PROGRAMS.lock() {
             *known = Some(programs);
         }
@@ -344,13 +365,16 @@ fn state_path() -> std::path::PathBuf {
     data_dir().join("quick-search.txt")
 }
 
-/// The line between the columns was moved or fitted: the width is remembered.
+/// The line between the columns was moved or fitted: the width is remembered. A save that
+/// fails is logged once in a run, not at every drag.
 fn save_name_width() {
+    static SAID: AtomicBool = AtomicBool::new(false);
     let Some(width) = kit::with::<FindHost, _>(|h| h.form.name_width()) else { return };
     if let Err(e) = state_file::save(&state_path(), &find::state_text(width))
         && !state_file::is_read_only(&e)
+        && !SAID.swap(true, Ordering::SeqCst)
     {
-        log(&format!("could not save Quick Search's column width: {e}"));
+        log(&format!("could not save Quick Search's column width: {e} (said once)"));
     }
 }
 
@@ -406,7 +430,7 @@ mod tests {
         for other in inside {
             assert!(!other.is_char_boundary(other.len() - 4), "the test's own case: {other}");
             assert!(!is_shortcut(other), "{other}");
-            assert_eq!(target_kind(other, false), find::Target::Document, "{other}");
+            assert_eq!(target_kind(other, false), find::Target::Unknown, "{other}");
         }
         for other in [".lnk", "lnk", ""] {
             assert!(!is_shortcut(other), "{other}");
@@ -431,6 +455,17 @@ mod tests {
         let doc_like = shown.iter().filter(|p| words.iter().any(|w| p.name.to_lowercase().contains(w))).count();
         let kinds = [find::Target::Unknown, find::Target::Program, find::Target::Web, find::Target::Document, find::Target::Folder]
             .map(|k| (k, others.iter().filter(|p| p.kind == k).count()));
+        let by_name = others.iter().filter(|p| find::hidden(&p.name, p.kind) == Some(find::Hidden::ByName)).count();
+        let as_kind = |k: find::Target| others.iter().filter(|p| p.kind == k).count();
+        println!(
+            "in all {}, hidden as web {}, as document {}, as folder {}, by name {}, still listed {}",
+            programs.len(),
+            as_kind(find::Target::Web),
+            as_kind(find::Target::Document),
+            as_kind(find::Target::Folder),
+            by_name,
+            programs.len() - others.len() + shown.len()
+        );
         println!(
             "entries {} (Bevel95's own {}), hidden by target {}, hidden by name {}, still listed {}, of which named like documentation {}; kinds {kinds:?}",
             programs.len(),
@@ -450,9 +485,30 @@ mod tests {
         println!("documents by extension: {exts:?}");
     }
 
+    /// What `link_target` says of the shortcuts named in `BEVEL95_TEST_LINKS` (paths separated
+    /// by `|`), and how long each took: made to show that "a folder" comes from what the
+    /// shortcut recorded (a shortcut to a folder since removed still says folder) and that a
+    /// target on a network place that does not answer is not waited for.
+    /// `cargo test -p bevel95 recorded_folder -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn recorded_folder() {
+        crate::audio::init();
+        let links = std::env::var("BEVEL95_TEST_LINKS").unwrap_or_default();
+        for (n, link) in links.split('|').filter(|l| !l.is_empty()).enumerate() {
+            let started = Instant::now();
+            let found = match link_target(link) {
+                Some(Link::Path { folder, .. }) => format!("path, folder {folder}"),
+                Some(Link::Advertised) => "advertised".into(),
+                None => "none".into(),
+            };
+            println!("link {n}: {found}, {} ms", started.elapsed().as_millis());
+        }
+    }
+
     fn target_of(entry: &str) -> String {
         match link_target(entry) {
-            Some(Link::Path(path)) => path,
+            Some(Link::Path { path, .. }) => path,
             _ => entry.to_string(),
         }
     }

@@ -356,7 +356,14 @@ it, but write nothing).
     same name (in the bar a TrueType font 14 px tall; `tests/first_atlas.rs` guards it). Where
     a PC has no such file, Windows' substitute is taken, drawn without smoothing at the same
     size and cut to the cell, and the log says once which face came instead; where nothing can
-    be drawn, the letters stay "?".
+    be drawn, the letters stay "?". A limit (the review before 0.1.1, not tried): on a Windows
+    of another language, that language's file (`SSERIFER.FON` on a Russian one) is the
+    registered "MS Sans Serif", not `SSERIFE.FON`, and the 1252 font asked with
+    `ANSI_CHARSET` may then not be the one expected; `load_privately` could load `SSERIFE.FON`
+    first for the 1252 letters too. Another (cosmetic): `text::ms_sans_serif` takes the
+    platform's font only if `render` ran before its first use, so a program that draws a
+    dialog template or a Help control before rendering its look's font keeps the 1252-only
+    fixture for that run (other alphabets' letters show as "?").
   - **Not compared with an original.** No Reference PC runs a Russian, Greek, Central European,
     Turkish or Baltic Windows, so these letters' pixels are those of the bitmap files above as
     today's GDI draws them (95, 98) and today's Tahoma (2000), not checked against captures.
@@ -1492,7 +1499,10 @@ it, but write nothing).
   neither picture in every run (2000 Explorer: 6 changes of menu and 6 of entry; 98 Explorer: 6;
   95 and 2000 plain folder windows: 6 each). The other kit windows with a sizing frame (the Help
   viewer) are repaired by the same line; Minesweeper, Solitaire and the Calculator have no
-  sizing frame (their windows were never painted over) and were not measured.
+  sizing frame (their windows were never painted over) and were not measured. A limit (the
+  review before 0.1.1): Microsoft documents lParam as unused while a visual style is active for
+  the window, so the repair rests on how today's Windows was measured to behave; check it again
+  after a Windows feature update.
 
 ## Minesweeper
 
@@ -4394,21 +4404,35 @@ it, but write nothing).
   bunch of stuff in quick search that should probably be hidden by default. Lots of about and
   documentation etc."). The Programs menu itself is unchanged; only Quick Search's list is
   narrowed, and a hidden entry is not found by typing either.
-  - The rule is the core's (`find::hidden`, `find::listed`, unit-tested): an entry is hidden
-    when what it opens is no program (`find::Target`: `Web`, a web address or an Internet
-    shortcut; `Document`, any other file; `Folder`), or when its name begins with "Uninstall"
-    or "About" (case does not matter), whatever it opens. Programs are .exe, .com, .bat, .cmd,
-    .msc and .cpl files, and also .pif and .appref-ms (an MS-DOS program's settings and an app
-    installed by ClickOnce: both start a program), Windows' Store-style apps and Windows
-    Installer's advertised shortcuts (`find::classify` tells the kind from a path). Bevel95's own
-    programs and the things to do (`core::quick`) are never hidden. An entry whose target cannot
-    be found out (`Unknown`: a shortcut that cannot be read, or one to a shell object with no
-    file, such as a Control Panel item) stays listed: nothing says it is no program.
+  - The rule is the core's (`find::hidden`, `find::listed`, unit-tested). **Since 2026-11-19
+    only what is known to be no program is hidden** (the review before 0.1.1 found the first
+    rule, "list only known program files", hiding shortcuts to scripts and other launchers:
+    .vbs, .js, .wsf, .ps1, .hta, .jar, .py, .ahk, .scr, ClickOnce's .application). A hidden
+    program is the costly mistake, a listed document the cheap one. An entry is hidden when
+    what it opens is a web address or an Internet shortcut (`find::Target::Web`), a folder
+    (`Folder`), or a file of a known document kind (`Document`, `find::DOCUMENT_EXTENSIONS`:
+    txt, rtf, doc, docx, odt, pdf, chm, hlp, htm, html, mht, mhtml, md, log, nfo, ini, xml,
+    json, csv, xls, xlsx, ppt, pptx, bmp, gif, jpg, jpeg, png); or when its name's first word
+    (the letters and digits before the first other mark) is "Uninstall" or "About", case as it
+    may be, whatever it opens: "Aboutface" and "Uninstaller" are listed. Everything else is
+    listed: programs (.exe, .com, .bat, .cmd, .msc, .cpl, .pif, .appref-ms, Windows'
+    Store-style apps, Windows Installer's advertised shortcuts: `Program`), and every other
+    kind of file, a file without an extension, a shortcut that cannot be read and one to a
+    shell object with no file, such as a Control Panel item (`Unknown`). Bevel95's own
+    programs and the things to do (`core::quick`) are never hidden.
   - The Windows side tells the target (`find_window::target_kind`): a shortcut (.lnk) is opened
     with Windows' ShellLink object and only read (IPersistFile::Load, IShellLinkW::GetPath with
     no flags; nothing is searched for or repaired); IShellLinkDataList::GetFlags' SLDF_HAS_DARWINID
     marks an advertised shortcut, whose path is only its program's picture; any other entry is
-    told by its own name. Reading shortcuts reads the disk, so it is done only on the "find
+    told by its own name. **The target itself is never asked** (since 2026-11-19; before, every
+    target was asked whether it is a folder, so a dead network place stalled the reading for
+    the network's timeout and a sleeping disk woke at every opening): whether it is a folder is
+    taken from the WIN32_FIND_DATAW that GetPath fills, the target's attributes as the shortcut
+    recorded them when it was made (MS-SHLLINK keeps them in the shortcut's header; none of
+    GetPath's SLGP flags changes where that data comes from, and only IShellLink::Resolve looks
+    for a target). Tried: a shortcut to a folder that was removed afterwards still reads as a
+    folder, in 69 ms with the first COM start, a few ms for the next (`recorded_folder`, an
+    ignored test). Reading shortcuts reads the disk, so it is done only on the "find
     programs" thread that already reads the list; the bar starts one such reading after its
     icons are read ahead, so the first opening finds the kinds known. Should a window open before
     any reading, the list is read without opening shortcuts (every shortcut `Unknown`, so listed)
@@ -4423,7 +4447,25 @@ it, but write nothing).
     reads without repeating the name). The golden pictures `<look>-bevel95-settings-taskbar`
     changed by the new group; no other picture changed.
   - On the PC it was built on: 268 entries in all (4 of them Bevel95's own), 45 hidden by the
-    target rule (24 web pages, 19 documents, 2 folders), 16 by the name rule, 207 listed.
+    target rule (24 web pages, 19 documents, 2 folders), 16 by the name rule, 207 listed. With
+    the rule of 2026-11-19 (`quick_search_counts`, an ignored test): 266 in all, 24 hidden as
+    web pages, 19 as documents, 2 as folders, 16 by name, 205 listed (this PC has no shortcut
+    to a script; its documents are all of the listed kinds).
+  - **Enter starts only a row shown selected** (2026-11-19, the review before 0.1.1): a reading
+    that arrives while the window is open can take away the selected program (it was found to
+    be a document), and an Enter already waiting is handled before the new list is painted, so
+    it would have started the row that came under the selection, never shown selected. Now
+    such a reading leaves nothing selected (`FindWindow::selection_lost`: no row highlighted,
+    Enter does nothing) until the person moves (Up, Down, Page Up or Down select the first row
+    shown), types or clicks a row; the same when rows come where nothing was found. A reading
+    that keeps the selected program keeps it selected, as before.
+  - Limits written down, not repaired (the review before 0.1.1): two shortcut names that differ
+    only in a letter Windows' file system compares otherwise than Unicode's case rules (the
+    Turkish dotless ı, the long s, the Kelvin sign) may merge into one entry of the Programs
+    menu and of Quick Search; a shortcut's target is read into a buffer of 1024 characters
+    (GetPath returns at most MAX_PATH, so a longer target is not expected to come back whole).
+    The "find programs" thread now ends its COM use (CoUninitialize after a successful
+    CoInitializeEx), and quick-search.txt's "could not save" is logged once in a run.
   - **Paths are compared as bytes, never cut** (2026-11-19, the review before 0.1.1): the
     first version cut a target's text at byte 17 to compare it with `shell:AppsFolder\`, and a
     shortcut's name 4 bytes from its end to compare it with ".lnk". Where that byte fell inside

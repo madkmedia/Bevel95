@@ -60,12 +60,16 @@ impl Program {
 }
 
 /// What a Programs menu entry really opens (the host reads a shortcut's target; `classify`
-/// tells the kind from it). Quick Search lists only programs unless the setting
-/// `quick_search = everything` says otherwise (`listed`).
+/// tells the kind from it). By default Quick Search hides only what is known to be no program
+/// (`hidden`: a web page, a document of a known kind, a folder), unless the setting
+/// `quick_search = everything` says otherwise (`listed`). A hidden program is the costly
+/// mistake, a listed document the cheap one, so whatever is not known is listed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Target {
-    /// Not found out (a shortcut that could not be read, or one to a thing of the shell's own
-    /// with no file, such as a Control Panel item): listed, as nothing says it is not a program.
+    /// Not known to be anything else: a file of a kind neither in `PROGRAM_EXTENSIONS` nor in
+    /// `DOCUMENT_EXTENSIONS` (a script, a Java program, a launcher of any kind, a file without
+    /// an extension), a shortcut that could not be read, or one to a thing of the shell's own
+    /// with no file, such as a Control Panel item. Listed.
     #[default]
     Unknown,
     /// A program's file (`PROGRAM_EXTENSIONS`), an installer-advertised shortcut, or one of
@@ -73,9 +77,10 @@ pub enum Target {
     Program,
     /// A web address, or an Internet shortcut (.url).
     Web,
-    /// Any other file: a document, a Help book, a read-me.
+    /// A file of a known document kind (`DOCUMENT_EXTENSIONS`): a text, a Help book, a page,
+    /// a picture.
     Document,
-    /// A folder.
+    /// A folder (the host tells it from what the shortcut recorded, never by asking the disk).
     Folder,
 }
 
@@ -84,9 +89,16 @@ pub enum Target {
 /// a program too.
 pub const PROGRAM_EXTENSIONS: [&str; 8] = ["exe", "com", "bat", "cmd", "msc", "cpl", "pif", "appref-ms"];
 
+/// The files known to be documents: they open something to read or look at. Only these are
+/// hidden as documents; any other kind is listed (it may start a program).
+pub const DOCUMENT_EXTENSIONS: [&str; 28] = [
+    "txt", "rtf", "doc", "docx", "odt", "pdf", "chm", "hlp", "htm", "html", "mht", "mhtml", "md", "log", "nfo", "ini", "xml",
+    "json", "csv", "xls", "xlsx", "ppt", "pptx", "bmp", "gif", "jpg", "jpeg", "png",
+];
+
 /// The kind of thing `target` is: a path (a shortcut's target, or the entry's own file when it
 /// is no shortcut), a web address, or a Store-style app (`programs::APP_PREFIX`). An empty
-/// target is `Unknown`. Folders are told by the host (it asks the disk).
+/// target is `Unknown`. Folders are told by the host (from what the shortcut recorded).
 pub fn classify(target: &str) -> Target {
     let target = target.trim().trim_matches('"');
     if target.is_empty() {
@@ -107,22 +119,23 @@ pub fn classify(target: &str) -> Target {
     match file.rsplit_once('.') {
         Some((_, "url" | "website")) => Target::Web,
         Some((_, ext)) if PROGRAM_EXTENSIONS.contains(&ext) => Target::Program,
-        _ => Target::Document,
+        Some((_, ext)) if DOCUMENT_EXTENSIONS.contains(&ext) => Target::Document,
+        _ => Target::Unknown,
     }
 }
 
-/// The words at the start of a name that hide the entry whatever it opens: an uninstaller or
-/// an About box is never what a person searches for to start a program.
+/// The first words of a name that hide the entry whatever it opens: an uninstaller or an About
+/// box is never what a person searches for to start a program.
 const HIDDEN_NAMES: [&str; 2] = ["uninstall", "about"];
 
 /// Why an entry is not listed (`None`: it is listed). Bevel95's own programs and commands are
-/// always listed; other entries only when they open a program (or nothing says otherwise) and
-/// their name begins with neither "Uninstall" nor "About" (case does not matter).
+/// always listed; other entries unless what they open is known to be no program, or their
+/// name's first word is "Uninstall" or "About" (case does not matter).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hidden {
-    /// What it opens is no program (`Target::Web`, `Document` or `Folder`).
+    /// What it opens is known to be no program (`Target::Web`, `Document` or `Folder`).
     ByTarget,
-    /// Its name begins with one of `HIDDEN_NAMES`.
+    /// Its name's first word is one of `HIDDEN_NAMES`.
     ByName,
 }
 
@@ -130,8 +143,11 @@ pub fn hidden(name: &str, target: Target) -> Option<Hidden> {
     if matches!(target, Target::Web | Target::Document | Target::Folder) {
         return Some(Hidden::ByTarget);
     }
-    let name = name.trim_start().to_lowercase();
-    HIDDEN_NAMES.iter().any(|word| name.starts_with(word)).then_some(Hidden::ByName)
+    // The first word: the letters and digits up to the first other mark ("Uninstall Tool",
+    // "About: Tool"), so "Aboutface" and "Uninstaller" are names of their own.
+    let first: String = name.trim_start().chars().take_while(|c| c.is_alphanumeric()).collect();
+    let first = first.to_lowercase();
+    HIDDEN_NAMES.contains(&first.as_str()).then_some(Hidden::ByName)
 }
 
 /// The entries Quick Search lists: with `everything`, all of them; else only those `hidden`
@@ -333,6 +349,11 @@ pub struct FindWindow {
     /// this list) and how many are scrolled out above the list.
     pub found: Vec<usize>,
     pub sel: usize,
+    /// A new reading took away the selected program (or brought rows where none was selected):
+    /// nothing is selected until the person moves, types or clicks, so Enter never starts a
+    /// row that was not shown selected (an Enter may wait in the queue before the new list is
+    /// painted).
+    pub selection_lost: bool,
     pub top: usize,
     pub pressed: Option<Part>,
     /// Underline the access key: Windows 95 and 98 always do; Windows 2000 once the keyboard
@@ -369,6 +390,7 @@ impl FindWindow {
             caret_on: true,
             found: Vec::new(),
             sel: 0,
+            selection_lost: false,
             top: 0,
             pressed: None,
             show_keys: era.always_shows_keys(),
@@ -390,8 +412,9 @@ impl FindWindow {
     }
 
     /// The programs were read (again; without the commands, which join them here): pictures
-    /// already fetched are kept, the text stays, and
-    /// the selection stays on its program if it is still found (else the first is selected).
+    /// already fetched are kept, the text stays, and the selection stays on its program if it
+    /// is still found. Else nothing is selected (`selection_lost`) until the person moves,
+    /// types or clicks: a row that comes under the selection was never shown selected.
     pub fn set_programs(&mut self, programs: Vec<Program>) {
         let mut known: HashMap<String, Option<Icon>> = HashMap::new();
         for (p, icon) in self.programs.iter().zip(&self.icons) {
@@ -414,12 +437,17 @@ impl FindWindow {
         {
             self.sel = at;
             self.show_selected();
+        } else {
+            self.selection_lost = true;
         }
         self.lay_out();
     }
 
-    /// The selected program, if anything was found.
+    /// The selected program, if anything was found and is shown selected.
     pub fn selected(&self) -> Option<&Program> {
+        if self.selection_lost {
+            return None;
+        }
         self.found.get(self.sel).map(|&i| &self.programs[i])
     }
 
@@ -440,6 +468,7 @@ impl FindWindow {
     fn refind(&mut self) {
         self.found = find(&self.programs, &self.text);
         self.sel = 0;
+        self.selection_lost = false;
         self.top = 0;
         self.lay_out();
     }
@@ -462,7 +491,14 @@ impl FindWindow {
         if self.found.is_empty() {
             return;
         }
-        self.sel = (self.sel as i32 + delta).clamp(0, self.found.len() as i32 - 1) as usize;
+        if self.selection_lost {
+            // Nothing selected: a move selects the first row shown, as a list without a
+            // selection does.
+            self.selection_lost = false;
+            self.sel = self.top.min(self.found.len() - 1);
+        } else {
+            self.sel = (self.sel as i32 + delta).clamp(0, self.found.len() as i32 - 1) as usize;
+        }
         self.show_selected();
     }
 
@@ -629,7 +665,7 @@ impl kit::Form for FindWindow {
             // The name, highlighted when selected (as a list's chosen label is).
             let name = font.elide(&p.name, name_w - NAME_X - CELL_PAD);
             let mut color = c.text;
-            if row == self.sel {
+            if row == self.sel && !self.selection_lost {
                 list.fill(Rect::new(NAME_X - 2, y, font.measure(&name) + 4, ROW_H), c.menu_highlight);
                 color = c.menu_highlight_text;
             }
@@ -667,9 +703,9 @@ impl kit::Form for FindWindow {
     fn rect(&self, part: Part) -> Option<Rect> {
         self.part_rect(part)
     }
-    /// Enter starts something only while something is found.
+    /// Enter starts something only while something is shown selected.
     fn enabled(&self, part: Part) -> bool {
-        part != Part::Open || !self.found.is_empty()
+        part != Part::Open || self.selected().is_some()
     }
     fn focus(&self) -> Part {
         Part::Field
@@ -745,6 +781,7 @@ impl kit::Form for FindWindow {
         match part {
             Some(Part::Row(at)) => {
                 self.sel = at;
+                self.selection_lost = false;
                 self.show_selected();
             }
             Some(Part::Field) => {
@@ -785,6 +822,7 @@ impl kit::Form for FindWindow {
         match self.hit(x, y) {
             Some(Part::Row(at)) => {
                 self.sel = at;
+                self.selection_lost = false;
                 self.show_selected();
                 Some(vec![Effect::Activate(Part::Open)])
             }
@@ -1097,14 +1135,34 @@ mod tests {
             "C:\\Program Files\\Tool\\manual.pdf",
             "C:\\Program Files\\Tool\\help.hlp",
             "C:\\Program Files\\Tool\\index.html",
-            "C:\\Program Files\\Tool\\LICENSE",
-            "C:\\Program Files\\Tool.d\\notes",
-            "C:\\Program Files\\Tool\\setup.msi",
+            "C:\\Program Files\\Tool\\Notes.MD",
+            "C:\\Program Files\\Tool\\settings.ini",
+            "C:\\Program Files\\Tool\\picture.jpeg",
+            "C:\\Program Files\\Tool\\slides.pptx",
         ] {
             assert_eq!(classify(document), Target::Document, "{document}");
         }
-        assert_eq!(classify(""), Target::Unknown);
-        assert_eq!(classify("  "), Target::Unknown);
+        // Whatever is not known to be a document is listed: scripts and other launchers, an
+        // installer, a file without an extension.
+        for unknown in [
+            "C:\\Tools\\go.vbs",
+            "C:\\Tools\\go.js",
+            "C:\\Tools\\go.wsf",
+            "C:\\Tools\\go.ps1",
+            "C:\\Tools\\go.hta",
+            "C:\\Tools\\tool.jar",
+            "C:\\Tools\\tool.py",
+            "C:\\Tools\\keys.ahk",
+            "C:\\Windows\\System32\\Bubbles.scr",
+            "C:\\Users\\x\\Tool.application",
+            "C:\\Program Files\\Tool\\setup.msi",
+            "C:\\Program Files\\Tool\\LICENSE",
+            "C:\\Program Files\\Tool.d\\notes",
+            "",
+            "  ",
+        ] {
+            assert_eq!(classify(unknown), Target::Unknown, "{unknown}");
+        }
     }
 
     /// Paths in other alphabets whose 17th byte (the length of `programs::APP_PREFIX`) falls
@@ -1129,7 +1187,7 @@ mod tests {
         }
         // Shorter than the prefix, and ending inside it.
         assert_eq!(classify("Блокнот.exe"), Target::Program);
-        assert_eq!(classify("шелл:AppsFolder\\x"), Target::Document);
+        assert_eq!(classify("шелл:AppsFolder\\x"), Target::Unknown);
     }
 
     #[test]
@@ -1141,11 +1199,12 @@ mod tests {
         for kind in [Target::Web, Target::Document, Target::Folder] {
             assert_eq!(hidden("Tool", kind), Some(Hidden::ByTarget), "{kind:?}");
         }
-        // The name rule, whatever the target; case does not matter; only at the start.
-        for name in ["Uninstall Tool", "uninstall", "UNINSTALLER", "About Tool", "  about"] {
+        // The name rule, whatever the target; case does not matter; only the first word, whole.
+        for name in ["Uninstall Tool", "uninstall", "UNINSTALL TOOL", "About Tool", "  about", "About: Tool", "Uninstall-Tool"] {
             assert_eq!(hidden(name, Target::Program), Some(Hidden::ByName), "{name}");
+            assert_eq!(hidden(name, Target::Unknown), Some(Hidden::ByName), "{name}");
         }
-        for name in ["Tool Uninstaller", "All about Tool", "Abacus", "Unicode Tool"] {
+        for name in ["Tool Uninstaller", "All about Tool", "Abacus", "Unicode Tool", "Aboutface", "Uninstaller", "Abouts"] {
             assert_eq!(hidden(name, Target::Program), None, "{name}");
         }
         assert_eq!(hidden("About Tool", Target::Web), Some(Hidden::ByTarget), "the target rule first");
@@ -1176,6 +1235,61 @@ mod tests {
         assert_eq!(found("tool"), ["Tool"]);
         assert!(found("uninstall").is_empty());
         assert_eq!(found("bevel95 settings"), ["Bevel95 Settings"]);
+    }
+
+    /// A reading that takes away the selected program leaves nothing selected: an Enter that
+    /// was waiting starts nothing, as no row was shown selected; a move, typing or a click
+    /// selects again.
+    #[test]
+    fn enter_starts_only_a_row_shown_selected() {
+        let entry = |name: &str, kind: Target| Program {
+            name: name.into(),
+            folder: ROOT.into(),
+            target: format!("C:\\{name}.lnk"),
+            own: false,
+            command: None,
+            words: &[],
+            kind,
+        };
+        let before = vec![entry("Manual", Target::Unknown), entry("Mandelbrot", Target::Unknown), entry("Mangle", Target::Unknown)];
+        let mut w = FindWindow::new(Era::Win98, listed(before.clone(), false), true);
+        let mut c = Controller::default();
+        for ch in "man".chars() {
+            w.typed(ch);
+        }
+        assert_eq!(w.selected().unwrap().name, "Mandelbrot", "A to Z: the first row");
+        // The reading finds that Mandelbrot is a document: it goes, and nothing is selected.
+        let mut after = before.clone();
+        after[1].kind = Target::Document;
+        w.set_programs(listed(after.clone(), false));
+        assert!(w.selection_lost && w.selected().is_none());
+        assert!(!w.enabled(Part::Open));
+        assert_eq!(c.key(&mut w, Key::Enter, Mods::default()), vec![], "the waiting Enter starts nothing");
+        // Down selects the first row shown; Enter then starts it.
+        c.key(&mut w, Key::Down, Mods::default());
+        assert_eq!((w.selected().unwrap().name.as_str(), w.sel), ("Mangle", 0));
+        assert_eq!(c.key(&mut w, Key::Enter, Mods::default()), vec![Effect::Activate(Part::Open)]);
+        // Typing selects again too.
+        w.set_programs(listed(before.clone(), false));
+        assert_eq!(w.selected().unwrap().name, "Mangle", "still found: it stays selected");
+        w.set_programs(listed(after.iter().filter(|p| p.name != "Mangle").cloned().collect(), false));
+        assert!(w.selected().is_none());
+        w.typed('u');
+        assert_eq!(w.selected().unwrap().name, "Manual");
+        // So does a click on a row.
+        w.typed('\u{8}');
+        w.set_programs(listed(vec![entry("Manual", Target::Document), entry("Mangle", Target::Unknown)], false));
+        assert!(w.selected().is_none());
+        let r = w.rect(Part::Row(0)).unwrap();
+        c.mouse_down(&mut w, r.x + 40, r.y + 4);
+        c.mouse_up(&mut w, r.x + 40, r.y + 4);
+        assert_eq!(w.selected().unwrap().name, "Mangle");
+        // Rows that come where nothing was found were never shown selected either.
+        w.typed('z');
+        assert!(w.found.is_empty());
+        w.set_programs(listed(vec![entry("Manzanita", Target::Unknown)], false));
+        assert_eq!(w.found.len(), 1);
+        assert_eq!(c.key(&mut w, Key::Enter, Mods::default()), vec![]);
     }
 
     #[test]
