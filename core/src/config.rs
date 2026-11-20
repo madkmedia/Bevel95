@@ -24,6 +24,10 @@ pub struct Config {
     /// Bevel95's own desktop is shown: a plain desktop in the look's color over Windows' own
     /// (Bevel95 Settings, Desktop page; the desktop's right-click menu switches it off).
     pub desktop: bool,
+    /// Properties on the desktop's menu opens Windows' own Display settings instead of Bevel95
+    /// Settings' Desktop page (Bevel95 Settings, Desktop page; off unless switched on: for a person
+    /// who looks there for the screen resolution, as Windows 95 to XP had it).
+    pub display_settings: bool,
     /// What the Programs menu shows (Bevel95 Settings, Programs page).
     pub programs: Shown,
     /// What a lone press of the Windows key opens (Bevel95 Settings, Taskbar page).
@@ -139,6 +143,7 @@ impl Default for Config {
             clock_zone: None,
             clock_dst: true,
             desktop: true,
+            display_settings: false,
             programs: Shown::Everything,
             windows_key: WindowsKey::Find,
             group: true,
@@ -195,6 +200,10 @@ clock_dst = yes
 # Your own desktop icons stay underneath, untouched.
 desktop = yes
 
+# Properties on the desktop's right-click menu: no opens Bevel95 Settings' Desktop page, yes opens
+# Windows' own Display settings (the screen's resolution and scale).
+windows_display_settings = no
+
 # What the Programs menu shows (Bevel95 Settings, Programs page): everything (every program
 # found on this PC), classic (only the classic programs that come with Bevel95) or ticked
 # (only the programs ticked on that page; they are listed in programs.txt).
@@ -218,7 +227,7 @@ quick_search = programs
 type Flag = fn(&mut Config) -> &mut bool;
 
 /// The settings-file names of the yes/no settings, with their field.
-const FLAG_KEYS: [(&str, Flag); 8] = [
+const FLAG_KEYS: [(&str, Flag); 9] = [
     ("always_on_top", |c| &mut c.options.always_on_top),
     ("auto_hide", |c| &mut c.options.auto_hide),
     ("small_icons", |c| &mut c.options.small_icons),
@@ -227,10 +236,11 @@ const FLAG_KEYS: [(&str, Flag); 8] = [
     ("log_off", |c| &mut c.start.log_off),
     ("desktop", |c| &mut c.desktop),
     ("group", |c| &mut c.group),
+    ("windows_display_settings", |c| &mut c.display_settings),
 ];
 
 /// The settings-file lines of the yes/no settings in `config`, as (name, value) pairs.
-pub fn flag_settings(config: &Config) -> [(&'static str, &'static str); 8] {
+pub fn flag_settings(config: &Config) -> [(&'static str, &'static str); 9] {
     let mut config = *config;
     FLAG_KEYS.map(|(key, field)| (key, if *field(&mut config) { "yes" } else { "no" }))
 }
@@ -413,6 +423,19 @@ mod tests {
         let (c, w) = parse("group = sometimes\n");
         assert!(c.group && w.len() == 1);
         assert_eq!(flag_settings(&Config { group: false, ..Config::default() })[7], ("group", "no"));
+    }
+
+    #[test]
+    fn reads_where_the_desktops_properties_lead() {
+        // Off unless switched on, also for a settings file from before the setting existed.
+        assert!(!Config::default().display_settings);
+        assert!(!parse("era = win98\n").0.display_settings);
+        assert!(parse("windows_display_settings = yes\n").0.display_settings);
+        let (c, w) = parse("windows_display_settings = maybe\n");
+        assert!(!c.display_settings && w.len() == 1);
+        let on = Config { display_settings: true, ..Config::default() };
+        assert_eq!(flag_settings(&on)[8], ("windows_display_settings", "yes"));
+        assert!(parse(&with_setting(DEFAULT_FILE, "windows_display_settings", "yes")).0.display_settings);
     }
 
     #[test]

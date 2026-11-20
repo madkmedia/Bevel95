@@ -107,6 +107,7 @@ fn current_values() -> Option<(Values, bevel_core::theme::Era)> {
             start_with_windows,
             clock_offset: app.clock_offset,
             desktop: app.desktop,
+            display_settings: app.display_settings,
             programs: app.programs_shown,
             windows_key: app.windows_key,
             group: app.group,

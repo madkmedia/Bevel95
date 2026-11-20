@@ -1863,6 +1863,20 @@ it, but write nothing).
     the desktop in front; either way the window that was in front stays inactive, as it did in
     95. And a settings.txt from before the desktop has no `desktop` line (that means on); the
     first change writes one.
+- **Properties can open Windows' own Display settings** (2026-11-19, a first report after the
+  release: a person looked for the screen resolution under the desktop's Properties, where
+  Windows 95 to XP had it, and got Bevel95 Settings). One setting, off by default:
+  `windows_display_settings = yes|no` (`Config::display_settings`, `Values::display_settings`,
+  `Sheet::Bevel95`), shown on the Desktop page in a second group, "Properties on the desktop's
+  menu", as the check box "Opens Windows' display settings" (PROVISIONAL words; the brief's
+  "Properties on the desktop opens Windows' display settings" was too wide for the page's
+  296-pixel group in one line, so its first part became the group's title). On, Properties on the
+  empty desktop's menu starts `ms-settings:display` the way the Start menu's Settings entries
+  start Windows' pages (`window_list::launch`, ShellExecute); off, Bevel95 Settings' Desktop page
+  as before. The Bevel95 submenu's own "Bevel95 Settings" always opens the page, so the setting
+  can always be switched back; Quick Search's things to do did not change. The Desktop page's
+  three golden pictures were regenerated for the new group, and only they. The real Display
+  Properties (patterns, wallpapers, colors) are a wish of the owner's for later, not started.
   - A hidden window does land between the two desktops now and then: a read-only watcher
     (`private/probes/zwatch.ps1`) caught the "IME" helper window of a program that had just
     loaded GDI+ (the test's own PowerShell) there for 44 ms, until the tick put ours back.
@@ -2603,7 +2617,8 @@ it, but write nothing).
 - **The menu** (`core::desktop`): each look's own, limited to what works (brief point 7): 95
   Arrange Icons, New, Properties; 98 Arrange Icons, Refresh, New, Properties (separators as on
   the PC); 2000 Arrange Icons and Refresh together. Access keys as captured (98's "Re&fresh",
-  "by Si&ze"; 95's and 2000's "Ne&w"). Properties opens Bevel95 Settings' Desktop page. New >
+  "by Si&ze"; 95's and 2000's "Ne&w"). Properties opens Bevel95 Settings' Desktop page (or, when that page says so since
+  2026-11-19, Windows' own Display settings: "The desktop, first step"). New >
   Folder and Text Document make the item in the owner's Desktop folder under Windows 11's own
   name ("New folder", "New Text Document.txt", then "(2)"...) and select it once it shows; New >
   Shortcut starts the Create Shortcut wizard on a placeholder there (`add_shortcut::start_on_desktop`).

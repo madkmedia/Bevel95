@@ -37,7 +37,8 @@ pub enum DesktopCommand {
     /// Windows' Create Shortcut wizard, making the shortcut in the Desktop folder.
     NewShortcut,
     NewTextDocument,
-    /// Bevel95 Settings' Desktop page (Windows' Display Properties have no counterpart).
+    /// Bevel95 Settings' Desktop page (Windows' Display Properties have no counterpart), or
+    /// Windows' own Display settings when that page says so (`Config::display_settings`).
     Properties,
     /// Take Bevel95's desktop away, so that Windows' own shows again. It stays away until
     /// Bevel95 Settings brings it back.
