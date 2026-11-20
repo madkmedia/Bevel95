@@ -3504,6 +3504,12 @@ it, but write nothing).
     icons; 2000's is 200 wide and goes under 400 with nothing in its place; both keep 16 columns
     for a scroll bar; no font smoothing in either. 98's "as Web Page" is kept per folder, 2000's
     switch is global (Folder Options); 98 forgets "Show Files", 2000 remembers it per folder.
+  - **98's panel stops at 480 (2026-11-20, GitHub issue 2; the owner: "Yes I think a cap is
+    reasonable.")**: on a 2560 × 1080 screen a maximized 98 folder window's panel was 768 pixels
+    wide, which no screen of Windows 98's time could show. It now grows no wider than 480 of the
+    look's own pixels (`folder::web::PANEL_98_MAX`: 30% of 1600, the widest common screen then),
+    the warning page too. Every window up to 1600 wide is as Windows 98 made it: Bevel95 departs
+    from Windows 98 only where no screen of its time reached. 2000's fixed 200 is unchanged.
   - **The core** (`folder::web`): `Web` (on, the place's kind and 32×32 picture, the system folder's
     `Guard`, files shown, a drive's space, the scroll, attributes), `panel_width`, the text of each
     look (98 after `folder.htt`/`mycomp.htt`: `<br>` lines; 2000 after webvw: paragraphs 12 apart,

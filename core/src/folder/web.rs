@@ -143,13 +143,19 @@ impl Web {
     }
 }
 
+/// The widest the 98 panel grows: 30% of a 1600-wide window, the widest common screen of
+/// Windows 98's time. The limit is Bevel95's own (GitHub issue 2: on a 2560-wide window 98's
+/// 30% gave 768 pixels); every window up to 1600 wide is as Windows 98 made it.
+pub const PANEL_98_MAX: i32 = 480;
+
 /// The panel's width in a contents area `inside_w` wide, or `None` where it does not fit (98:
-/// 30%, rounded, from 400 (450 on the warning page); 2000: 200 from 400).
+/// 30%, rounded, from 400 (450 on the warning page), never more than [`PANEL_98_MAX`]; 2000:
+/// 200 from 400).
 pub fn panel_width(era: Era, inside_w: i32, barricade: bool) -> Option<i32> {
     match era {
         Era::Win98 => {
             let threshold = if barricade { 450 } else { 400 };
-            (inside_w >= threshold).then(|| (inside_w * 3 + 5) / 10)
+            (inside_w >= threshold).then(|| ((inside_w * 3 + 5) / 10).min(PANEL_98_MAX))
         }
         Era::Win2000 => (inside_w >= 400).then_some(200),
         Era::Win95 => None,
@@ -1116,6 +1122,16 @@ mod tests {
             assert_eq!(panel_width(Era::Win2000, inside, false), want);
         }
         assert_eq!(panel_width(Era::Win95, 800, false), None);
+    }
+
+    #[test]
+    fn the_98_panel_stops_growing_at_480() {
+        // Up to 1600 wide as Windows 98 made it; wider windows keep 480 (GitHub issue 2).
+        for (inside, want) in [(800, 240), (1024, 307), (1280, 384), (1590, 477), (1598, 479), (1600, 480), (1601, 480), (1602, 480), (1920, 480), (2560, 480)] {
+            assert_eq!(panel_width(Era::Win98, inside, false), Some(want), "98 at {inside}");
+            assert_eq!(panel_width(Era::Win98, inside, true), Some(want), "98's warning page at {inside}");
+        }
+        assert_eq!(panel_width(Era::Win2000, 2560, false), Some(200), "2000 keeps its 200");
     }
 
     #[test]

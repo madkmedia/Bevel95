@@ -1326,7 +1326,7 @@ from its top-left pixel. No font smoothing anywhere (every text pixel 000000, li
 
 | | Windows 98 | Windows 2000 |
 |---|---|---|
-| Panel width | round(30% of the inside); none under 400 (450 on the warning page) | 200; none under 400 |
+| Panel width | round(30% of the inside); none under 400 (450 on the warning page); never more than 480, Bevel95's own limit, not measured (30% of 1600, the widest common screen of 98's time; GitHub issue 2: 768 on a 2560-wide window) | 200; none under 400 |
 | Without the panel | a 32-row white band above the icons, the title at (18, 3) | nothing |
 | Kept for the scroll bar | 16 columns at the panel's right (line and wrapping use width - 16) | the same |
 | Corner picture | wvleft.bmp 182 × 237 at (0, 0) | wvleft.bmp 127 × 56 at (0, 0) |
