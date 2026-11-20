@@ -39,6 +39,7 @@ pub mod paint;
 pub mod programs;
 pub mod properties;
 pub mod quick;
+pub mod quick_launch;
 pub mod remove;
 pub mod rename_warning;
 pub mod scale;

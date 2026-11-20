@@ -177,6 +177,13 @@ static W2K_SHEET_UNDO_HOT: Drawing = Drawing::art("16-colors/sheet-undo-hot", Lo
 static W2K_BACK_GRAY: Drawing = Drawing::art("16-colors/back-gray", Look::Win2000);
 static W2K_FORWARD_GRAY: Drawing = Drawing::art("16-colors/forward-gray", Look::Win2000);
 static W2K_UP_GRAY: Drawing = Drawing::art("16-colors/up-gray", Look::Win2000);
+// Quick Launch's pictures: the files' own 4-bit images (art/src/quick_launch.rs).
+static W98_QL_INTERNET: Drawing = Drawing::art("16-colors/quick-launch-internet-explorer", Look::Win98);
+static W98_QL_OUTLOOK: Drawing = Drawing::art("16-colors/quick-launch-outlook-express", Look::Win98);
+static W98_QL_SHOW_DESKTOP: Drawing = Drawing::art("16-colors/quick-launch-show-desktop", Look::Win98);
+static W2K_QL_INTERNET: Drawing = Drawing::art("16-colors/quick-launch-internet-explorer", Look::Win2000);
+static W2K_QL_OUTLOOK: Drawing = Drawing::art("16-colors/quick-launch-outlook-express", Look::Win2000);
+static W2K_QL_SHOW_DESKTOP: Drawing = Drawing::art("16-colors/quick-launch-show-desktop", Look::Win2000);
 
 /// Each True Color picture (by the function that draws it) and its look's own 16-color drawing.
 #[rustfmt::skip]
@@ -395,4 +402,10 @@ static OWN: &[Own] = &[
     (Era::Win2000, || crate::folder::explorer_art::picture(Era::Win2000, "back_gray"), &W2K_BACK_GRAY),
     (Era::Win2000, || crate::folder::explorer_art::picture(Era::Win2000, "forward_gray"), &W2K_FORWARD_GRAY),
     (Era::Win2000, || crate::folder::explorer_art::picture(Era::Win2000, "up_gray"), &W2K_UP_GRAY),
+    (Era::Win98, || crate::quick_launch::picture(Era::Win98, crate::quick_launch::Builtin::InternetExplorer), &W98_QL_INTERNET),
+    (Era::Win98, || crate::quick_launch::picture(Era::Win98, crate::quick_launch::Builtin::OutlookExpress), &W98_QL_OUTLOOK),
+    (Era::Win98, || crate::quick_launch::picture(Era::Win98, crate::quick_launch::Builtin::ShowDesktop), &W98_QL_SHOW_DESKTOP),
+    (Era::Win2000, || crate::quick_launch::picture(Era::Win2000, crate::quick_launch::Builtin::InternetExplorer), &W2K_QL_INTERNET),
+    (Era::Win2000, || crate::quick_launch::picture(Era::Win2000, crate::quick_launch::Builtin::OutlookExpress), &W2K_QL_OUTLOOK),
+    (Era::Win2000, || crate::quick_launch::picture(Era::Win2000, crate::quick_launch::Builtin::ShowDesktop), &W2K_QL_SHOW_DESKTOP),
 ];

@@ -23,6 +23,7 @@ mod explorer;
 mod folder;
 mod html_help;
 mod pointers;
+mod quick_launch;
 mod start;
 mod taskbar;
 mod tray;
@@ -97,6 +98,7 @@ const GROUPS: &[&[Entry]] = &[
     banner::ENTRIES,
     desktop::ENTRIES,
     taskbar::ENTRIES,
+    quick_launch::ENTRIES,
     tray::ENTRIES,
     folder::ENTRIES,
     explorer::ENTRIES,
