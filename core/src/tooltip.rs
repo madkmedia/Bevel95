@@ -7,7 +7,7 @@
 
 use crate::fb::{Framebuffer, Rect};
 use crate::text::Font;
-use crate::theme::Theme;
+use crate::theme::{Era, Theme};
 
 /// Space between the border and the text, at the sides and at the top and bottom.
 const PAD_X: i32 = 2;
@@ -42,6 +42,21 @@ pub fn place(pointer: (i32, i32), w: i32, h: i32, tool: Rect, screen: Rect, work
     (x, y.max(screen.y))
 }
 
+/// Where a Quick Launch icon's tooltip `w`×`h` goes (the Reference PCs' captures, docs/theme-spec.md
+/// "Quick Launch"): Windows 98 as the notification area's, at the pointer's x with its bottom edge
+/// on the button's top (rows 559..575 over buttons from 576); Windows 2000 over the bar, one pixel
+/// left of the pointer, its bottom row 16 below the bar's top (588 with the bar at 572; a two-line
+/// tooltip grows upward). Then kept `margin` inside the screen's right edge. `unit`: the bar's
+/// scale (the platform works in screen pixels).
+#[allow(clippy::too_many_arguments)]
+pub fn place_quick_launch(era: Era, pointer: (i32, i32), w: i32, h: i32, tool: Rect, bar_top: i32, screen: Rect, margin: i32, unit: i32) -> (i32, i32) {
+    let (x, y) = match era {
+        Era::Win2000 => (pointer.0 - unit, bar_top + 17 * unit - h),
+        _ => (pointer.0, tool.y - h),
+    };
+    (x.min(screen.right() - margin - w).max(screen.x), y.max(screen.y))
+}
+
 /// Paints a tooltip for `text` filling the framebuffer (made `size` big).
 pub fn paint(fb: &mut Framebuffer, theme: &Theme, font: &Font, text: &str) {
     let c = &theme.colors;
@@ -70,6 +85,18 @@ mod tests {
         assert_eq!(place((705, 589), 123, 17, Rect::new(703, 579, 16, 16), screen, work, 20, 1), (676, 562));
         // With room below the pointer: at the pointer, below it.
         assert_eq!(place((100, 100), 50, 17, Rect::new(90, 95, 16, 16), screen, work, 20, 1), (100, 120));
+    }
+
+    #[test]
+    fn quick_launch_tooltips_sit_where_each_look_put_them() {
+        // The captures: 98's Show Desktop tooltip (76×17) for the pointer at x 126 over the third
+        // button (y 576): x 126..201, y 559..575. 2000's (74×17) for the pointer at 82: x 81..154,
+        // y 572..588; its two-line Internet Explorer tooltip (302×30) at 105: x 104..405, y 559..588.
+        let screen = Rect::new(0, 0, 800, 600);
+        let button = Rect::new(115, 576, 23, 22);
+        assert_eq!(place_quick_launch(Era::Win98, (126, 586), 76, 17, button, 572, screen, 1, 1), (126, 559));
+        assert_eq!(place_quick_launch(Era::Win2000, (82, 586), 74, 17, button, 572, screen, 1, 1), (81, 572));
+        assert_eq!(place_quick_launch(Era::Win2000, (105, 586), 302, 30, button, 572, screen, 1, 1), (104, 559));
     }
 
     #[test]

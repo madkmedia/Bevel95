@@ -2858,7 +2858,9 @@ it, but write nothing).
       `Bevel95.Bar.OpenProperties` (WM_APP + 8), `Bevel95.Bar.ShortcutWizardEnded` (WM_APP + 11),
       `Bevel95.Bar.DragEsc` (WM_APP + 13, the keyboard hook's), `Bevel95.Bar.Colors` (WM_APP + 40),
       `Bevel95.Bar.OwnIcon` (WM_APP + 41, the callback of Bevel95's icon in Windows' notification
-      area). wParam and lParam are as before. The bar registers them all as it starts
+      area), `Bevel95.Bar.QuickLaunch` (WM_APP + 42, never a number: new with Quick Launch, for live
+      tests: wParam 0 to 3 clicks that built-in icon if it is on the band, 100 reads the folder
+      again). wParam and lParam are as before. The bar registers them all as it starts
       (`bar::register_messages`), so the keyboard hook never asks Windows for a number. Left as
       numbers, since they only paint, read or answer: `WM_REPAINT` (+ 2), `WM_VOLUME_CHANGED`
       (+ 9), Quick Search's `WM_FIND_PROGRAMS_READ` (+ 12), `WM_TASK_AT` (+ 16, a live test's

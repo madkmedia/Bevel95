@@ -231,7 +231,7 @@ pub fn set_era(era: Era) {
     ERA.store(n, std::sync::atomic::Ordering::SeqCst);
 }
 
-fn era_now() -> Era {
+pub(crate) fn era_now() -> Era {
     Era::ALL.get(ERA.load(std::sync::atomic::Ordering::SeqCst) as usize).copied().unwrap_or(Era::Win95)
 }
 

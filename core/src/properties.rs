@@ -54,6 +54,9 @@ pub struct Values {
     pub quick_search_all: bool,
     /// The battery's percentage stands beside its icon (Bevel95 Settings, Taskbar page).
     pub battery_percent: bool,
+    /// Quick Launch shows (Bevel95 Settings, Taskbar page; the bar's Toolbars menu): what holds
+    /// now, the look's default while settings.txt does not say.
+    pub quick_launch: bool,
 }
 
 /// The check boxes.
@@ -75,6 +78,8 @@ pub enum Check {
     QuickSearchAll,
     /// Bevel95 Settings, Taskbar page: the battery's percentage beside its icon.
     BatteryPercent,
+    /// Bevel95 Settings, Taskbar page: the Quick Launch band.
+    QuickLaunch,
 }
 
 /// The entries of Windows 2000's Start Menu Settings list (Advanced page).
@@ -270,6 +275,8 @@ fn check_label(check: Check) -> &'static str {
         Check::QuickSearchAll => "Also list &documents, web pages and uninstallers",
         // Ours (PROVISIONAL), under the group's title "Battery".
         Check::BatteryPercent => "Show the &battery's percentage beside its icon",
+        // Ours (PROVISIONAL), in the Buttons group.
+        Check::QuickLaunch => "Show Quick &Launch",
     }
 }
 
@@ -747,6 +754,7 @@ fn check_value(v: &mut Values, c: Check) -> &mut bool {
         Check::Group => &mut v.group,
         Check::QuickSearchAll => &mut v.quick_search_all,
         Check::BatteryPercent => &mut v.battery_percent,
+        Check::QuickLaunch => &mut v.quick_launch,
     }
 }
 
@@ -779,6 +787,7 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
                 .map(|&k| Part::WinKey(k))
                 .chain([
                     Part::Check(Check::Group),
+                    Part::Check(Check::QuickLaunch),
                     Part::Check(Check::QuickSearchAll),
                     Part::Check(Check::BatteryPercent),
                 ])
@@ -943,16 +952,19 @@ const CLOCK_BUTTON_Y: i32 = 312;
 /// below it the Buttons group with its check box (as Startup's) and a line of text (as Size's).
 const KEY_GROUP: Rect = Rect::new(24, 68, 296, 68);
 const KEY_ROWS: [(WindowsKey, i32, i32); 2] = [(WindowsKey::Find, 36, 84), (WindowsKey::Start, 36, 105)];
-const BUTTONS_GROUP: Rect = Rect::new(24, 144, 296, 69);
+/// The Buttons group holds Quick Launch's check box too, 21 below the line of text (PROVISIONAL:
+/// ours), and is 21 taller for it.
+const BUTTONS_GROUP: Rect = Rect::new(24, 144, 296, 90);
 const GROUP_CHECK: (i32, i32) = (36, 161);
 const GROUP_TEXT: &str = "Off: every window has a button of its own.";
+const QUICK_LAUNCH_CHECK: (i32, i32) = (36, 204);
 /// 8 below the Buttons group, the Quick Search group (as high as Startup on the General page),
 /// its check box as Startup's.
-const SEARCH_GROUP: Rect = Rect::new(24, 221, 296, 47);
-const SEARCH_CHECK: (i32, i32) = (36, 238);
+const SEARCH_GROUP: Rect = Rect::new(24, 242, 296, 47);
+const SEARCH_CHECK: (i32, i32) = (36, 259);
 /// 8 below the Quick Search group, the Battery group, as high, its check box as Startup's.
-const BATTERY_GROUP: Rect = Rect::new(24, 276, 296, 47);
-const BATTERY_CHECK: (i32, i32) = (36, 293);
+const BATTERY_GROUP: Rect = Rect::new(24, 297, 296, 47);
+const BATTERY_CHECK: (i32, i32) = (36, 314);
 
 /// Bevel95 Settings' Desktop page (ours): one group in the General page's manner, its check box
 /// and three lines saying what the desktop is.
@@ -1081,6 +1093,7 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
                 parts.push((part, Rect::new(x, y, 17 + label_w(part) + 1, 16)));
             }
             parts.push(check(Part::Check(Check::Group), GROUP_CHECK.0, GROUP_CHECK.1));
+            parts.push(check(Part::Check(Check::QuickLaunch), QUICK_LAUNCH_CHECK.0, QUICK_LAUNCH_CHECK.1));
             parts.push(check(Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1));
             parts.push(check(Part::Check(Check::BatteryPercent), BATTERY_CHECK.0, BATTERY_CHECK.1));
         }
@@ -1447,6 +1460,7 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             group_box(fb, c, font, BUTTONS_GROUP, "Buttons", false);
             check(fb, Part::Check(Check::Group), GROUP_CHECK.0, GROUP_CHECK.1);
             lines(fb, 36, GROUP_CHECK.1 + 22, &[GROUP_TEXT]);
+            check(fb, Part::Check(Check::QuickLaunch), QUICK_LAUNCH_CHECK.0, QUICK_LAUNCH_CHECK.1);
             group_box(fb, c, font, SEARCH_GROUP, "Quick Search", false);
             check(fb, Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1);
             group_box(fb, c, font, BATTERY_GROUP, "Battery", false);
@@ -1842,6 +1856,7 @@ mod tests {
             group: true,
             quick_search_all: false,
             battery_percent: false,
+            quick_launch: false,
         }
     }
 
@@ -1947,6 +1962,7 @@ mod tests {
             Part::Tab(1),
             Part::WinKey(WindowsKey::Find),
             Part::Check(Check::Group),
+            Part::Check(Check::QuickLaunch),
             Part::Check(Check::QuickSearchAll),
             Part::Check(Check::BatteryPercent),
             Part::Ok,
@@ -1954,6 +1970,12 @@ mod tests {
         ];
         assert_eq!(p.tab_stops(), stops);
         assert_eq!(p.access_key('g'), Some(Part::Check(Check::Group)));
+        // Quick Launch (PROVISIONAL words): shows what holds, Bevel95 Settings puts it into effect.
+        assert_eq!(p.access_key('l'), Some(Part::Check(Check::QuickLaunch)));
+        assert!(!p.is_checked(Check::QuickLaunch));
+        let on = Values { quick_launch: true, ..values() };
+        assert!(Sheet::Bevel95.merge(on, values()).quick_launch);
+        assert!(!Sheet::Taskbar.merge(on, values()).quick_launch, "Taskbar Properties leaves it as in effect");
         assert!(p.is_checked(Check::Group), "grouped, as the bar always was");
         assert!(p.choose(Part::Check(Check::Group)));
         assert!(!p.values.group && p.enabled(Part::Apply));

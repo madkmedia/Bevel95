@@ -399,12 +399,13 @@ pub fn clear_leftovers(dir: &Path, age: std::time::Duration) -> usize {
 /// are ever cleared (the third safety review of 2026-11-18, C3: any `<anything>.txt.<n>.<n>.tmp`
 /// went, which in a portable copy's folder could be a file of the person's). Setup's Remove list
 /// (`install::DATA_FILES`) holds each of them (a test checks it).
-pub const OWN_FILES: [&str; 14] = [
+pub const OWN_FILES: [&str; 15] = [
     "settings.txt",
     "desktop.txt",
     "folders.txt",
     "undo.txt",
     "task-order.txt",
+    "quick-launch.txt",
     "quick-search.txt",
     "programs.txt",
     "programs.old.txt",

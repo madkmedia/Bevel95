@@ -65,7 +65,7 @@ use bevel_winkit::state_file;
 use crate::util::{Private, blit, point, rect_h, rect_w, wide};
 use crate::{
     about_window, appbar, apps, audio, autostart, datetime_window, desktop, dialogs, explorer, find_window, font, keys, kit, own_icon, popup,
-    properties_window, start_menu, status, tip, tray, volume_popup, watchdog, window_list, zones,
+    properties_window, quick_launch, start_menu, status, tip, tray, volume_popup, watchdog, window_list, zones,
 };
 
 /// Bevel95's own notification icons, the network connection and the battery (Windows 11 hands
@@ -139,10 +139,14 @@ pub const WM_TASK_AT: u32 = WM_APP + 16;
 /// The colors were chosen (the Colors submenu, Quick Search, a live test): wParam = its index
 /// in `Depth::ALL` (0: 16 Colors, 1: True Color).
 pub static WM_BAR_COLORS: Private = Private::new("Bevel95.Bar.Colors");
+/// Quick Launch, for live tests (`tools\dev\postbar.ps1 QuickLaunch <wParam>`): wParam 0 to 3
+/// clicks the built-in icon `quick_launch::Builtin::ALL[wParam]` if it is on the band (2: Show
+/// Desktop), 100 has the folder read again (the band's Refresh).
+pub static WM_QUICK_LAUNCH: Private = Private::new("Bevel95.Bar.QuickLaunch");
 
 /// Every message of the bar registered by name, with the `WM_APP + n` it was before (the names
 /// `tools\dev\postbar.ps1` knows and decisions.md lists).
-pub static BAR_MESSAGES: [(&Private, u32); 11] = [
+pub static BAR_MESSAGES: [(&Private, u32); 12] = [
     (&WM_APPBAR, 1),
     (&WM_BAR_COMMAND, 3),
     (&WM_BAR_SIZE, 4),
@@ -154,6 +158,7 @@ pub static BAR_MESSAGES: [(&Private, u32); 11] = [
     (&keys::WM_DRAG_ESC, 13),
     (&WM_BAR_COLORS, 40),
     (&own_icon::WM_OWN_ICON, 41),
+    (&WM_QUICK_LAUNCH, 42),
 ];
 
 /// Registers them all at the start, so that no thread (the keyboard hook's least of all) asks
@@ -186,6 +191,8 @@ const MOTION_MS: u32 = 15;
 enum Hover {
     Tray(tray::Key),
     Clock,
+    /// A Quick Launch icon (its place on the band).
+    Quick(usize),
 }
 
 /// The bar window, for the panic hook (which must not touch the app state).
@@ -284,6 +291,8 @@ pub struct App {
     pub quick_search: QuickSearch,
     /// The battery's percentage stands beside its icon (Bevel95 Settings, Taskbar page).
     pub battery_percent: bool,
+    /// Quick Launch: whether it shows, its icons, the one under the pointer and the one held down.
+    pub ql: quick_launch::State,
     /// Auto hide: how many pixels of the bar are on the screen now, how many it is sliding
     /// to, and how many ticks the pointer has been away from it.
     shown_px: i32,
@@ -339,6 +348,11 @@ impl App {
             popup::Tree::Programs => &self.start_programs,
             popup::Tree::Favorites => &self.start_favorites,
         }
+    }
+
+    /// Whether Quick Launch shows now (settings.txt, else the look's default).
+    pub fn quick_launch_on(&self) -> bool {
+        self.ql.on(self.era)
     }
 
     /// The top edge of the bar, in screen pixels.
@@ -615,6 +629,7 @@ pub fn run() -> u32 {
             group: settings.group,
             quick_search: settings.quick_search,
             battery_percent: settings.battery_percent,
+            ql: quick_launch::State::new(settings.quick_launch),
             shown_px: 0,
             target_px: 0,
             away_ticks: 0,
@@ -660,6 +675,8 @@ pub fn run() -> u32 {
     }
     keys::install(bar);
     show_ours(bar);
+    // Windows' Quick Launch folder, read on a thread of its own (and again when it changes).
+    quick_launch::start(bar);
     // SAFETY: plain Win32 call on our own window.
     if unsafe { SetTimer(bar, TICK, TICK_MS, None) } == 0 {
         log_win32("SetTimer");
@@ -1165,10 +1182,74 @@ fn on_clock(x: i32, y: i32) -> bool {
     .unwrap_or(false)
 }
 
+/// The Quick Launch icon under a point in the bar window (screen pixels from its corner), as its
+/// place on the band.
+fn quick_at(x: i32, y: i32) -> Option<usize> {
+    with_app(|app| app.layout.as_ref()?.quick.as_ref()?.button_at(x / app.scale, y / app.scale)).flatten()
+}
+
+/// Whether a point in the bar window is on the Quick Launch band's own part (its lines, grips and
+/// gaps), not on one of its icons: the band's menu opens there.
+#[allow(dead_code)] // the band's menu uses it (Quick Launch, step 4)
+fn on_band(x: i32, y: i32) -> bool {
+    with_app(|app| {
+        let band = app.layout.as_ref()?.quick.as_ref()?;
+        let (x, y) = (x / app.scale, y / app.scale);
+        Some(band.rect.contains(x, y) && band.button_at(x, y).is_none())
+    })
+    .flatten()
+    .unwrap_or(false)
+}
+
+/// The Quick Launch icon under the pointer rises (`None`: none); repainted when that changes.
+fn set_quick_hot(bar: HWND, hot: Option<usize>) {
+    if with_app(|app| std::mem::replace(&mut app.ql.hot, hot) != hot).unwrap_or(false) {
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(bar, null(), 0) };
+    }
+}
+
+/// A click on Quick Launch icon `index`: what it stands for starts (`quick_launch::start_item`).
+fn click_quick(index: usize) {
+    let Some((target, browser, mail)) =
+        with_app(|app| Some((app.ql.target(index)?, app.ql.browser.clone(), app.ql.mail.clone()))).flatten()
+    else {
+        return;
+    };
+    quick_launch::start_item(&target, browser.as_deref(), mail.as_deref());
+}
+
+/// Switches Quick Launch on or off (Bevel95 Settings, the Toolbars menu, the band's Close) and
+/// writes `quick_launch` into settings.txt: only then, so a file that never had the line keeps the
+/// look's default.
+pub fn set_quick_launch(on: bool) {
+    let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
+    let Some(was) = with_app(|app| {
+        let was = app.quick_launch_on();
+        app.ql.setting = Some(on);
+        app.ql.hot = None;
+        app.ql.pressed = None;
+        was
+    }) else {
+        return;
+    };
+    save_setting("quick_launch", if on { "yes" } else { "no" });
+    if was != on {
+        log(if on { "quick launch: switched on" } else { "quick launch: switched off" });
+    }
+    properties_window::quick_launch_changed(on);
+    hide_tip(bar);
+    // SAFETY: our own window.
+    unsafe { InvalidateRect(bar, null(), 0) };
+}
+
 /// What a point in the bar window is on, for tooltips: a notification icon or the clock.
 fn hover_at(x: i32, y: i32) -> Option<Hover> {
     if let Some(key) = tray_icon_at(x, y) {
         return Some(Hover::Tray(key));
+    }
+    if let Some(i) = quick_at(x, y) {
+        return Some(Hover::Quick(i));
     }
     with_app(|app| {
         let layout = app.layout.as_ref()?;
@@ -1245,6 +1326,7 @@ fn show_tip(bar: HWND) {
             Hover::Tray(key) => layout.tray[app.tray_keys.iter().position(|k| *k == key)?],
             // Windows 98's clock tooltip sits 2 rows below the well's top (the reference PC).
             Hover::Clock => Rect::new(layout.clock.x, layout.well.y + 2, layout.clock.w, layout.well.h - 4),
+            Hover::Quick(i) => *layout.quick.as_ref()?.buttons.get(i)?,
         };
         let s = app.scale;
         Some((target, Rect::new(app.placed.left + r.x * s, app.placed.top + r.y * s, r.w * s, r.h * s)))
@@ -1261,11 +1343,16 @@ fn show_tip(bar: HWND) {
         Hover::Tray(POWER_KEY) => with_app(|app| bevel_core::status::power_tooltip(app.era, &app.power)),
         Hover::Tray(key) => tray::tooltip_of(key),
         Hover::Clock => Some(long_date(with_app(|app| app.clock_offset).unwrap_or(0))),
+        Hover::Quick(i) => with_app(|app| app.ql.tooltip(app.era, i)).flatten(),
     };
     let Some(text) = text.filter(|t| !t.is_empty()) else {
         return;
     };
-    tip::show(bar, &text, cursor(), tool);
+    if matches!(target, Hover::Quick(_)) {
+        tip::show_quick_launch(bar, &text, cursor(), tool);
+    } else {
+        tip::show(bar, &text, cursor(), tool);
+    }
     with_app(|app| app.tip_showing = true);
     // SAFETY: a plain query and a timer on our own window.
     unsafe { SetTimer(bar, TIP_HIDE, GetDoubleClickTime() * 10, None) };
@@ -1948,6 +2035,11 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
         log(&format!("Quick Search now lists {}", quick_search.setting()));
         find_window::programs_read();
     }
+    // Quick Launch: written only when it changes from what holds now (the look's default while
+    // settings.txt does not say).
+    if with_app(|app| app.quick_launch_on() != values.quick_launch).unwrap_or(false) {
+        set_quick_launch(values.quick_launch);
+    }
     // Written only when changed, so a settings.txt that never had the line does not get one.
     let battery_percent = values.battery_percent;
     if with_app(|app| std::mem::replace(&mut app.battery_percent, battery_percent) != battery_percent).unwrap_or(false) {
@@ -2121,6 +2213,12 @@ fn paint_bar(bar: HWND) {
                 .and_then(|i| Some((i, bevel_core::status::percent_text(&app.power)?))),
             row: app.task_row,
             scroll_pressed: app.scroll_pressed,
+            quick_launch: if app.quick_launch_on() {
+                app.ql.refresh(app.era);
+                Some(app.ql.band(app.era))
+            } else {
+                None
+            },
             ..Bar::default()
         };
         if let Some((_, frames, _)) = app.motion_on.as_mut() {
@@ -2310,14 +2408,24 @@ fn set_era(bar: HWND, era: Era) {
     // A dialog open in the old look goes away; menus are already closed.
     dialogs::close();
     let widest = widest_time(&regular);
-    with_app(|app| {
+    let quick_launch = with_app(|app| {
+        let before = app.quick_launch_on();
         app.era = era;
         app.theme = theme;
         app.regular = regular;
         app.bold = bold;
         app.clock_widest = widest;
         app.layout = None;
-    });
+        app.ql.hot = None;
+        app.ql.pressed = None;
+        let after = app.quick_launch_on();
+        (before != after).then_some(after)
+    })
+    .flatten();
+    // A look whose default differs (95 off, 98 and 2000 on) while settings.txt does not say.
+    if let Some(on) = quick_launch {
+        properties_window::quick_launch_changed(on);
+    }
     save_setting("era", era.setting());
     log(&format!("look: {}", era.title()));
     // The desktop takes the new look's color.
@@ -2386,6 +2494,7 @@ fn on_destroy(bar: HWND) {
     properties_window::close();
     about_window::close();
     desktop::hide();
+    quick_launch::stop();
     tip::destroy();
     keys::uninstall();
     // SAFETY: our own window, timers, hotkey and shell hook.
@@ -2549,6 +2658,16 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 return 0;
             }
             hide_tip(bar);
+            // A Quick Launch icon sinks while held; it acts when the button comes up over it.
+            if let Some(i) = quick_at(x, y) {
+                with_app(|app| app.ql.pressed = Some(i));
+                // SAFETY: our own window; capture lets us see the release even off the bar.
+                unsafe {
+                    SetCapture(bar);
+                    InvalidateRect(bar, null(), 0);
+                }
+                return 0;
+            }
             // A double-click on the clock opens Date/Time Properties, as in Windows.
             if on_clock(x, y) {
                 if clock_double_click() {
@@ -2604,6 +2723,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             let (x, y) = point(lparam);
             arm_leave(bar);
             set_hover(bar, hover_at(x, y));
+            set_quick_hot(bar, quick_at(x, y));
             drag_move(bar, x);
             if let Some(index) = with_app(|app| app.pressed.filter(|_| !app.press.as_ref().is_some_and(|p| p.dragging)))
                 .flatten()
@@ -2619,11 +2739,24 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_MOUSELEAVE => {
             with_app(|app| app.tracking = false);
             set_hover(bar, None);
+            set_quick_hot(bar, None);
             return 0;
         }
         WM_LBUTTONUP => {
             let (x, y) = point(lparam);
             if release_tray(bar, tray::Button::Left, x, y) {
+                return 0;
+            }
+            // A Quick Launch icon held down: one click, if the button came up over it.
+            if let Some(i) = with_app(|app| app.ql.pressed.take()).flatten() {
+                // SAFETY: our own window.
+                unsafe {
+                    ReleaseCapture();
+                    InvalidateRect(bar, null(), 0);
+                }
+                if quick_at(x, y) == Some(i) {
+                    click_quick(i);
+                }
                 return 0;
             }
             if with_app(|app| app.scroll_pressed.take()).flatten().is_some() {
@@ -2672,7 +2805,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     _ => false,
                 };
-                (app.pressed.take().is_some() | app.scroll_pressed.take().is_some(), dragged)
+                (app.pressed.take().is_some() | app.scroll_pressed.take().is_some() | app.ql.pressed.take().is_some(), dragged)
             })
             .unwrap_or((false, false));
             if dragged {
@@ -2748,6 +2881,25 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         m if m == WM_BAR_THEME.id() => {
             if let Some(&era) = Era::ALL.get(wparam) {
                 set_era(bar, era);
+            }
+            return 0;
+        }
+        m if m == WM_QUICK_LAUNCH.id() => {
+            if wparam == 100 {
+                quick_launch::read_again();
+            } else if let Some(&b) = bevel_core::quick_launch::Builtin::ALL.get(wparam) {
+                let at = with_app(|app| {
+                    let on = app.quick_launch_on();
+                    on.then(|| app.ql.items.iter().position(|i| *i == bevel_core::quick_launch::Item::Builtin(b))).flatten()
+                })
+                .flatten();
+                match at {
+                    Some(i) => {
+                        log(&format!("quick launch: a test's message clicks {}", b.key()));
+                        click_quick(i);
+                    }
+                    None => log("quick launch: a test's message was refused (that icon is not on the band)"),
+                }
             }
             return 0;
         }

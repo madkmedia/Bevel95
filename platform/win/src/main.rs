@@ -36,6 +36,7 @@ mod kit;
 mod own_icon;
 mod popup;
 mod properties_window;
+mod quick_launch;
 mod remove_window;
 mod start_menu;
 mod status;

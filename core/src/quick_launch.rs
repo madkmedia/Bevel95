@@ -41,10 +41,14 @@ impl Builtin {
         Builtin::ALL.into_iter().find(|b| b.key().eq_ignore_ascii_case(key.trim()))
     }
 
-    /// Its tooltip: the originals' words (Windows 98 on the Reference PC: the names of the files
-    /// in its Quick Launch folder); Windows Explorer's is Bevel95's own (PROVISIONAL).
-    pub fn tooltip(self) -> &'static str {
+    /// Its tooltip in `era`: the originals' words (the Reference PCs: the names of the files in their
+    /// Quick Launch folders; Windows 2000 adds a shortcut's description as a second line, which only
+    /// its Internet Explorer shortcut has); Windows Explorer's is Bevel95's own.
+    pub fn tooltip(self, era: Era) -> &'static str {
         match self {
+            Builtin::InternetExplorer if era == Era::Win2000 => {
+                "Launch Internet Explorer Browser\nFinds and displays information and Web sites on the Internet."
+            }
             Builtin::InternetExplorer => "Launch Internet Explorer Browser",
             Builtin::OutlookExpress => "Launch Outlook Express",
             Builtin::ShowDesktop => "Show Desktop",

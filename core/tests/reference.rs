@@ -3200,6 +3200,7 @@ fn own_properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 windows_key: bevel_core::config::WindowsKey::Find,
                 quick_search_all: false,
                 battery_percent: false,
+                quick_launch: false,
                 group: true,
             };
             let mut p = Properties::new(Sheet::Taskbar, era, values);
@@ -4078,6 +4079,7 @@ fn properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             windows_key: bevel_core::config::WindowsKey::Find,
             quick_search_all: false,
             battery_percent: false,
+            quick_launch: false,
             group: true,
         };
         let mut p = Properties::new(Sheet::Taskbar, era, values);

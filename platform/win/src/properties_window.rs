@@ -112,6 +112,7 @@ fn current_values() -> Option<(Values, bevel_core::theme::Era)> {
             group: app.group,
             quick_search_all: app.quick_search == bevel_core::config::QuickSearch::Everything,
             battery_percent: app.battery_percent,
+            quick_launch: app.quick_launch_on(),
         };
         (values, app.era)
     })
@@ -370,5 +371,12 @@ pub fn programs_added(places: &[String], menu_shows: Shown) {
 pub fn desktop_changed(on: bool) {
     kit::update::<PropertiesHost>(|h| h.form.props.values.desktop = on);
     kit::update::<SettingsHost>(|h| h.form.props.values.desktop = on);
+}
+
+/// Quick Launch was switched on or off elsewhere (the bar's Toolbars menu, the band's Close, a
+/// look whose default differs): open windows show what holds now.
+pub fn quick_launch_changed(on: bool) {
+    kit::update::<PropertiesHost>(|h| h.form.props.values.quick_launch = on);
+    kit::update::<SettingsHost>(|h| h.form.props.values.quick_launch = on);
 }
 

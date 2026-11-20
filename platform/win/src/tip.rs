@@ -36,17 +36,32 @@ thread_local! {
 
 /// Shows `text` for the pointer at `pointer` over `tool` (both in screen pixels).
 pub fn show(owner: HWND, text: &str, pointer: POINT, tool: Rect) {
-    let Some((w, h, screen, work, scale)) = with_app(|app| {
+    show_placed(owner, text, &|w, h, screen, work, _, _, scale| {
+        tooltip::place((pointer.x, pointer.y), w, h, tool, screen, work, BELOW_POINTER * scale, scale)
+    });
+}
+
+/// Shows a Quick Launch icon's tooltip: where each look put it (`tooltip::place_quick_launch`).
+pub fn show_quick_launch(owner: HWND, text: &str, pointer: POINT, tool: Rect) {
+    show_placed(owner, text, &|w, h, screen, _, era, bar_top, scale| {
+        tooltip::place_quick_launch(era, (pointer.x, pointer.y), w, h, tool, bar_top, screen, scale, scale)
+    });
+}
+
+type Placer<'a> = dyn Fn(i32, i32, Rect, Rect, bevel_core::theme::Era, i32, i32) -> (i32, i32) + 'a;
+
+fn show_placed(owner: HWND, text: &str, place: &Placer) {
+    let Some((w, h, screen, work, era, bar_top, scale)) = with_app(|app| {
         let (w, h) = tooltip::size(app.fonts().regular, text);
         let m = app.monitor;
         let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
         let work = Rect::new(m.left, m.top, rect_w(&m), app.bar_top_on_screen() - m.top);
-        (w * app.scale, h * app.scale, screen, work, app.scale)
+        (w * app.scale, h * app.scale, screen, work, app.era, app.bar_top_on_screen(), app.scale)
     }) else {
         return;
     };
     TEXT.with(|t| *t.borrow_mut() = text.to_string());
-    let (x, y) = tooltip::place((pointer.x, pointer.y), w, h, tool, screen, work, BELOW_POINTER * scale, scale);
+    let (x, y) = place(w, h, screen, work, era, bar_top, scale);
     let mut hwnd = TIP.load(Ordering::SeqCst) as HWND;
     if hwnd.is_null() {
         let class = wide(TIP_CLASS);

@@ -118,6 +118,8 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
 - `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
   of recent file operations, the order of the task buttons, the commands typed into Run, the
   width of Quick Search's Name column.
+- `quick-launch.txt`: the built-in Quick Launch icons you took off the band (your own shortcuts
+  stay in Windows' own Quick Launch folder).
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options
   and scores.
 - `bevel95.log` and `bevel95.old.log`: the log (see below).
