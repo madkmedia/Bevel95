@@ -42,12 +42,20 @@ pub enum BarCommand {
     /// Back from Windows' taskbar to Bevel95's bar (the first entry of Bevel95's notification
     /// icon's menu, `tray_icon`); nothing while Bevel95's bar shows.
     SwitchToBevel95,
+    /// Quick Launch on if it is off, off if it is on (Toolbars > Quick Launch).
+    QuickLaunch,
+    /// The Quick Launch folder in a folder window (the band's Open).
+    QuickLaunchOpen,
+    /// Quick Launch off (the band's Close).
+    QuickLaunchClose,
+    /// The Quick Launch folder read again (the band's Refresh).
+    QuickLaunchRefresh,
 }
 
 impl BarCommand {
     /// In the order of their codes: new commands join the end, so the codes that scripts and
     /// tests send to the bar stay what they were.
-    const ALL: [BarCommand; 15] = [
+    const ALL: [BarCommand; 19] = [
         BarCommand::SwitchToWindowsTaskbar,
         BarCommand::Properties,
         BarCommand::Restart,
@@ -63,6 +71,10 @@ impl BarCommand {
         BarCommand::DesktopOff,
         BarCommand::About,
         BarCommand::SwitchToBevel95,
+        BarCommand::QuickLaunch,
+        BarCommand::QuickLaunchOpen,
+        BarCommand::QuickLaunchClose,
+        BarCommand::QuickLaunchRefresh,
     ];
 
     /// A number standing for the command in a window message (`from_code` reads it back).
@@ -87,6 +99,8 @@ pub enum BarEntry {
     Size,
     /// Opens the Bevel95 submenu (`own_menu`).
     Bevel95,
+    /// Opens the Toolbars submenu (`toolbars_menu`; 98 and 2000).
+    Toolbars,
 }
 
 type Entry = Option<(&'static str, BarEntry)>;
@@ -146,7 +160,9 @@ fn own_entries(own: Own) -> [Entry; 13] {
 fn menu_of<'a>(entries: impl Iterator<Item = &'a Entry>) -> Menu {
     let entries = entries
         .map(|e| match e {
-            Some((label, BarEntry::Theme | BarEntry::Colors | BarEntry::Size | BarEntry::Bevel95)) => MenuEntry::submenu(label, None),
+            Some((label, BarEntry::Theme | BarEntry::Colors | BarEntry::Size | BarEntry::Bevel95 | BarEntry::Toolbars)) => {
+                MenuEntry::submenu(label, None)
+            }
             Some((label, _)) => MenuEntry::item(label, None),
             None => MenuEntry::separator(),
         })
@@ -172,26 +188,53 @@ pub fn own_index_of(own: Own, entry: BarEntry) -> Option<usize> {
 /// Right-clicked on the clock, Windows 95, 98 and 2000 put this first, then a separator.
 const CLOCK_ENTRIES: [Entry; 2] = [Some(("Adjust Date/Time", BarEntry::Command(BarCommand::AdjustDateTime))), None];
 
-/// The entries of the menu, for a right-click on the clock (`clock`) or elsewhere on the bar.
-fn entries(clock: bool) -> impl Iterator<Item = &'static Entry> {
+/// Windows 98's and 2000's menus begin with Toolbars and a line (the Reference PCs, mouse and
+/// keyboard alike); a right-click on the clock puts Adjust Date/Time after them. Windows 95 had no
+/// toolbars on its bar.
+const TOOLBARS_ENTRIES: [Entry; 2] = [Some(("&Toolbars", BarEntry::Toolbars)), None];
+
+/// The entries of `era`'s menu, for a right-click on the clock (`clock`) or elsewhere on the bar.
+fn entries(era: Era, clock: bool) -> impl Iterator<Item = &'static Entry> {
+    let toolbars: &'static [Entry] = if era == Era::Win95 { &[] } else { &TOOLBARS_ENTRIES };
     let first: &'static [Entry] = if clock { &CLOCK_ENTRIES } else { &[] };
-    first.iter().chain(ENTRIES.iter())
+    toolbars.iter().chain(first.iter()).chain(ENTRIES.iter())
 }
 
-/// The right-click menu of the bar (`clock`: right-clicked on the clock), nothing highlighted.
-pub fn menu(clock: bool) -> Menu {
-    menu_of(entries(clock))
+/// The right-click menu of the bar in `era` (`clock`: right-clicked on the clock), nothing
+/// highlighted.
+pub fn menu(era: Era, clock: bool) -> Menu {
+    menu_of(entries(era, clock))
 }
 
-/// What entry `index` of `menu(clock)` does (`None` for a separator).
-pub fn entry(clock: bool, index: usize) -> Option<BarEntry> {
-    entries(clock).nth(index).copied().flatten().map(|(_, entry)| entry)
+/// What entry `index` of `menu(era, clock)` does (`None` for a separator).
+pub fn entry(era: Era, clock: bool, index: usize) -> Option<BarEntry> {
+    entries(era, clock).nth(index).copied().flatten().map(|(_, entry)| entry)
 }
 
-/// Where `entry` is in `menu(clock)`.
-pub fn index_of(clock: bool, entry: BarEntry) -> Option<usize> {
-    entries(clock).position(|e| e.is_some_and(|(_, e)| e == entry))
+/// Where `entry` is in `menu(era, clock)`.
+pub fn index_of(era: Era, clock: bool, entry: BarEntry) -> Option<usize> {
+    entries(era, clock).position(|e| e.is_some_and(|(_, e)| e == entry))
 }
+
+/// The Toolbars submenu (the Reference PCs' 98 and 2000 alike): Address, Links, Desktop, Quick
+/// Launch with its check mark while it shows, a line, New Toolbar... Only Quick Launch is built:
+/// the others are grayed.
+pub fn toolbars_menu(quick_launch: bool) -> Menu {
+    let gray = |label: &str| MenuEntry { disabled: true, ..MenuEntry::item(label, None) };
+    let mut ql = MenuEntry::item("&Quick Launch", None);
+    if quick_launch {
+        ql.mark = Some(Mark::Check);
+    }
+    Menu::new(vec![gray("&Address"), gray("&Links"), gray("&Desktop"), ql, MenuEntry::separator(), gray("&New Toolbar...")])
+}
+
+/// What entry `index` of `toolbars_menu` does: only Quick Launch does anything.
+pub fn toolbars_entry(index: usize) -> Option<BarCommand> {
+    (index == TOOLBARS_QUICK_LAUNCH).then_some(BarCommand::QuickLaunch)
+}
+
+/// Where Quick Launch is in `toolbars_menu`.
+pub const TOOLBARS_QUICK_LAUNCH: usize = 3;
 
 /// A submenu of options with a bullet on the one in use.
 fn choices(labels: impl Iterator<Item = (String, bool)>) -> Menu {
@@ -256,28 +299,48 @@ mod tests {
 
     #[test]
     fn the_menu_is_windows_own_plus_one_entry() {
-        // The same in every look: Windows 95, 98 and 2000 each had Properties last (the
-        // entries they had that Bevel95 does not do are left out), and Bevel95's one entry.
-        assert_eq!(labels(&menu(false)), ["Bevel95>", "Properties"]);
-        assert_eq!(labels(&menu(true)), ["Adjust Date/Time", "-", "Bevel95>", "Properties"]);
-        for clock in [false, true] {
-            let m = menu(clock);
-            for (i, e) in m.entries.iter().enumerate() {
-                assert_eq!(e.kind == EntryKind::Separator, entry(clock, i).is_none(), "entry {i}");
-            }
-            let own = index_of(clock, BarEntry::Bevel95).unwrap();
-            assert_eq!(entry(clock, own), Some(BarEntry::Bevel95));
-            assert_eq!(own + 1, index_of(clock, BarEntry::Command(BarCommand::Properties)).unwrap());
-            assert_eq!(entry(clock, 99), None);
-            assert!(m.entries.iter().all(|e| e.mark.is_none()));
-            // Bevel95's own entries are only in its submenu.
-            for own in [BarEntry::Theme, BarEntry::Colors, BarEntry::Size, BarEntry::Command(BarCommand::Settings), BarEntry::Command(BarCommand::Exit)] {
-                assert_eq!(index_of(clock, own), None);
-            }
+        // Windows 95, 98 and 2000 each had Properties last (the entries they had that Bevel95
+        // does not do are left out), and Bevel95's one entry; 98 and 2000 begin with Toolbars.
+        assert_eq!(labels(&menu(Era::Win95, false)), ["Bevel95>", "Properties"]);
+        assert_eq!(labels(&menu(Era::Win95, true)), ["Adjust Date/Time", "-", "Bevel95>", "Properties"]);
+        for era in [Era::Win98, Era::Win2000] {
+            assert_eq!(labels(&menu(era, false)), ["&Toolbars>", "-", "Bevel95>", "Properties"]);
+            assert_eq!(labels(&menu(era, true)), ["&Toolbars>", "-", "Adjust Date/Time", "-", "Bevel95>", "Properties"]);
+            assert_eq!(entry(era, false, 0), Some(BarEntry::Toolbars));
         }
-        assert_eq!(index_of(false, BarEntry::Command(BarCommand::AdjustDateTime)), None);
-        assert_eq!(entry(true, 0), Some(BarEntry::Command(BarCommand::AdjustDateTime)));
-        assert_eq!(entry(true, 1), None, "then a separator");
+        for era in Era::ALL {
+            for clock in [false, true] {
+                let m = menu(era, clock);
+                for (i, e) in m.entries.iter().enumerate() {
+                    assert_eq!(e.kind == EntryKind::Separator, entry(era, clock, i).is_none(), "entry {i}");
+                }
+                let own = index_of(era, clock, BarEntry::Bevel95).unwrap();
+                assert_eq!(entry(era, clock, own), Some(BarEntry::Bevel95));
+                assert_eq!(own + 1, index_of(era, clock, BarEntry::Command(BarCommand::Properties)).unwrap());
+                assert_eq!(entry(era, clock, 99), None);
+                assert!(m.entries.iter().all(|e| e.mark.is_none()));
+                // Bevel95's own entries are only in its submenu.
+                for own in [BarEntry::Theme, BarEntry::Colors, BarEntry::Size, BarEntry::Command(BarCommand::Settings), BarEntry::Command(BarCommand::Exit)] {
+                    assert_eq!(index_of(era, clock, own), None);
+                }
+            }
+            assert_eq!(index_of(era, false, BarEntry::Command(BarCommand::AdjustDateTime)), None);
+        }
+        assert_eq!(entry(Era::Win95, true, 0), Some(BarEntry::Command(BarCommand::AdjustDateTime)));
+        assert_eq!(entry(Era::Win95, true, 1), None, "then a separator");
+        assert_eq!(index_of(Era::Win95, false, BarEntry::Toolbars), None, "95's bar had no toolbars");
+    }
+
+    #[test]
+    fn the_toolbars_submenu_has_quick_launch_working() {
+        let on = toolbars_menu(true);
+        assert_eq!(labels(&on), ["&Address", "&Links", "&Desktop", "&Quick Launch", "-", "&New Toolbar..."]);
+        let working: Vec<bool> = on.entries.iter().map(|e| e.choosable()).collect();
+        assert_eq!(working, [false, false, false, true, false, false]);
+        assert_eq!(on.entries[TOOLBARS_QUICK_LAUNCH].mark, Some(Mark::Check));
+        assert_eq!(toolbars_menu(false).entries[TOOLBARS_QUICK_LAUNCH].mark, None);
+        assert_eq!(toolbars_entry(TOOLBARS_QUICK_LAUNCH), Some(BarCommand::QuickLaunch));
+        assert_eq!(toolbars_entry(0), None);
     }
 
     #[test]

@@ -548,10 +548,59 @@ fn context_menu_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
     let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
     let bar = bar_image(theme, fonts, false, vec![]);
     screen.blit(&bar, 0, SCREEN_H - bar.height);
-    let menu = Menu { hover: Some(0), ..bar_menu::menu(false) };
+    let menu = Menu { hover: Some(0), ..bar_menu::menu(era, false) };
     let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
     let (x, y) = place_popup(300, SCREEN_H - 14, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
     screen.blit(&fb, x, y);
+    screen
+}
+
+/// Quick Launch's menus over the bar with the band (as `quick_launch_scene`), placed as the real
+/// windows are: `which` "toolbars" (the bar's menu, right-clicked on the empty task area at x 300,
+/// the pointer on Toolbars and its submenu open, Quick Launch ticked), "band" (the band's own menu,
+/// right-clicked on its first grip, the pointer on Open) or "icon" (the menu on the first icon,
+/// right-clicked on it, nothing highlighted).
+fn quick_launch_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::quick_launch;
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let bar = quick_launch_scene(theme, era, fonts, None, None, WIDTH);
+    let bar_top = SCREEN_H - bar.height;
+    screen.blit(&bar, 0, bar_top);
+    let show_keys = era.always_shows_keys();
+    let band = {
+        let icons = quick_launch::builtins(era).iter().map(|&b| quick_launch::picture(era, b)).collect();
+        let state = Bar { tasks: three_groups(), clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), quick_launch: Some(quick_launch::Band { icons, hot: None, pressed: None }), ..Bar::default() };
+        paint::bar_layout(theme, fonts, WIDTH, &state).quick.expect("the band")
+    };
+    match which {
+        "toolbars" => {
+            let index = bar_menu::index_of(era, false, BarEntry::Toolbars).expect("the Toolbars entry");
+            let menu = Menu { hover: Some(index), show_keys, ..bar_menu::menu(era, false) };
+            let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+            let (x, y) = place_popup(300, SCREEN_H - 14, fb.width, fb.height, screen_rect);
+            screen.blit(&fb, x, y);
+            let sub = Menu { show_keys, ..bar_menu::toolbars_menu(true) };
+            let (sub_fb, _) = menu_image(theme, fonts, &sub, MenuStyle::Popup);
+            let parent = Rect::new(x, y, fb.width, fb.height);
+            let entry = entry_on_screen(parent, &layout, index);
+            let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.popup.submenu, screen_rect);
+            screen.blit(&sub_fb, sx, sy);
+        }
+        "band" => {
+            let open = (0..20).find(|&i| quick_launch::band_entry(era, i) == Some(quick_launch::BandEntry::Open));
+            let menu = Menu { hover: open, show_keys, ..quick_launch::band_menu(era) };
+            let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+            let (x, y) = place_popup(band.grip + 1, bar_top + 14, fb.width, fb.height, screen_rect);
+            screen.blit(&fb, x, y);
+        }
+        _ => {
+            let menu = Menu { show_keys, ..quick_launch::icon_menu(false) };
+            let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
+            let (x, y) = place_popup(band.buttons[0].x + 11, bar_top + 14, fb.width, fb.height, screen_rect);
+            screen.blit(&fb, x, y);
+        }
+    }
     screen
 }
 
@@ -904,8 +953,8 @@ fn bar_submenu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: Option<BarEn
     let bar = bar_image(theme, fonts, false, vec![]);
     screen.blit(&bar, 0, SCREEN_H - bar.height);
 
-    let index = bar_menu::index_of(false, BarEntry::Bevel95).expect("the Bevel95 entry");
-    let menu = Menu { hover: Some(index), ..bar_menu::menu(false) };
+    let index = bar_menu::index_of(era, false, BarEntry::Bevel95).expect("the Bevel95 entry");
+    let menu = Menu { hover: Some(index), ..bar_menu::menu(era, false) };
     let (fb, layout) = menu_image(theme, fonts, &menu, MenuStyle::Popup);
     let (x, y) = place_popup(300, SCREEN_H - 14, fb.width, fb.height, screen_rect);
     screen.blit(&fb, x, y);
@@ -1538,6 +1587,23 @@ fn scenes() -> Vec<Scene> {
             "Quick Launch: the second icon held down",
             quick_launch_scene(theme, era, &fonts, None, Some(1), 240),
         );
+        add(
+            "quick-launch-band-menu",
+            "Quick Launch: the band's own menu (right-click on its grip), pointer on Open; what Bevel95 does not do is grayed",
+            quick_launch_menu_scene(theme, era, &fonts, "band"),
+        );
+        add(
+            "quick-launch-icon-menu",
+            "Quick Launch: the menu on an icon (first pass: Open and Delete)",
+            quick_launch_menu_scene(theme, era, &fonts, "icon"),
+        );
+        if era != Era::Win95 {
+            add(
+                "toolbars-menu",
+                "The bar's menu with Toolbars open: Quick Launch ticked, the other toolbars grayed",
+                quick_launch_menu_scene(theme, era, &fonts, "toolbars"),
+            );
+        }
         add(
             "minefield",
             "Minesweeper in play, with flags, a question mark and a square held down",

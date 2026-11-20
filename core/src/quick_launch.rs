@@ -8,6 +8,7 @@
 use crate::art::Look;
 use crate::fb::{Icon, Rect};
 use crate::icons::ClassicIcon;
+use crate::paint::{Menu, MenuEntry};
 use crate::theme::Era;
 
 /// The icons Bevel95 puts on the band itself (the person's own shortcuts follow them).
@@ -267,6 +268,132 @@ pub fn layout(era: Era, start: Rect, well: Rect, icons: usize, y: i32, h: i32) -
     }
 }
 
+/// An entry of the band's own menu (a right-click on its grips, lines and gaps).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BandEntry {
+    View,
+    ShowText,
+    Refresh,
+    Open,
+    ShowTitle,
+    Toolbars,
+    AdjustDateTime,
+    Cascade,
+    TileHorizontally,
+    TileVertically,
+    MinimizeAll,
+    TaskManager,
+    Properties,
+    Close,
+}
+
+/// The band's menu as the Reference PCs show it (98: `win98-truecolor-ql-bandmenu-grip`; 2000:
+/// `-bandmenu-grip`, which adds Adjust Date/Time after Toolbars and Task Manager... before
+/// Properties). `None`: a line.
+fn band_entries(era: Era) -> Vec<Option<(&'static str, BandEntry)>> {
+    use BandEntry::*;
+    let mut e = vec![
+        Some(("&View", View)),
+        Some(("Show Te&xt", ShowText)),
+        Some(("&Refresh", Refresh)),
+        Some(("&Open", Open)),
+        None,
+        Some(("Sho&w Title", ShowTitle)),
+        None,
+        Some(("&Toolbars", Toolbars)),
+        None,
+    ];
+    if era == Era::Win2000 {
+        e.push(Some(("&Adjust Date/Time", AdjustDateTime)));
+    }
+    e.extend([
+        Some(("Ca&scade Windows", Cascade)),
+        Some(("Tile Windows &Horizontally", TileHorizontally)),
+        Some(("Tile Windows &Vertically", TileVertically)),
+        None,
+        Some(("&Minimize All Windows", MinimizeAll)),
+        None,
+    ]);
+    if era == Era::Win2000 {
+        e.extend([Some(("Tas&k Manager...", TaskManager)), None]);
+    }
+    e.extend([Some(("P&roperties", Properties)), None, Some(("&Close", Close))]);
+    e
+}
+
+impl BandEntry {
+    /// What Bevel95 carries out: Refresh, Open, the Toolbars submenu, Adjust Date/Time, Properties
+    /// and Close. The others (the band's View, Show Text, Show Title; the window arrangements and
+    /// Task Manager, which Bevel95's bar menu leaves out) are shown grayed.
+    pub fn works(self) -> bool {
+        use BandEntry::*;
+        matches!(self, Refresh | Open | Toolbars | AdjustDateTime | Properties | Close)
+    }
+}
+
+/// The band's menu in `era`, nothing highlighted.
+pub fn band_menu(era: Era) -> Menu {
+    let entries = band_entries(era)
+        .into_iter()
+        .map(|e| match e {
+            None => MenuEntry::separator(),
+            Some((label, entry)) => {
+                let mut m = if matches!(entry, BandEntry::View | BandEntry::Toolbars) {
+                    MenuEntry::submenu(label, None)
+                } else {
+                    MenuEntry::item(label, None)
+                };
+                m.disabled = !entry.works();
+                // Windows 2000 draws its Adjust Date/Time bold (the default of the clock's menu).
+                m.bold = entry == BandEntry::AdjustDateTime;
+                m
+            }
+        })
+        .collect();
+    Menu::new(entries)
+}
+
+/// What entry `index` of `band_menu(era)` is.
+pub fn band_entry(era: Era, index: usize) -> Option<BandEntry> {
+    band_entries(era).get(index).copied().flatten().map(|(_, e)| e)
+}
+
+/// An entry of the menu on an icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconEntry {
+    Open,
+    Delete,
+    Properties,
+}
+
+/// The menu on an icon (first pass): Open (bold, the default), Delete, and for the person's
+/// shortcut its Properties (Windows' own window). The originals' other entries (Quick View, Send
+/// To, Cut, Copy, Create Shortcut; 2000's Rename) are left out for now. `None`: a line.
+fn icon_entries(shortcut: bool) -> Vec<Option<(&'static str, IconEntry)>> {
+    let mut e = vec![Some(("&Open", IconEntry::Open)), None, Some(("&Delete", IconEntry::Delete))];
+    if shortcut {
+        e.extend([None, Some(("P&roperties", IconEntry::Properties))]);
+    }
+    e
+}
+
+/// The menu on an icon (`shortcut`: one of the person's own), nothing highlighted.
+pub fn icon_menu(shortcut: bool) -> Menu {
+    let entries = icon_entries(shortcut)
+        .into_iter()
+        .map(|e| match e {
+            None => MenuEntry::separator(),
+            Some((label, entry)) => MenuEntry { bold: entry == IconEntry::Open, ..MenuEntry::item(label, None) },
+        })
+        .collect();
+    Menu::new(entries)
+}
+
+/// What entry `index` of `icon_menu(shortcut)` is.
+pub fn icon_entry(shortcut: bool, index: usize) -> Option<IconEntry> {
+    icon_entries(shortcut).get(index).copied().flatten().map(|(_, e)| e)
+}
+
 static W95_INTERNET: ClassicIcon = ClassicIcon::art("quick-launch/internet-explorer", Look::Win95);
 static W98_INTERNET: ClassicIcon = ClassicIcon::art("quick-launch/internet-explorer", Look::Win98);
 static W98_OUTLOOK: ClassicIcon = ClassicIcon::art("quick-launch/outlook-express", Look::Win98);
@@ -366,6 +493,28 @@ mod tests {
         assert_eq!(parse_removed(&text), [InternetExplorer, WindowsExplorer]);
         assert_eq!(parse_removed("show-desktop\r\nnonsense\r\nshow-desktop # twice\r\n"), [ShowDesktop]);
         assert_eq!(parse_removed(""), []);
+    }
+
+    #[test]
+    fn the_menus_are_the_originals_with_what_is_built_working() {
+        let labels = |m: &Menu| m.entries.iter().map(|e| if e.label.is_empty() { "-".to_string() } else { e.label.clone() }).collect::<Vec<_>>();
+        let m98 = band_menu(Era::Win98);
+        assert_eq!(
+            labels(&m98),
+            ["&View", "Show Te&xt", "&Refresh", "&Open", "-", "Sho&w Title", "-", "&Toolbars", "-", "Ca&scade Windows", "Tile Windows &Horizontally", "Tile Windows &Vertically", "-", "&Minimize All Windows", "-", "P&roperties", "-", "&Close"]
+        );
+        let working: Vec<_> = (0..m98.entries.len()).filter(|&i| m98.entries[i].choosable()).filter_map(|i| band_entry(Era::Win98, i)).collect();
+        use BandEntry::*;
+        assert_eq!(working, [Refresh, Open, Toolbars, Properties, Close]);
+        let m2k = band_menu(Era::Win2000);
+        assert_eq!(band_entry(Era::Win2000, 9), Some(AdjustDateTime));
+        assert!(m2k.entries[9].bold);
+        assert!(labels(&m2k).contains(&"Tas&k Manager...".to_string()));
+        assert_eq!(labels(&band_menu(Era::Win95)), labels(&m98), "the 95 look takes 98's");
+        assert_eq!(labels(&icon_menu(false)), ["&Open", "-", "&Delete"]);
+        assert_eq!(labels(&icon_menu(true)), ["&Open", "-", "&Delete", "-", "P&roperties"]);
+        assert!(icon_menu(true).entries[0].bold);
+        assert_eq!((icon_entry(true, 2), icon_entry(true, 4), icon_entry(false, 1)), (Some(IconEntry::Delete), Some(IconEntry::Properties), None));
     }
 
     #[test]

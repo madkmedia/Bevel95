@@ -97,6 +97,13 @@ pub enum Kind {
     /// Bevel95's own icon's menu in Windows' notification area: entry i is
     /// `bevel_core::tray_icon::command_at(i)`.
     OwnIcon,
+    /// The Toolbars submenu (98 and 2000): entry i is `bar_menu::toolbars_entry(i)`.
+    Toolbars,
+    /// The Quick Launch band's own menu: entry i is `quick_launch::band_entry(era, i)`.
+    Band,
+    /// The menu on a Quick Launch icon, by what the icon is (and whether it is the person's
+    /// shortcut): entry i is `quick_launch::icon_entry(shortcut, i)`.
+    QuickItem(crate::quick_launch::Target, bool),
 }
 
 /// The folder trees that cascade from the Start menu (`App::start_tree`).
@@ -147,8 +154,30 @@ enum At {
 /// on the clock.
 pub fn open(bar: HWND, x: i32, y: i32, clock: bool) {
     let show_keys = with_app(|app| app.era.always_shows_keys()).unwrap_or(true);
-    let menu = Menu { show_keys, ..bar_menu::menu(clock) };
+    let era = with_app(|app| app.era).unwrap_or_default();
+    let menu = Menu { show_keys, ..bar_menu::menu(era, clock) };
     open_root(bar, Kind::BarMenu(clock), menu, MenuStyle::Popup, At::Point(x, y));
+}
+
+/// Opens the Quick Launch band's own menu for a right-click on its grips, lines or gaps at screen
+/// point (x, y).
+pub fn open_band_menu(bar: HWND, x: i32, y: i32) {
+    let Some(era) = with_app(|app| app.era) else {
+        return;
+    };
+    let menu = Menu { show_keys: era.always_shows_keys(), ..bevel_core::quick_launch::band_menu(era) };
+    open_root(bar, Kind::Band, menu, MenuStyle::Popup, At::Point(x, y));
+}
+
+/// Opens the menu on Quick Launch icon `index` (its place on the band) for a right-click at screen
+/// point (x, y).
+pub fn open_quick_item_menu(bar: HWND, index: usize, x: i32, y: i32) {
+    let Some((era, target)) = with_app(|app| Some((app.era, app.ql.target(index)?))).flatten() else {
+        return;
+    };
+    let shortcut = matches!(target, crate::quick_launch::Target::File(_));
+    let menu = Menu { show_keys: era.always_shows_keys(), ..bevel_core::quick_launch::icon_menu(shortcut) };
+    open_root(bar, Kind::QuickItem(target, shortcut), menu, MenuStyle::Popup, At::Point(x, y));
 }
 
 /// Opens the list of windows of task button `index`, above the button.
@@ -343,9 +372,15 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
             return None;
         }
         let want = match &parent.kind {
-            Kind::BarMenu(clock) if bar_menu::entry(*clock, index) == Some(BarEntry::Bevel95) => {
+            Kind::BarMenu(clock) if bar_menu::entry(app.era, *clock, index) == Some(BarEntry::Bevel95) => {
                 let own = bar_menu::Own { desktop: app.desktop, desktop_key: crate::bar::desktop_key() };
                 Want::Ready(Kind::BarOwn(own), bar_menu::own_menu(own), MenuStyle::Popup)
+            }
+            Kind::BarMenu(clock) if bar_menu::entry(app.era, *clock, index) == Some(BarEntry::Toolbars) => {
+                Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu(app.quick_launch_on()), MenuStyle::Popup)
+            }
+            Kind::Band if bevel_core::quick_launch::band_entry(app.era, index) == Some(bevel_core::quick_launch::BandEntry::Toolbars) => {
+                Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu(app.quick_launch_on()), MenuStyle::Popup)
             }
             Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::Theme) => {
                 Want::Ready(Kind::Theme, bar_menu::theme_menu(app.era), MenuStyle::Popup)
@@ -586,6 +621,8 @@ enum Action {
     Speaker(usize),
     /// A desktop command, and the ticket of the icons it acts on (0: none).
     Desktop(bevel_core::desktop::DesktopCommand, u32),
+    /// An entry of the menu on a Quick Launch icon, and the icon.
+    QuickItem(crate::quick_launch::Target, bevel_core::quick_launch::IconEntry),
 }
 
 /// Runs entry `index` of the menu at `level`.
@@ -605,7 +642,7 @@ fn choose(level: usize, index: usize) {
     let action = match kind {
         Kind::BarMenu(_) | Kind::BarOwn(_) => {
             let entry = match kind {
-                Kind::BarMenu(clock) => bar_menu::entry(clock, index),
+                Kind::BarMenu(clock) => bar_menu::entry(era, clock, index),
                 Kind::BarOwn(own) => bar_menu::own_entry(own, index),
                 _ => None,
             };
@@ -697,6 +734,26 @@ fn choose(level: usize, index: usize) {
             Some(command) => Action::BarCommand(command, false),
             None => return,
         },
+        Kind::Toolbars => match bar_menu::toolbars_entry(index) {
+            Some(command) => Action::BarCommand(command, false),
+            None => return,
+        },
+        Kind::Band => {
+            use bevel_core::quick_launch::BandEntry;
+            let command = match bevel_core::quick_launch::band_entry(era, index) {
+                Some(BandEntry::Refresh) => BarCommand::QuickLaunchRefresh,
+                Some(BandEntry::Open) => BarCommand::QuickLaunchOpen,
+                Some(BandEntry::Close) => BarCommand::QuickLaunchClose,
+                Some(BandEntry::AdjustDateTime) => BarCommand::AdjustDateTime,
+                Some(BandEntry::Properties) => BarCommand::Properties,
+                _ => return,
+            };
+            Action::BarCommand(command, false)
+        }
+        Kind::QuickItem(target, shortcut) => match bevel_core::quick_launch::icon_entry(shortcut, index) {
+            Some(entry) => Action::QuickItem(target, entry),
+            None => return,
+        },
     };
     let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
     match action {
@@ -773,6 +830,13 @@ fn choose(level: usize, index: usize) {
             } else {
                 crate::volume_popup::open_sound_settings();
             }
+            destroy(menus);
+        }
+        // An icon's Open starts it while the vanished menu still has the focus (so the program may
+        // come to the front); Delete and Properties after the menu has closed.
+        Action::QuickItem(target, entry) => {
+            let menus = vanish();
+            crate::bar::quick_item_command(&target, entry);
             destroy(menus);
         }
         // Run, Shut Down and the like: the bar carries them out once the menu is gone.

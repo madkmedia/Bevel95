@@ -244,7 +244,9 @@ const IID_ISHELLDISPATCH4: GUID = GUID::from_u128(0xEFD84B2D_4BCF_4298_BE25_EB54
 /// IShellDispatch2's 9, IShellDispatch3's 1 (AddToRecent), then IShellDispatch4's WindowsSecurity
 /// and ToggleDesktop.
 const TOGGLE_DESKTOP: usize = 3 + 4 + 23 + 9 + 1 + 1;
-type ToggleDesktop = unsafe extern "system" fn(*mut c_void) -> windows_sys::core::HRESULT;
+/// Explorer's taskbar command for Show Desktop (what ToggleDesktop asks it for).
+const TRAY_TOGGLE_DESKTOP: usize = 407;
+type ToggleDesktop =unsafe extern "system" fn(*mut c_void) -> windows_sys::core::HRESULT;
 
 /// Show Desktop: Windows' own, as Win+D (which Bevel95's classic desktop follows: "Win+D and the
 /// classic desktop"). On a thread of its own: Windows passes it to the taskbar window, which is
@@ -262,10 +264,27 @@ pub fn show_desktop() {
                 return;
             }
             let hr = bevel_winkit::com::method::<ToggleDesktop>(shell, TOGGLE_DESKTOP)(shell);
-            if hr != 0 {
-                log(&format!("quick launch: Show Desktop: ToggleDesktop failed (error {hr:#x})"));
-            }
             bevel_winkit::com::release(shell);
+            if hr != 0 {
+                // Seen on Windows 11 with Bevel95's bar (S_FALSE, nothing happened): the same command
+                // then goes to Windows' own taskbar window, which carries out Show Desktop for Win+D
+                // and its own corner button (its tray command 407, "toggle desktop").
+                let tray = crate::explorer::main_tray();
+                let posted = !tray.is_null()
+                    && windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        tray,
+                        windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND,
+                        TRAY_TOGGLE_DESKTOP,
+                        0,
+                    ) != 0;
+                static LOGGED: AtomicBool = AtomicBool::new(false);
+                if !posted || !LOGGED.swap(true, Ordering::SeqCst) {
+                    log(&format!(
+                        "quick launch: Show Desktop: ToggleDesktop answered {hr:#x}; {}",
+                        if posted { "given to Windows' taskbar window instead (logged once)" } else { "Windows' taskbar window is not there either" }
+                    ));
+                }
+            }
         }
     });
     if let Err(e) = spawned {
@@ -370,7 +389,6 @@ impl State {
     }
 
     /// Whether `target` is still on the band (a menu that opened on it acts only then).
-    #[allow(dead_code)] // the band's menus use it (Quick Launch, step 4)
     pub fn holds(&self, target: &Target) -> bool {
         (0..self.items.len()).any(|i| self.target(i).as_ref() == Some(target))
     }
@@ -398,7 +416,6 @@ pub fn load_removed() -> Vec<Builtin> {
 }
 
 /// Remembers the built-in icons taken off the band.
-#[allow(dead_code)] // the band's menus use it (Quick Launch, step 4)
 pub fn save_removed(removed: &[Builtin]) {
     let path = state_path();
     if let Err(e) = state_file::save(&path, &quick_launch::removed_text(removed))
@@ -431,7 +448,6 @@ pub fn start_item(target: &Target, browser: Option<&str>, mail: Option<&str>) {
 }
 
 /// Opens Windows' Quick Launch folder in Bevel95's folder window (the band's Open).
-#[allow(dead_code)] // the band's menus use it (Quick Launch, step 4)
 pub fn open_folder() {
     match folder() {
         Some(dir) => crate::desktop::open_item(dir.to_string_lossy().into_owned()),
@@ -441,10 +457,16 @@ pub fn open_folder() {
 
 /// Delete on the person's shortcut `path`: the desktop icons' own Delete (the look's question
 /// window, then the Recycle Bin), with the same code.
-#[allow(dead_code)] // the band's menus use it (Quick Launch, step 4)
 pub fn delete_shortcut(path: &Path, by_keyboard: bool) {
     let name = path.file_name().map(|n| quick_launch::shortcut_tooltip(&n.to_string_lossy()).to_string()).unwrap_or_default();
     let target = crate::file_ops::Target { id: path.to_string_lossy().into_owned(), name, kind: bevel_core::desktop::ItemKind::File };
     crate::confirm_window::ask_delete(vec![target], by_keyboard);
     read_again();
+}
+
+/// Windows' own Properties window for the person's shortcut `path` (the desktop's Properties).
+pub fn shortcut_properties(path: &Path) {
+    let name = path.file_name().map(|n| quick_launch::shortcut_tooltip(&n.to_string_lossy()).to_string()).unwrap_or_default();
+    let target = crate::file_ops::Target { id: path.to_string_lossy().into_owned(), name, kind: bevel_core::desktop::ItemKind::File };
+    crate::file_ops::properties(&[target]);
 }

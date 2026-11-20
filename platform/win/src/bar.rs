@@ -1190,7 +1190,6 @@ fn quick_at(x: i32, y: i32) -> Option<usize> {
 
 /// Whether a point in the bar window is on the Quick Launch band's own part (its lines, grips and
 /// gaps), not on one of its icons: the band's menu opens there.
-#[allow(dead_code)] // the band's menu uses it (Quick Launch, step 4)
 fn on_band(x: i32, y: i32) -> bool {
     with_app(|app| {
         let band = app.layout.as_ref()?.quick.as_ref()?;
@@ -1217,6 +1216,40 @@ fn click_quick(index: usize) {
         return;
     };
     quick_launch::start_item(&target, browser.as_deref(), mail.as_deref());
+}
+
+/// An entry of the menu on a Quick Launch icon, carried out on the icon it opened on, and only
+/// while that icon is still on the band ("Remembered by what it is, never by where it is"): Open
+/// starts it as a click does; Delete takes a built-in icon off the band (remembered in
+/// quick-launch.txt) and puts the person's shortcut in the Recycle Bin after the look's own
+/// question, as the desktop's Delete does; Properties is Windows' own window for the shortcut.
+pub fn quick_item_command(target: &quick_launch::Target, entry: bevel_core::quick_launch::IconEntry) {
+    use bevel_core::quick_launch::IconEntry;
+    let Some((browser, mail)) = with_app(|app| app.ql.holds(target).then(|| (app.ql.browser.clone(), app.ql.mail.clone()))).flatten() else {
+        log("quick launch: a menu's command was refused (its icon is no longer on the band)");
+        return;
+    };
+    match (entry, target) {
+        (IconEntry::Open, _) => quick_launch::start_item(target, browser.as_deref(), mail.as_deref()),
+        (IconEntry::Delete, quick_launch::Target::Builtin(b)) => {
+            let removed = with_app(|app| {
+                if !app.ql.removed.contains(b) {
+                    app.ql.removed.push(*b);
+                }
+                app.ql.removed.clone()
+            });
+            if let Some(removed) = removed {
+                quick_launch::save_removed(&removed);
+                log(&format!("quick launch: {} taken off the band", b.key()));
+            }
+            let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
+            // SAFETY: our own window.
+            unsafe { InvalidateRect(bar, null(), 0) };
+        }
+        (IconEntry::Delete, quick_launch::Target::File(path)) => quick_launch::delete_shortcut(path, false),
+        (IconEntry::Properties, quick_launch::Target::File(path)) => quick_launch::shortcut_properties(path),
+        (IconEntry::Properties, quick_launch::Target::Builtin(_)) => {}
+    }
 }
 
 /// Switches Quick Launch on or off (Bevel95 Settings, the Toolbars menu, the band's Close) and
@@ -2306,6 +2339,13 @@ fn run_command(bar: HWND, code: usize, shift: bool) {
             popup::close(false);
             about_window::open();
         }
+        BarCommand::QuickLaunch => {
+            let on = with_app(|app| app.quick_launch_on()).unwrap_or(false);
+            set_quick_launch(!on);
+        }
+        BarCommand::QuickLaunchClose => set_quick_launch(false),
+        BarCommand::QuickLaunchOpen => quick_launch::open_folder(),
+        BarCommand::QuickLaunchRefresh => quick_launch::read_again(),
         BarCommand::Restart => restart(bar),
         BarCommand::Exit if shift => restart(bar),
         BarCommand::Exit => {
@@ -2864,6 +2904,14 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 return 0;
             }
             let at = cursor();
+            if let Some(i) = quick_at(x, y) {
+                popup::open_quick_item_menu(bar, i, at.x, at.y);
+                return 0;
+            }
+            if on_band(x, y) {
+                popup::open_band_menu(bar, at.x, at.y);
+                return 0;
+            }
             match task_at(x, y) {
                 Some(index) => popup::open_task_menu(bar, index, at.x, at.y),
                 None => popup::open(bar, at.x, at.y, on_clock(x, y)),
