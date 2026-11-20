@@ -361,6 +361,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         programs: Shown::Everything,
         windows_key: bevel_core::config::WindowsKey::Find,
         quick_search_all: false,
+        battery_percent: false,
         group: true,
     };
     let mut p = properties::Properties::new(sheet, era, values);
@@ -465,6 +466,7 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         programs: Shown::Everything,
         windows_key: bevel_core::config::WindowsKey::Find,
         quick_search_all: false,
+        battery_percent: false,
         group: true,
     };
     let mut p = properties::Properties::new(properties::Sheet::Bevel95, era, values);
@@ -1221,6 +1223,27 @@ fn tray_scene(theme: &Theme, era: Era, fonts: &Fonts, msans: &Font, volume_open:
     out
 }
 
+/// The right end of the bar with Bevel95's own option "Show the battery's percentage beside
+/// its icon" on: the connection and the battery (Bevel95's own icons, first in the area), the
+/// classic speaker, and "87%" in the battery's own part, in the clock's font, color and baseline.
+fn battery_percent_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::status::{self, Network, Power};
+    let power = Power { battery: true, on_ac: Some(false), percent: Some(87), ..Power::default() };
+    let net = Network { connected: true, ..Network::default() };
+    let mut bar = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let state = Bar {
+        tray: vec![Some(status::network_icon(era, &net)), Some(status::power_icon(era, &power)), Some(icons::speaker(false))],
+        tray_number: status::percent_text(&power).map(|text| (1, text)),
+        clock: CLOCK.to_string(),
+        clock_widest: WIDEST.to_string(),
+        ..Bar::default()
+    };
+    paint::paint_bar(&mut bar, theme, fonts, &state);
+    let mut out = Framebuffer::new(240, bar.height, 0);
+    out.blit(&bar, -(WIDTH - 240), 0);
+    out
+}
+
 thread_local! {
     /// The colors of the scenes being drawn (the 16-color scenes set it while they are drawn).
     static DEPTH: std::cell::Cell<Depth> = const { std::cell::Cell::new(Depth::TrueColor) };
@@ -1474,6 +1497,11 @@ fn scenes() -> Vec<Scene> {
             "volume",
             "The speaker clicked: the classic volume control at 70% (Windows 2000's exact; 95's and 98's provisional)",
             tray_scene(theme, era, &fonts, &msans, true),
+        );
+        add(
+            "battery-percent",
+            "Bevel95's own option (off unless switched on): the battery's percentage beside its icon, in the clock's font",
+            battery_percent_scene(theme, era, &fonts),
         );
         add(
             "minefield",

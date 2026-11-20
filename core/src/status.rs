@@ -166,6 +166,13 @@ pub fn power_tooltip(era: Era, p: &Power) -> String {
     }
 }
 
+/// The battery's percentage as it stands beside its icon (Bevel95's own option, "87%"): none
+/// without a battery or while Windows does not know it. On AC power it shows as usual.
+pub fn percent_text(p: &Power) -> Option<String> {
+    let n = p.percent.filter(|_| p.battery)?;
+    Some(format!("{}%", n.min(100)))
+}
+
 /// The battery icon's menu: Adjust Power Properties and Open Power Meter (95: Open Battery
 /// Meter). 95's three check items (low battery warning, time or percentage) are left out.
 pub fn power_menu(era: Era, show_keys: bool) -> Menu {
@@ -343,6 +350,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_percentage_beside_the_icon() {
+        let on_battery = |percent| Power { battery: true, on_ac: Some(false), percent: Some(percent), ..Power::default() };
+        assert_eq!(percent_text(&on_battery(87)).as_deref(), Some("87%"));
+        assert_eq!(percent_text(&on_battery(9)).as_deref(), Some("9%"));
+        let full = Power { on_ac: Some(true), ..on_battery(100) };
+        assert_eq!(percent_text(&full).as_deref(), Some("100%"), "on AC power as usual");
+        assert_eq!(percent_text(&Power { percent: None, ..on_battery(0) }), None, "Windows does not know");
+        assert_eq!(percent_text(&Power { battery: false, ..on_battery(50) }), None, "no battery");
     }
 
     #[test]

@@ -832,6 +832,25 @@ it, but write nothing).
   not wlanapi (Windows 11 24H2 gates SSIDs behind the location permission). windows-sys
   features `Win32_NetworkManagement_IpHelper` and `Win32_NetworkManagement_Ndis` added.
 - Battery: `GetSystemPowerStatus` every 2 s; the icon only with a battery (flag not 128/255).
+- **The battery's percentage beside its icon** (2026-11-20): a person asked for the
+  percentage to be readable without hovering. Windows 95, 98 and 2000 showed the icon only, so
+  this is Bevel95's own option, **off unless switched on**: `battery_percent = yes | no` in
+  settings.txt (default no; its line is written only when the setting is changed, so a file
+  that never had it does not get it) and the check box "Show the &battery's percentage beside
+  its icon" in a "Battery" group on Bevel95 Settings' Taskbar page (both PROVISIONAL words).
+  The owner saw mock-ups (number right or left of the icon, with or without "%") and chose:
+  "Yes, build it" (off by default, the number right of the icon, with the sign). It is drawn in
+  the clock's font, color and baseline in every look and in 16 Colors, in a part of its own as
+  wide as "100%" + 10, the number 5 in (theme-spec "Network and battery icons"; the 2000 look
+  uses the same margins, as the clock's wider 2000 margins looked loose there). The area grows
+  to the left; the clock and the icons right of the number never move. The part belongs to the
+  battery icon (`BarLayout::tray_icon_at`): its tooltip, clicks and menu. Without a battery,
+  or while Windows does not know the percentage, there is no number and no part; on AC power
+  it shows as usual ("100%"). No new timer: it follows the battery's 2-second reading
+  (`status_changed` repaints when the reading changes). Core: `paint::Bar::tray_number`,
+  `layout::tray_well`'s `number`, `status::percent_text`; tests in
+  `core/tests/battery_percent.rs`, golden scene `<look>-battery-percent`. Quick Search has no
+  row for it.
 - Clicks: network click = `ms-availablenetworks:` (Windows 11's Wi-Fi flyout; live-tested),
   double-click / Status = `ms-settings:network-status`, Open Network and Dial-up Connections =
   `ncpa.cpl`; battery double-click / Open Power Meter = `ms-settings:batterysaver`, Adjust

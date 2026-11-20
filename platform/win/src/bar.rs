@@ -282,6 +282,8 @@ pub struct App {
     pub group: bool,
     /// What Quick Search lists (Bevel95 Settings, Taskbar page).
     pub quick_search: QuickSearch,
+    /// The battery's percentage stands beside its icon (Bevel95 Settings, Taskbar page).
+    pub battery_percent: bool,
     /// Auto hide: how many pixels of the bar are on the screen now, how many it is sliding
     /// to, and how many ticks the pointer has been away from it.
     shown_px: i32,
@@ -612,6 +614,7 @@ pub fn run() -> u32 {
             windows_key: settings.windows_key,
             group: settings.group,
             quick_search: settings.quick_search,
+            battery_percent: settings.battery_percent,
             shown_px: 0,
             target_px: 0,
             away_ticks: 0,
@@ -1945,6 +1948,12 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
         log(&format!("Quick Search now lists {}", quick_search.setting()));
         find_window::programs_read();
     }
+    // Written only when changed, so a settings.txt that never had the line does not get one.
+    let battery_percent = values.battery_percent;
+    if with_app(|app| std::mem::replace(&mut app.battery_percent, battery_percent) != battery_percent).unwrap_or(false) {
+        save_setting("battery_percent", if battery_percent { "yes" } else { "no" });
+        log(&format!("the battery's percentage is now {}", if battery_percent { "shown" } else { "hidden" }));
+    }
     if with_app(|app| app.clock_offset != values.clock_offset).unwrap_or(false) {
         set_clock_offset(values.clock_offset);
     }
@@ -2103,6 +2112,13 @@ fn paint_bar(bar: HWND) {
             // Show Clock off: no clock (and without icons, no well either).
             clock: if app.options.show_clock { app.clock.clone() } else { String::new() },
             clock_widest: app.clock_widest.clone(),
+            // The battery's percentage beside its icon (Bevel95's own option): only with the
+            // icon and while Windows knows the percentage.
+            tray_number: own
+                .iter()
+                .position(|(key, _)| *key == POWER_KEY)
+                .filter(|_| app.battery_percent)
+                .and_then(|i| Some((i, bevel_core::status::percent_text(&app.power)?))),
             row: app.task_row,
             scroll_pressed: app.scroll_pressed,
             ..Bar::default()

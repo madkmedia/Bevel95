@@ -228,6 +228,20 @@ Bevel95's own choices, PROVISIONAL (no picture or text settles them):
 - The connection's name: Windows 11's ("Wi-Fi", "Ethernet"), with the Wi-Fi network's name in
   brackets, where 2000 said "Local Area Connection".
 
+**The battery's percentage beside its icon** (Bevel95's own option, off unless switched on in
+Bevel95 Settings' Taskbar page; no classic Windows had it). All numbers are Bevel95's own,
+PROVISIONAL, the same in the three looks (`layout::NUMBER_EXTRA`, `NUMBER_PAD`):
+
+| Value | 95, 98 and 2000 |
+|---|---|
+| Text | the percentage with the sign ("87%", "100%" on AC power); none while Windows does not know it, and none without a battery icon |
+| Font, color, baseline | the clock's (`colors.clock_text`, `text.clock_baseline`), in True Color and 16 Colors alike |
+| The number's part | as wide as "100%" + 10 (95 and 98: 26 + 10 = 36; 2000: 29 + 10 = 39), so the area keeps its width as the number changes |
+| Where the part starts | the icons' gap (95/98: 2, 2000: 0) after the battery icon's step |
+| The number in its part | 5 in from the part's left edge, left-aligned |
+| What comes after the part | the next icon starts at the part's end; everything right of it, and the clock, keeps its place: the well grows to the left by the gap and the part (95/98: 38, 2000: 39) |
+| Pointer and clicks | the part and the gap before it belong to the battery icon (its tooltip, click, double-click, right-click) |
+
 ## Text
 
 | Value | WIN95 | WIN2000 | Source |

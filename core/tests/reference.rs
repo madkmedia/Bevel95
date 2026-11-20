@@ -3199,6 +3199,7 @@ fn own_properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 programs: bevel_core::programs::Shown::Everything,
                 windows_key: bevel_core::config::WindowsKey::Find,
                 quick_search_all: false,
+                battery_percent: false,
                 group: true,
             };
             let mut p = Properties::new(Sheet::Taskbar, era, values);
@@ -4076,6 +4077,7 @@ fn properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             programs: bevel_core::programs::Shown::Everything,
             windows_key: bevel_core::config::WindowsKey::Find,
             quick_search_all: false,
+            battery_percent: false,
             group: true,
         };
         let mut p = Properties::new(Sheet::Taskbar, era, values);
@@ -4191,7 +4193,7 @@ fn win98_cases(out: &mut Vec<Case>, f98: &Fonts) {
     };
     let width = (300..900)
         .find(|&w| {
-            let layout = bevel_core::layout::bar(&WIN98, f98, w, 3, 1, "3:15 PM", WIDEST, 0);
+            let layout = bevel_core::layout::bar(&WIN98, f98, w, 3, 1, None, "3:15 PM", WIDEST, 0);
             layout.tasks.iter().all(|t| t.w == 121)
         })
         .expect("a bar width that gives 121-pixel buttons");

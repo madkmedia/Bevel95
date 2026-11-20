@@ -33,6 +33,10 @@ pub struct Config {
     pub group: bool,
     /// What Quick Search lists (Bevel95 Settings, Taskbar page).
     pub quick_search: QuickSearch,
+    /// The battery's percentage stands beside its icon in the notification area (Bevel95
+    /// Settings, Taskbar page; Bevel95's own: no classic Windows had it). Off unless switched
+    /// on. Not among `flag_settings`: its line is written only when it is changed.
+    pub battery_percent: bool,
 }
 
 /// What Quick Search lists of the Programs menu's entries (`quick_search` in settings.txt; the
@@ -143,6 +147,7 @@ impl Default for Config {
             windows_key: WindowsKey::Find,
             group: true,
             quick_search: QuickSearch::Programs,
+            battery_percent: false,
         }
     }
 }
@@ -212,6 +217,10 @@ group = yes
 # What Quick Search lists: programs (only programs: no web pages, documents, uninstallers or
 # About entries) or everything (every entry of the Programs menu).
 quick_search = programs
+
+# The battery's percentage beside its icon in the notification area (yes or no; only on a PC
+# with a battery).
+battery_percent = no
 ";
 
 /// Where in a `Config` a yes/no setting lives.
@@ -288,6 +297,11 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 "yes" | "true" | "on" | "1" => config.clock_dst = true,
                 "no" | "false" | "off" | "0" => config.clock_dst = false,
                 _ => warn("clock_dst must be yes or no"),
+            },
+            "battery_percent" => match value.as_str() {
+                "yes" | "true" | "on" | "1" => config.battery_percent = true,
+                "no" | "false" | "off" | "0" => config.battery_percent = false,
+                _ => warn("battery_percent must be yes or no"),
             },
             "programs" => match Shown::from_setting(&value) {
                 Some(shown) => config.programs = shown,
@@ -413,6 +427,26 @@ mod tests {
         let (c, w) = parse("group = sometimes\n");
         assert!(c.group && w.len() == 1);
         assert_eq!(flag_settings(&Config { group: false, ..Config::default() })[7], ("group", "no"));
+    }
+
+    #[test]
+    fn reads_whether_the_battery_shows_its_percentage() {
+        // A settings file from before the setting existed: off, as the bar always was.
+        assert!(!parse("era = win98\n").0.battery_percent);
+        assert!(!Config::default().battery_percent);
+        assert!(parse("Battery_Percent = Yes  # beside the icon\n").0.battery_percent);
+        let (c, w) = parse("battery_percent = maybe\n");
+        assert!(!c.battery_percent && w.len() == 1);
+        for on in [true, false] {
+            let text = with_setting(DEFAULT_FILE, "battery_percent", if on { "yes" } else { "no" });
+            assert_eq!(parse(&text), (Config { battery_percent: on, ..Config::default() }, vec![]));
+        }
+        // Saving the other yes/no settings never writes its line.
+        assert!(flag_settings(&Config { battery_percent: true, ..Config::default() })
+            .iter()
+            .all(|(key, _)| *key != "battery_percent"));
+        let saved = with_setting("era = win98\n", "group", "no");
+        assert!(!saved.contains("battery_percent"));
     }
 
     #[test]

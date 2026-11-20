@@ -22,15 +22,36 @@ pub struct BarLayout {
     /// The clock's part of the well, from its left margin to its right one (empty without a
     /// clock): hovering it shows the date.
     pub clock: Rect,
+    /// The battery's percentage (Bevel95's own option): the icon it belongs to (an index into
+    /// `tray`) and its part of the well, from its left margin to its right one.
+    pub number: Option<(usize, Rect)>,
 }
 
 impl BarLayout {
     /// The notification icon whose slot (the icon, the gap after it, the well's full inside
-    /// height) holds (x, y).
+    /// height) holds (x, y). The number's part, and the gap before it, belong to the icon the
+    /// number stands beside.
     pub fn tray_icon_at(&self, theme: &Theme, x: i32, y: i32) -> Option<usize> {
         let inside = self.well.inset(1, 1, 1, 1);
-        self.tray.iter().position(|r| Rect::new(r.x, inside.y, theme.tray.icon_step, inside.h).contains(x, y))
+        let icon = self.tray.iter().position(|r| Rect::new(r.x, inside.y, theme.tray.icon_step, inside.h).contains(x, y));
+        icon.or_else(|| {
+            let (i, part) = self.number?;
+            let from = self.tray.get(i)?.x;
+            Rect::new(from, inside.y, part.right() - from, inside.h).contains(x, y).then_some(i)
+        })
     }
+}
+
+/// The battery's percentage beside its icon (Bevel95's own; PROVISIONAL, the same in every
+/// look): its part of the well is as wide as the widest text plus `NUMBER_EXTRA`, so the area
+/// does not change width as the number does, and the number starts `NUMBER_PAD` into it.
+pub const NUMBER_WIDEST: &str = "100%";
+pub const NUMBER_EXTRA: i32 = 10;
+pub const NUMBER_PAD: i32 = 5;
+
+/// The width of the number's part in `fonts` (the clock's font).
+pub fn number_part_width(fonts: &Fonts) -> i32 {
+    fonts.regular.measure(NUMBER_WIDEST) + NUMBER_EXTRA
 }
 
 /// The two small arrow buttons that page through the rows of task buttons when they do not
@@ -47,7 +68,8 @@ pub struct TaskScroll {
 
 /// The bar for `task_count` buttons and `tray_count` notification icons, showing row `row` of
 /// the buttons if they need several rows (clamped to the last row). `widest` is the widest
-/// time of day (see `tray_well`).
+/// time of day (see `tray_well`). `number`: the icon the battery's percentage stands beside,
+/// if it is shown (see `tray_well`).
 #[allow(clippy::too_many_arguments)]
 pub fn bar(
     theme: &Theme,
@@ -55,14 +77,27 @@ pub fn bar(
     width: i32,
     task_count: usize,
     tray_count: usize,
+    number: Option<usize>,
     clock: &str,
     widest: &str,
     row: usize,
 ) -> BarLayout {
     let start = start_button(theme, fonts);
-    let (well, tray, clock) = tray_well(theme, fonts, width, tray_count, clock, widest);
-    let (tasks, first_task, scroll) = task_buttons(theme, start, well, task_count, row);
-    BarLayout { start, tasks, first_task, scroll, well, tray, clock }
+    let w = tray_well(theme, fonts, width, tray_count, number, clock, widest);
+    let (tasks, first_task, scroll) = task_buttons(theme, start, w.well, task_count, row);
+    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number }
+}
+
+/// The notification area's well and what is in it (`tray_well`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayWell {
+    pub well: Rect,
+    /// The icons, left to right.
+    pub tray: Vec<Rect>,
+    /// The clock's part.
+    pub clock: Rect,
+    /// The battery's percentage: the icon it stands beside and its part.
+    pub number: Option<(usize, Rect)>,
 }
 
 /// The row that task `index` is on in `layout`'s bar.
@@ -84,21 +119,33 @@ pub fn start_button(theme: &Theme, fonts: &Fonts) -> Rect {
 /// icons' rectangles and the clock's part. Without a clock (Show Clock off) and without icons
 /// there is nothing to hold, and Windows leaves the well out: an empty rectangle at the right
 /// edge.
+///
+/// `number` (Bevel95's own option): the battery's percentage stands right of icon `number`.
+/// Its part (`number_part_width`) comes the icons' gap after that icon's step, and everything
+/// right of it (the other icons, the clock's part) keeps its place; the well grows to the left
+/// by the gap and the part, so the icons left of it move left. An index past the icons is
+/// ignored.
 pub fn tray_well(
     theme: &Theme,
     fonts: &Fonts,
     width: i32,
     icons: usize,
+    number: Option<usize>,
     clock: &str,
     widest: &str,
-) -> (Rect, Vec<Rect>, Rect) {
+) -> TrayWell {
     let t = &theme.tray;
     let (y, h) = (theme.bar.item_y(), theme.bar.item_h());
     if clock.is_empty() && icons == 0 {
-        return (Rect::new(width, y, 0, h), Vec::new(), Rect::new(width, y, 0, h));
+        let empty = Rect::new(width, y, 0, h);
+        return TrayWell { well: empty, tray: Vec::new(), clock: empty, number: None };
     }
+    let number = number.filter(|&k| k < icons);
+    // What the number's part adds: the icons' gap, then the part.
+    let number_w = number.map_or(0, |_| number_part_width(fonts));
+    let inserted = number.map_or(0, |_| t.icons_gap + number_w);
     // PROVISIONAL without a clock: the icons, then their gap.
-    let clock_x = if icons == 0 { t.clock_x } else { t.icon_x + icons as i32 * t.icon_step + t.icons_gap };
+    let clock_x = if icons == 0 { t.clock_x } else { t.icon_x + icons as i32 * t.icon_step + t.icons_gap + inserted };
     let clock_w = if clock.is_empty() {
         0
     } else {
@@ -108,10 +155,16 @@ pub fn tray_well(
     let well = Rect::new(width - t.margin_x - w, y, w, h);
     let inside_x = well.x + 1 + t.pad;
     let icon_y = well.y + (well.h - TRAY_ICON) / 2;
-    let tray =
-        (0..icons).map(|i| Rect::new(inside_x + t.icon_x + i as i32 * t.icon_step, icon_y, TRAY_ICON, TRAY_ICON)).collect();
+    let after_number = |i: usize| if number.is_some_and(|k| i > k) { inserted } else { 0 };
+    let tray = (0..icons)
+        .map(|i| Rect::new(inside_x + t.icon_x + i as i32 * t.icon_step + after_number(i), icon_y, TRAY_ICON, TRAY_ICON))
+        .collect();
+    let number = number.map(|k| {
+        let x = inside_x + t.icon_x + (k as i32 + 1) * t.icon_step + t.icons_gap;
+        (k, Rect::new(x, well.y + 1, number_w, well.h - 2))
+    });
     let clock = Rect::new(inside_x + clock_x, well.y + 1, clock_w, well.h - 2);
-    (well, tray, clock)
+    TrayWell { well, tray, clock, number }
 }
 
 /// Where the clock's text starts: centered in the clock's part, rounded to the left.

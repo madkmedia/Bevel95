@@ -39,6 +39,10 @@ pub struct Bar {
     /// The notification icons, left to right (`None`: a program gave no picture; its slot
     /// stays empty, as in Windows).
     pub tray: Vec<Option<Icon>>,
+    /// The battery's percentage (Bevel95's own option, "87%"), shown right of the icon it
+    /// belongs to (an index into `tray`) in the clock's font and color; `None` or an empty text:
+    /// no number and no part for it.
+    pub tray_number: Option<(usize, String)>,
     pub clock: String,
     /// The widest time of day in the same format ("12:00 AM"): the clock's part of the well
     /// is made that wide, so it does not change width as the time does.
@@ -57,7 +61,8 @@ pub struct Bar {
 
 /// Where everything of `bar` goes on a bar `width` wide, as `paint_bar` lays it out.
 pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
-    layout::bar(theme, fonts, width, bar.tasks.len(), bar.tray.len(), &bar.clock, &bar.clock_widest, bar.row)
+    let number = bar.tray_number.as_ref().filter(|(_, text)| !text.is_empty()).map(|&(i, _)| i);
+    layout::bar(theme, fonts, width, bar.tasks.len(), bar.tray.len(), number, &bar.clock, &bar.clock_widest, bar.row)
 }
 
 /// Paints the whole bar (the framebuffer should be `theme.bar.height` tall) and returns
@@ -234,10 +239,15 @@ fn paint_tray(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, layout: &BarLa
             colors16::draw_picture(fb, theme, icon, r.x, r.y);
         }
     }
+    let content_y = layout.well.y + 1 + t.pad;
     if !bar.clock.is_empty() {
-        let content_y = layout.well.y + 1 + t.pad;
         let x = layout::clock_text_x(fonts, layout.clock, &bar.clock);
         label(fb, fonts.regular, x, content_y, theme.text.clock_baseline, &bar.clock, c.clock_text);
+    }
+    // The battery's percentage: as the clock is written, on its baseline.
+    if let (Some((_, part)), Some((_, text))) = (layout.number, &bar.tray_number) {
+        let x = part.x + layout::NUMBER_PAD;
+        label(fb, fonts.regular, x, content_y, theme.text.clock_baseline, text, c.clock_text);
     }
 }
 

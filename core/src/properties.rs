@@ -52,6 +52,8 @@ pub struct Values {
     /// Quick Search lists every entry of the Programs menu, not only its programs (Bevel95
     /// Settings, Taskbar page; `quick_search = everything`).
     pub quick_search_all: bool,
+    /// The battery's percentage stands beside its icon (Bevel95 Settings, Taskbar page).
+    pub battery_percent: bool,
 }
 
 /// The check boxes.
@@ -71,6 +73,8 @@ pub enum Check {
     Group,
     /// Bevel95 Settings, Taskbar page: Quick Search lists documents and web pages too.
     QuickSearchAll,
+    /// Bevel95 Settings, Taskbar page: the battery's percentage beside its icon.
+    BatteryPercent,
 }
 
 /// The entries of Windows 2000's Start Menu Settings list (Advanced page).
@@ -264,6 +268,8 @@ fn check_label(check: Check) -> &'static str {
         Check::Group => "&Group similar taskbar buttons",
         // Ours (PROVISIONAL), under the group's title "Quick Search".
         Check::QuickSearchAll => "Also list &documents, web pages and uninstallers",
+        // Ours (PROVISIONAL), under the group's title "Battery".
+        Check::BatteryPercent => "Show the &battery's percentage beside its icon",
     }
 }
 
@@ -740,6 +746,7 @@ fn check_value(v: &mut Values, c: Check) -> &mut bool {
         Check::Desktop => &mut v.desktop,
         Check::Group => &mut v.group,
         Check::QuickSearchAll => &mut v.quick_search_all,
+        Check::BatteryPercent => &mut v.battery_percent,
     }
 }
 
@@ -770,7 +777,11 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
             WindowsKey::ALL
                 .iter()
                 .map(|&k| Part::WinKey(k))
-                .chain([Part::Check(Check::Group), Part::Check(Check::QuickSearchAll)])
+                .chain([
+                    Part::Check(Check::Group),
+                    Part::Check(Check::QuickSearchAll),
+                    Part::Check(Check::BatteryPercent),
+                ])
                 .collect()
         }
         Page::Desktop => vec![Part::Check(Check::Desktop)],
@@ -939,6 +950,9 @@ const GROUP_TEXT: &str = "Off: every window has a button of its own.";
 /// its check box as Startup's.
 const SEARCH_GROUP: Rect = Rect::new(24, 221, 296, 47);
 const SEARCH_CHECK: (i32, i32) = (36, 238);
+/// 8 below the Quick Search group, the Battery group, as high, its check box as Startup's.
+const BATTERY_GROUP: Rect = Rect::new(24, 276, 296, 47);
+const BATTERY_CHECK: (i32, i32) = (36, 293);
 
 /// Bevel95 Settings' Desktop page (ours): one group in the General page's manner, its check box
 /// and three lines saying what the desktop is.
@@ -1068,6 +1082,7 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
             }
             parts.push(check(Part::Check(Check::Group), GROUP_CHECK.0, GROUP_CHECK.1));
             parts.push(check(Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1));
+            parts.push(check(Part::Check(Check::BatteryPercent), BATTERY_CHECK.0, BATTERY_CHECK.1));
         }
         Page::Desktop => parts.push(check(Part::Check(Check::Desktop), DESKTOP_CHECK.0, DESKTOP_CHECK.1)),
         Page::Programs => {
@@ -1434,6 +1449,8 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             lines(fb, 36, GROUP_CHECK.1 + 22, &[GROUP_TEXT]);
             group_box(fb, c, font, SEARCH_GROUP, "Quick Search", false);
             check(fb, Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1);
+            group_box(fb, c, font, BATTERY_GROUP, "Battery", false);
+            check(fb, Part::Check(Check::BatteryPercent), BATTERY_CHECK.0, BATTERY_CHECK.1);
         }
         Page::Desktop => {
             group_box(fb, c, font, DESKTOP_GROUP, "Desktop", false);
@@ -1824,6 +1841,7 @@ mod tests {
             windows_key: WindowsKey::Find,
             group: true,
             quick_search_all: false,
+            battery_percent: false,
         }
     }
 
@@ -1930,6 +1948,7 @@ mod tests {
             Part::WinKey(WindowsKey::Find),
             Part::Check(Check::Group),
             Part::Check(Check::QuickSearchAll),
+            Part::Check(Check::BatteryPercent),
             Part::Ok,
             Part::Cancel,
         ];
@@ -1955,6 +1974,23 @@ mod tests {
         let now = Values { quick_search_all: true, ..values() };
         assert!(Sheet::Taskbar.merge(values(), now).quick_search_all);
         assert!(!Sheet::Bevel95.merge(values(), now).quick_search_all);
+    }
+
+    #[test]
+    fn the_taskbar_page_shows_the_battery_percentage() {
+        for era in Era::ALL {
+            let mut p = Properties::new(Sheet::Bevel95, era, values());
+            p.show_page(1);
+            assert!(!p.is_checked(Check::BatteryPercent), "off unless switched on");
+            assert_eq!(p.access_key('b'), Some(Part::Check(Check::BatteryPercent)));
+            assert!(p.choose(Part::Check(Check::BatteryPercent)));
+            assert!(p.values.battery_percent && p.enabled(Part::Apply));
+        }
+        // Bevel95's own: Bevel95 Settings puts it into effect, Taskbar Properties leaves it.
+        let now = Values { battery_percent: true, ..values() };
+        assert!(Sheet::Taskbar.merge(values(), now).battery_percent);
+        assert!(!Sheet::Bevel95.merge(values(), now).battery_percent);
+        assert!(Sheet::Bevel95.merge(now, values()).battery_percent);
     }
 
     #[test]
