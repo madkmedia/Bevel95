@@ -1172,14 +1172,14 @@ mod tests {
         let prefix = crate::programs::APP_PREFIX.len();
         let cases = [
             // Cyrillic: "а" takes bytes 16 and 17.
-            ("C:\\Users\\Anna\\Рабочий стол\\x.exe", Target::Program),
-            // Greek: "ά" takes bytes 16 and 17 (after "C:\Users\Jo\" and two letters).
-            ("C:\\Users\\Jo\\Επάνω\\οδηγός.pdf", Target::Document),
-            // Three-byte letters: the profile name's third letter takes bytes 15 to 17.
-            ("C:\\Users\\山田太郎\\AppData\\Local\\Programs\\a.exe", Target::Program),
-            ("C:\\Users\\山田太郎\\a.exe", Target::Program),
+            ("D:\\Homes\\Anna\\Рабочий стол\\x.exe", Target::Program),
+            // Greek: "ά" takes bytes 16 and 17 (after "D:\Homes\Jo\" and two letters).
+            ("D:\\Homes\\Jo\\Επάνω\\οδηγός.pdf", Target::Document),
+            // Three-byte letters: the folder name's third letter takes bytes 15 to 17.
+            ("D:\\Homes\\山田太郎\\AppData\\Local\\Programs\\a.exe", Target::Program),
+            ("D:\\Homes\\山田太郎\\a.exe", Target::Program),
             ("C:\\Игры\\Ведьмак 3\\witcher3.exe", Target::Program),
-            ("C:\\Users\\Jo\\Документы\\справка.chm", Target::Document),
+            ("D:\\Homes\\Jo\\Документы\\справка.chm", Target::Document),
         ];
         for (path, kind) in cases {
             assert!(!path.is_char_boundary(prefix), "the test's own case: byte {prefix} inside a letter in {path}");
