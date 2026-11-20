@@ -312,7 +312,8 @@ it, but write nothing).
   style). AppName is the exe's version-info FileDescription, else its file name.
 - **Characters the fonts lack** (2026-11-11; until then every one was drawn "?", so an editor's
   unsaved file, whose title begins with U+25CF, a black circle, showed as "? ..."). The
-  glyph atlases hold Windows-1252 only (`font::charset`), as Windows 95's window titles could.
+  glyph atlases held Windows-1252 only (now `font::charset_1252`; other European alphabets
+  since 2026-11-19, below), as Windows 95's window titles could.
   Windows 95 read titles through Windows' "best fit" conversion to that code page, which
   turns many characters into a near one and the rest into "?". `core::text`'s `Font::glyph`,
   the one place every width and drawing goes through (labels, menus, tooltips, text fields),
@@ -329,6 +330,52 @@ it, but write nothing).
   - Everything else stays "?". A character is still one glyph, so counting by characters (the
     "..." of a shortened label, the access key's underline, the caret in a text field) is
     unchanged. No golden picture changed.
+- **Letters of other European alphabets** (2026-11-19, the first reports after the release: a
+  98-look Start menu of a Russian Windows showed every Cyrillic letter as "?"). The atlases of
+  every program (`winkit::font::render`) now hold, besides code page 1252, the letters of
+  Central European (1250), Cyrillic (1251), Greek (1253), Turkish (1254) and Baltic (1257)
+  Windows: 250 characters (`font::OTHER_CODE_PAGES`, each code page's bytes 0x80..0xFF that
+  1252 lacks, asked of Windows' own code page tables; each letter listed once, under the first
+  code page that has it, so Baltic letters that 1250 has too come from 1250's font).
+  - **Nothing of 1252 changes.** Its letters are drawn exactly as before: the same face asked
+    the same way (`ANSI_CHARSET`, by its em). The other letters are added beside them, set on
+    the same baseline and cut to the same cell; a test checks that `render` holds
+    `render_1252`'s glyphs unchanged. The font fixtures hold 1252 only (`render_1252`,
+    `cargo regen-fonts`), and no golden picture or comparison case changed.
+  - **Each look's own face.** 2000: Tahoma asked in each code page's character set (Tahoma has
+    them all). 95 and 98: what a Russian, Greek, Polish, Turkish or Baltic Windows 95/98 had,
+    MS Sans Serif in that code page: the bitmap files `SSERIFEE.FON` (1250), `SSERIFER.FON`
+    (1251), `SSERIFEG.FON` (1253), `SSERIFET.FON` (1254) and `SSEE1257.FON` (1257), all in
+    Windows 11's Fonts folder but registered only for a Windows of that language. On an English
+    Windows 11, asking for MS Sans Serif in those character sets gives Arial (TrueType, a cell
+    of 14). So Bevel95 loads the code page's file for its own process alone
+    (`AddFontResourceExW` with `FR_PRIVATE`; nothing in Windows changes) **before** it first
+    asks for the face in that code page, and asks the way a bitmap font is sized: by its whole
+    cell, the 13 of the 1252 font, bitmap fonts first (`OUT_RASTER_PRECIS`). Loaded only after
+    a failed ask, as first built, the next ask in the same process got other letters under the
+    same name (in the bar a TrueType font 14 px tall; `tests/first_atlas.rs` guards it). Where
+    a PC has no such file, Windows' substitute is taken, drawn without smoothing at the same
+    size and cut to the cell, and the log says once which face came instead; where nothing can
+    be drawn, the letters stay "?".
+  - **Not compared with an original.** No Reference PC runs a Russian, Greek, Central European,
+    Turkish or Baltic Windows, so these letters' pixels are those of the bitmap files above as
+    today's GDI draws them (95, 98) and today's Tahoma (2000), not checked against captures.
+  - **The windows that use MS Sans Serif whatever the look** (classic dialog templates, Help's
+    controls: `core::text::ms_sans_serif`) get the same atlas from the platform
+    (`text::use_platform_ms_sans_serif`, set by the first `font::render` of a program); the
+    headless tests keep the fixture.
+  - **Typed and compared names.** Typed letters reach every text field as they are (WM_CHAR,
+    one UTF-16 unit each; these letters are all in the Basic Multilingual Plane). Quick Search
+    compares by `core::text::fold`: lowercase letter by letter in every alphabet, Turkish İ and
+    ı both as "i", Greek final sigma as sigma. The Programs menu's merging of the two Start Menu
+    folders and the address bar's drive names compare by `text::same_name` (each letter's
+    one-letter uppercase, as Windows compares file names), no longer by ASCII case only.
+  - **Still "?"**: Chinese, Japanese, Korean, Hebrew, Arabic, Thai and the rest; combining
+    marks are not composed; right-to-left text is not laid out. Characters outside these lists
+    keep Windows 95's best fit to 1252 (`best_fit`).
+  - **Cost**: the two fonts of a look take about 6.5 ms (MS Sans Serif) and 8 ms (Tahoma) in a
+    release build instead of 2.5 and 3.2 (the first in a process about 14 ms with the files'
+    loading); a few milliseconds per program start.
 - ApplicationFrameHost.exe windows (Settings, Calculator, ...) are grouped by
   title instead of lumped together; AppUserModelID grouping is still v2.
 - Icons: WM_GETICON (small2, small, big; 50 ms SendMessageTimeout) → class

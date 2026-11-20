@@ -562,7 +562,7 @@ impl Folder {
         let Some((first, rest)) = path.split_first() else {
             return self;
         };
-        let index = match self.folders.iter().position(|f| f.name.eq_ignore_ascii_case(first)) {
+        let index = match self.folders.iter().position(|f| crate::text::same_name(&f.name, first)) {
             Some(i) => i,
             None => {
                 self.folders.push(Folder { name: first.to_string(), ..Folder::default() });
@@ -576,7 +576,7 @@ impl Folder {
     /// folder (the same shortcut in both roots) is left out, as Windows shows it once.
     pub fn add(&mut self, path: &[&str], item: Item) {
         let folder = self.folder_mut(path);
-        if !folder.items.iter().any(|i| i.name.eq_ignore_ascii_case(&item.name)) {
+        if !folder.items.iter().any(|i| crate::text::same_name(&i.name, &item.name)) {
             folder.items.push(item);
         }
     }

@@ -41,7 +41,7 @@ pub fn typed_place(text: &str, drives: &[(String, String)], shown: Option<&str>)
     if t.eq_ignore_ascii_case("desktop") {
         return Some(Place::Desktop);
     }
-    if let Some((root, _)) = drives.iter().find(|(_, name)| name.trim().eq_ignore_ascii_case(t)) {
+    if let Some((root, _)) = drives.iter().find(|(_, name)| crate::text::same_name(name.trim(), t)) {
         return Some(Place::Folder(root.clone()));
     }
     let b = t.as_bytes();

@@ -23,7 +23,7 @@ use crate::programs::Folder;
 use crate::quick::{self, Action, Command};
 use crate::scroll::ScrollBar;
 use crate::start::StartEntry;
-use crate::text::Fonts;
+use crate::text::{Fonts, fold};
 use crate::theme::{Era, Theme, rgb};
 use crate::window::{self, ButtonLook, Frame, TitleButton};
 
@@ -177,7 +177,7 @@ pub fn programs(tree: &Folder) -> Vec<Program> {
     let mut out = Vec::new();
     walk(tree, ROOT, &mut out);
     let mut seen = HashSet::new();
-    out.retain(|p| seen.insert((p.name.to_lowercase(), p.folder.to_lowercase())));
+    out.retain(|p| seen.insert((fold(&p.name), fold(&p.folder))));
     out
 }
 
@@ -203,13 +203,13 @@ fn a_word_begins(name: &str, text: &str) -> bool {
 /// Calculator, not today's), then by folder. An empty text finds every program, A to Z, and no
 /// command.
 pub fn find(programs: &[Program], text: &str) -> Vec<usize> {
-    let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+    let words: Vec<String> = text.split_whitespace().map(fold).collect();
     let whole = words.join(" ");
     let mut found: Vec<(u8, String, bool, String, usize)> = programs
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            let name = p.name.to_lowercase();
+            let name = fold(&p.name);
             let rank = if p.command.is_some() {
                 if words.is_empty() {
                     return None;
@@ -241,7 +241,7 @@ pub fn find(programs: &[Program], text: &str) -> Vec<usize> {
                     2
                 }
             };
-            Some((rank, name, !p.own, p.folder.to_lowercase(), i))
+            Some((rank, name, !p.own, fold(&p.folder), i))
         })
         .collect();
     found.sort();
@@ -1160,6 +1160,25 @@ mod tests {
         let all = programs(&tree);
         let found = find(&all, "pa");
         assert_eq!(found.iter().map(|&i| all[i].folder.as_str()).collect::<Vec<_>>(), ["Programs", "Programs\\Tools"]);
+    }
+
+    #[test]
+    fn other_alphabets_are_found_whatever_their_case() {
+        let mut tree = Folder::default();
+        tree.add(&["Стандартные"], Item { name: "Блокнот".into(), target: "a.exe".into() });
+        tree.add(&[], Item { name: "Ελληνικός Επεξεργαστής".into(), target: "b.exe".into() });
+        tree.add(&[], Item { name: "İstanbul Haritası".into(), target: "c.exe".into() });
+        tree.add(&[], Item { name: "Łódź".into(), target: "d.exe".into() });
+        let all = programs(&tree);
+        let names = |text: &str| find(&all, text).into_iter().map(|i| all[i].name.clone()).collect::<Vec<_>>();
+        assert_eq!(names("БЛОК"), ["Блокнот"]);
+        assert_eq!(names("блокнот"), ["Блокнот"]);
+        assert_eq!(names("ΕΠΕΞ"), ["Ελληνικός Επεξεργαστής"], "a word of the name begins with it");
+        assert_eq!(names("ελληνικόσ"), ["Ελληνικός Επεξεργαστής"], "final sigma is sigma");
+        assert_eq!(names("istanbul"), ["İstanbul Haritası"]);
+        assert_eq!(names("HARITASI"), ["İstanbul Haritası"]);
+        assert_eq!(names("łó"), ["Łódź"]);
+        assert_eq!(names("ŁÓDŹ"), ["Łódź"]);
     }
 
     #[test]

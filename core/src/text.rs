@@ -6,17 +6,29 @@
 //! is how the headless tests get real Windows glyphs without calling Windows.
 
 use std::fmt::Write as _;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use crate::fb::Framebuffer;
 
 /// The fixed MS Sans Serif face used by classic dialog templates and HTML Help controls,
-/// even when the system caption font is Tahoma.
+/// even when the system caption font is Tahoma: the platform's (`use_platform_ms_sans_serif`),
+/// else the bundled fixture (code page 1252 only, as in the headless tests).
 pub(crate) fn ms_sans_serif() -> &'static Font {
     static FONT: LazyLock<Font> = LazyLock::new(|| {
-        Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).expect("bundled MS Sans Serif atlas")
+        PLATFORM_MS_SANS_SERIF.get().and_then(|make| make()).unwrap_or_else(|| {
+            Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).expect("bundled MS Sans Serif atlas")
+        })
     });
     &FONT
+}
+
+static PLATFORM_MS_SANS_SERIF: OnceLock<fn() -> Option<Font>> = OnceLock::new();
+
+/// Where `ms_sans_serif` gets its font in a program: `make`, called once when it is first
+/// needed (the platform's MS Sans Serif 8pt with the letters of other alphabets too). The first
+/// call counts; one made after `ms_sans_serif` was first used changes nothing.
+pub fn use_platform_ms_sans_serif(make: fn() -> Option<Font>) {
+    let _ = PLATFORM_MS_SANS_SERIF.set(make);
 }
 
 /// One character: how far it moves the pen, and its ink.
@@ -137,6 +149,42 @@ pub fn split_access_key(label: &str) -> (String, Option<usize>) {
         }
     }
     (text, key)
+}
+
+/// `text` with case taken out, for finding what a person types: lowercase, letter by letter, in
+/// every alphabet the atlases hold (Cyrillic, Greek, Central European, Turkish, Baltic as well
+/// as Latin), with the three letters whose lowercase is not one plain letter made so: Turkish
+/// capital I with dot and dotless i are both "i" (so "istanbul" finds "İstanbul", and typing on
+/// a keyboard of either kind finds both), and Greek final sigma is sigma (a word typed in
+/// capitals, then continued, still finds it). One character in, one character out.
+pub fn fold(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{0130}' | '\u{0131}' => 'i',
+            '\u{03C2}' => '\u{03C3}',
+            c => {
+                let mut lower = c.to_lowercase();
+                match (lower.next(), lower.next()) {
+                    (Some(l), None) => l,
+                    _ => c,
+                }
+            }
+        })
+        .collect()
+}
+
+/// Whether two names are the same name to Windows' file system, case aside: letter by letter,
+/// each letter's uppercase where it is one letter (as Windows' own table has it: "Файл" and
+/// "ФАЙЛ" are one name, "straße" and "STRASSE" are not).
+pub fn same_name(a: &str, b: &str) -> bool {
+    let upper = |c: char| {
+        let mut u = c.to_uppercase();
+        match (u.next(), u.next()) {
+            (Some(u), None) => u,
+            _ => c,
+        }
+    };
+    a.chars().map(upper).eq(b.chars().map(upper))
 }
 
 /// `text` made safe to use as a menu label: its "&"s show as they are.
@@ -573,6 +621,30 @@ mod tests {
         // Bottom row (y = 2): the underline covers x 3..=5, the second a's whole advance.
         assert_eq!((3..6).map(|x| fb.get(x, 2)).collect::<Vec<_>>(), [9, 9, 9]);
         assert_eq!(fb.get(2, 2), 0, "nothing under the first a's empty third column");
+    }
+
+    #[test]
+    fn fold_takes_case_out_in_every_alphabet() {
+        assert_eq!(fold("Программы"), "программы");
+        assert_eq!(fold("ΠΡΟΓΡΆΜΜΑΤΑ"), "προγράμματα");
+        assert_eq!(fold("ŁÓDŹ Česká"), "łódź česká");
+        assert_eq!(fold("İstanbul"), "istanbul");
+        assert_eq!(fold("ISPARTA ılık"), "isparta ilik");
+        assert_eq!(fold("Ελληνικός"), fold("ΕΛΛΗΝΙΚΌΣ"));
+        assert_eq!(fold("ĖĮŲ Āā"), "ėįų āā");
+        for s in ["İı", "ΣΑΣ", "Straße", "Ǆ"] {
+            assert_eq!(fold(s).chars().count(), s.chars().count(), "{s}");
+        }
+    }
+
+    #[test]
+    fn same_name_as_windows_compares_names() {
+        assert!(same_name("Файл", "ФАЙЛ"));
+        assert!(same_name("Ελληνικά", "ΕΛΛΗΝΙΚΆ"));
+        assert!(same_name("łódź", "ŁÓDŹ"));
+        assert!(same_name("Readme", "README"));
+        assert!(!same_name("straße", "STRASSE"));
+        assert!(!same_name("Файл", "Файлы"));
     }
 
     #[test]
