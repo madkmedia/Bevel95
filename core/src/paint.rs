@@ -4,6 +4,7 @@ use crate::colors16;
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::flag::start_flag;
 use crate::layout::{self, BarLayout};
+use crate::quick_launch;
 use crate::text::{Font, Fonts, split_access_key};
 use crate::theme::{Arrow, Colors, IconItems, Separator, Theme, rgb};
 
@@ -57,12 +58,15 @@ pub struct Bar {
     pub task_x: Vec<i32>,
     /// The button of the row shown that is being dragged: drawn last, over the others.
     pub task_on_top: Option<usize>,
+    /// The Quick Launch band, while it is switched on.
+    pub quick_launch: Option<quick_launch::Band>,
 }
 
 /// Where everything of `bar` goes on a bar `width` wide, as `paint_bar` lays it out.
 pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
     let number = bar.tray_number.as_ref().filter(|(_, text)| !text.is_empty()).map(|&(i, _)| i);
-    layout::bar(theme, fonts, width, bar.tasks.len(), bar.tray.len(), number, &bar.clock, &bar.clock_widest, bar.row)
+    let quick = bar.quick_launch.as_ref().map(|q| q.icons.len());
+    layout::bar_with(theme, fonts, width, bar.tasks.len(), bar.tray.len(), number, &bar.clock, &bar.clock_widest, bar.row, quick)
 }
 
 /// Paints the whole bar (the framebuffer should be `theme.bar.height` tall) and returns
@@ -75,6 +79,9 @@ pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) 
 
     let layout = bar_layout(theme, fonts, fb.width, bar);
     paint_start(fb, theme, fonts, layout.start, bar.start_pressed);
+    if let (Some(band), Some(q)) = (&layout.quick, &bar.quick_launch) {
+        paint_quick_launch(fb, theme, band, q);
+    }
     // Pressed buttons share one checkerboard, lined up with the first button's (Windows lines
     // the pattern up with its task window): measured on the reference PCs, where a pressed
     // button an odd number of pixels further right has the pattern the other way round. A
@@ -98,6 +105,46 @@ pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) 
     }
     paint_tray(fb, theme, fonts, &layout, bar);
     layout
+}
+
+/// The Quick Launch band (the Reference PCs' Windows 98 and 2000, docs/theme-spec.md "Quick
+/// Launch"): etched lines (shadow, then highlight) as tall as the buttons, grips (a 3×18 raised
+/// box: highlight top and left, shadow bottom and right), flat buttons whose icon sits 3 in; under
+/// the pointer a button rises (a 1px highlight and shadow edge), held down it sinks (the edge the
+/// other way round) and its icon moves 1px down and right.
+fn paint_quick_launch(fb: &mut Framebuffer, theme: &Theme, band: &quick_launch::Layout, q: &quick_launch::Band) {
+    let c = &theme.colors;
+    let (y, h) = (band.rect.y, band.rect.h);
+    let etched = |fb: &mut Framebuffer, x: i32| {
+        fb.vline(x, y, h, c.shadow);
+        fb.vline(x + 1, y, h, c.highlight);
+    };
+    let grip = |fb: &mut Framebuffer, x: i32| {
+        fb.frame(Rect::new(x, y + quick_launch::GRIP_DY, quick_launch::GRIP_W, quick_launch::GRIP_H), c.highlight, c.shadow);
+    };
+    etched(fb, band.line);
+    grip(fb, band.grip);
+    for (i, r) in band.buttons.iter().enumerate() {
+        let pressed = q.pressed == Some(i);
+        let shift = if pressed {
+            fb.frame(*r, c.shadow, c.highlight);
+            1
+        } else {
+            if q.hot == Some(i) {
+                fb.frame(*r, c.highlight, c.shadow);
+            }
+            0
+        };
+        if let Some(Some(icon)) = q.icons.get(i) {
+            let at = quick_launch::ICON_IN + shift;
+            colors16::draw_picture(fb, theme, icon, r.x + at, r.y + at);
+        }
+    }
+    etched(fb, band.end_line);
+    grip(fb, band.end_grip);
+    if let Some(x) = band.tray_line {
+        etched(fb, x);
+    }
 }
 
 /// The arrows of a 16×11 scroll button, as (x, y) from its top-left corner: Windows 98's

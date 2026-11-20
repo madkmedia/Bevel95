@@ -37,6 +37,18 @@ pub struct Config {
     /// Settings, Taskbar page; Bevel95's own: no classic Windows had it). Off unless switched
     /// on. Not among `flag_settings`: its line is written only when it is changed.
     pub battery_percent: bool,
+    /// Quick Launch shows (Bevel95 Settings, Taskbar page; the bar's Toolbars menu). `None`, a file
+    /// without the line: the look decides (`quick_launch::on_by_default`: 98 and 2000 yes, 95 no).
+    /// Its line is written only when the person changes it.
+    pub quick_launch: Option<bool>,
+}
+
+impl Config {
+    /// Whether Quick Launch shows in `era` (the look in use, which may differ from `self.era`
+    /// once the Theme menu changed it).
+    pub fn quick_launch_in(&self, era: Era) -> bool {
+        self.quick_launch.unwrap_or_else(|| crate::quick_launch::on_by_default(era))
+    }
 }
 
 /// What Quick Search lists of the Programs menu's entries (`quick_search` in settings.txt; the
@@ -148,6 +160,7 @@ impl Default for Config {
             group: true,
             quick_search: QuickSearch::Programs,
             battery_percent: false,
+            quick_launch: None,
         }
     }
 }
@@ -221,6 +234,9 @@ quick_search = programs
 # The battery's percentage beside its icon in the notification area (yes or no; only on a PC
 # with a battery).
 battery_percent = no
+
+# Quick Launch, the small icons right of the Start button: quick_launch = yes or no. Without such
+# a line each look decides (Windows 98 and 2000 yes, Windows 95 no).
 ";
 
 /// Where in a `Config` a yes/no setting lives.
@@ -302,6 +318,11 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 "yes" | "true" | "on" | "1" => config.battery_percent = true,
                 "no" | "false" | "off" | "0" => config.battery_percent = false,
                 _ => warn("battery_percent must be yes or no"),
+            },
+            "quick_launch" => match value.as_str() {
+                "yes" | "true" | "on" | "1" => config.quick_launch = Some(true),
+                "no" | "false" | "off" | "0" => config.quick_launch = Some(false),
+                _ => warn("quick_launch must be yes or no"),
             },
             "programs" => match Shown::from_setting(&value) {
                 Some(shown) => config.programs = shown,
@@ -447,6 +468,20 @@ mod tests {
             .all(|(key, _)| *key != "battery_percent"));
         let saved = with_setting("era = win98\n", "group", "no");
         assert!(!saved.contains("battery_percent"));
+    }
+
+    #[test]
+    fn quick_launch_follows_the_look_until_it_is_set() {
+        // Without the line (a new file has none): on in 98 and 2000, off in 95.
+        let c = parse(DEFAULT_FILE).0;
+        assert_eq!(c.quick_launch, None);
+        assert_eq!(Era::ALL.map(|era| c.quick_launch_in(era)), [false, true, true]);
+        let on = parse("era = win95\nquick_launch = yes\n").0;
+        assert_eq!(Era::ALL.map(|era| on.quick_launch_in(era)), [true; 3]);
+        let off = parse("quick_launch = off\n").0;
+        assert_eq!(Era::ALL.map(|era| off.quick_launch_in(era)), [false; 3]);
+        assert_eq!(parse("quick_launch = maybe\n").1.len(), 1);
+        assert!(!flag_settings(&on).iter().any(|(k, _)| *k == "quick_launch"), "written only when changed");
     }
 
     #[test]

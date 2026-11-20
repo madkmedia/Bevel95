@@ -1244,6 +1244,29 @@ fn battery_percent_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer 
     out
 }
 
+/// Quick Launch switched on (the 95 look draws it by 98's rule): the look's own icons and Windows
+/// Explorer (Bevel95's own icons only), then the task buttons; the icon `hot` under the pointer
+/// (raised), the icon `pressed` held down. `width`: the whole bar, or only its left end.
+fn quick_launch_scene(theme: &Theme, era: Era, fonts: &Fonts, hot: Option<usize>, pressed: Option<usize>, width: i32) -> Framebuffer {
+    use bevel_core::quick_launch;
+    let icons = quick_launch::builtins(era).iter().map(|&b| quick_launch::picture(era, b)).collect();
+    let mut bar = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let state = Bar {
+        tasks: three_groups(),
+        clock: CLOCK.to_string(),
+        clock_widest: WIDEST.to_string(),
+        quick_launch: Some(quick_launch::Band { icons, hot, pressed }),
+        ..Bar::default()
+    };
+    paint::paint_bar(&mut bar, theme, fonts, &state);
+    if width >= WIDTH {
+        return bar;
+    }
+    let mut out = Framebuffer::new(width, bar.height, 0);
+    out.blit(&bar, 0, 0);
+    out
+}
+
 thread_local! {
     /// The colors of the scenes being drawn (the 16-color scenes set it while they are drawn).
     static DEPTH: std::cell::Cell<Depth> = const { std::cell::Cell::new(Depth::TrueColor) };
@@ -1504,6 +1527,16 @@ fn scenes() -> Vec<Scene> {
             battery_percent_scene(theme, era, &fonts),
         );
         add(
+            "quick-launch",
+            "Quick Launch on (98 and 2000 by default; 95 when switched on, by 98's rule): the look's own icons and Windows Explorer, the pointer on the first",
+            quick_launch_scene(theme, era, &fonts, Some(0), None, WIDTH),
+        );
+        add(
+            "quick-launch-pressed",
+            "Quick Launch: the second icon held down",
+            quick_launch_scene(theme, era, &fonts, None, Some(1), 240),
+        );
+        add(
             "minefield",
             "Minesweeper in play, with flags, a question mark and a square held down",
             minefield_scene(theme, era, &fonts, "play"),
@@ -1636,6 +1669,11 @@ fn sixteen_color_scenes() -> Vec<Scene> {
             out.push(Scene { section, name: format!("{}-16-{state}", theme.slug), caption, image });
         };
         add("three-groups", "16 Colors: the bar with three groups: normal, active, flashing", bar_image(theme, &fonts, false, three_groups()));
+        add(
+            "quick-launch",
+            "16 Colors: Quick Launch with the look's own 16-color drawings, the pointer on the first icon",
+            quick_launch_scene(theme, era, &fonts, Some(0), None, WIDTH),
+        );
         add(
             "start-menu",
             "16 Colors: the Start menu with Programs open (pictures without a 16-color drawing converted by the look's rule)",

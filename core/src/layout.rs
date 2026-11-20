@@ -1,6 +1,7 @@
 //! Where things go on the bar: pure arithmetic on the theme and text widths.
 
 use crate::fb::Rect;
+use crate::quick_launch;
 use crate::text::Fonts;
 use crate::theme::{SubmenuPlacement, TaskMetrics, Theme};
 
@@ -25,6 +26,8 @@ pub struct BarLayout {
     /// The battery's percentage (Bevel95's own option): the icon it belongs to (an index into
     /// `tray`) and its part of the well, from its left margin to its right one.
     pub number: Option<(usize, Rect)>,
+    /// The Quick Launch band, while it is switched on.
+    pub quick: Option<quick_launch::Layout>,
 }
 
 impl BarLayout {
@@ -82,10 +85,32 @@ pub fn bar(
     widest: &str,
     row: usize,
 ) -> BarLayout {
+    bar_with(theme, fonts, width, task_count, tray_count, number, clock, widest, row, None)
+}
+
+/// `bar`, with the Quick Launch band of `quick` icons when it is `Some`: the band goes right of
+/// the Start button and the task buttons start after it (`quick_launch::layout`).
+#[allow(clippy::too_many_arguments)]
+pub fn bar_with(
+    theme: &Theme,
+    fonts: &Fonts,
+    width: i32,
+    task_count: usize,
+    tray_count: usize,
+    number: Option<usize>,
+    clock: &str,
+    widest: &str,
+    row: usize,
+    quick: Option<usize>,
+) -> BarLayout {
     let start = start_button(theme, fonts);
     let w = tray_well(theme, fonts, width, tray_count, number, clock, widest);
-    let (tasks, first_task, scroll) = task_buttons(theme, start, w.well, task_count, row);
-    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number }
+    let quick = quick.map(|n| quick_launch::layout(theme.era, start, w.well, n, theme.bar.item_y(), theme.bar.item_h()));
+    let (tasks, first_task, scroll) = match &quick {
+        Some(band) => task_buttons_in(theme, band.rect.right(), band.tasks_right, task_count, row),
+        None => task_buttons(theme, start, w.well, task_count, row),
+    };
+    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number, quick }
 }
 
 /// The notification area's well and what is in it (`tray_well`).
@@ -188,10 +213,15 @@ pub fn task_buttons(
     count: usize,
     row: usize,
 ) -> (Vec<Rect>, usize, Option<TaskScroll>) {
+    let left = start.right() + theme.task.gap_after_start;
+    let right = well.x - theme.tray.margin_x;
+    task_buttons_in(theme, left, right, count, row)
+}
+
+/// `task_buttons` in the space from `left` to `right`.
+fn task_buttons_in(theme: &Theme, left: i32, right: i32, count: usize, row: usize) -> (Vec<Rect>, usize, Option<TaskScroll>) {
     let t = &theme.task;
     let (y, h) = (theme.bar.item_y(), theme.bar.item_h());
-    let left = start.right() + t.gap_after_start;
-    let right = well.x - theme.tray.margin_x;
     let button = |i: usize, slot: i32| Rect::new(left + i as i32 * slot, y, slot - t.spacing, h);
     if count == 0 {
         return (Vec::new(), 0, None);
