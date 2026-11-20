@@ -117,7 +117,7 @@ fn read_programs(look_inside: bool) -> Vec<Program> {
 /// a shortcut without a file target (a shell object, such as a Control Panel item) is
 /// `Unknown`. Any other entry is told by its own name.
 fn target_kind(entry: &str, look_inside: bool) -> find::Target {
-    let is_link = entry.len() > 4 && entry[entry.len() - 4..].eq_ignore_ascii_case(".lnk");
+    let is_link = is_shortcut(entry);
     if !is_link {
         return find::classify(entry);
     }
@@ -132,6 +132,14 @@ fn target_kind(entry: &str, look_inside: bool) -> find::Target {
         Some(Link::Path(path)) => find::classify(&path),
         None => find::Target::Unknown,
     }
+}
+
+/// Whether `entry` is a shortcut's file (its name ends in ".lnk", case as it may be). Compared
+/// as bytes: the fourth byte from the end may fall inside a letter of another alphabet, where
+/// cutting the text would panic.
+fn is_shortcut(entry: &str) -> bool {
+    let bytes = entry.as_bytes();
+    bytes.len() > 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".lnk")
 }
 
 /// What a shortcut was found to point at.
@@ -385,6 +393,26 @@ fn activate(part: Part) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Names in other alphabets, with the fourth byte from the end inside a letter, are told
+    /// (not cut inside the letter, which would panic).
+    #[test]
+    fn a_shortcut_is_told_by_its_bytes() {
+        for link in ["C:\\Меню\\Блокнот.lnk", "C:\\Μενού\\Σημειωματάριο.LNK", "C:\\菜单\\记事本.Lnk"] {
+            assert!(is_shortcut(link), "{link}");
+        }
+        // The fourth byte from the end inside a letter: Cyrillic, Greek, two kinds of Chinese.
+        let inside = ["C:\\Меню\\Блокнотabc", "C:\\Μενού\\Σημειωματάριοx", "C:\\菜单\\记事本", "C:\\菜单\\记事本ab"];
+        for other in inside {
+            assert!(!other.is_char_boundary(other.len() - 4), "the test's own case: {other}");
+            assert!(!is_shortcut(other), "{other}");
+            assert_eq!(target_kind(other, false), find::Target::Document, "{other}");
+        }
+        for other in [".lnk", "lnk", ""] {
+            assert!(!is_shortcut(other), "{other}");
+        }
+        assert_eq!(target_kind("C:\\Меню\\Блокнот.lnk", false), find::Target::Unknown);
+    }
 
     /// This PC's Programs menu as Quick Search sees it, in counts only (never a name): every
     /// entry, how many each rule hides, and how many still listed look like documentation by

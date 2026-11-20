@@ -92,9 +92,10 @@ pub fn classify(target: &str) -> Target {
     if target.is_empty() {
         return Target::Unknown;
     }
-    if target.len() >= crate::programs::APP_PREFIX.len()
-        && target[..crate::programs::APP_PREFIX.len()].eq_ignore_ascii_case(crate::programs::APP_PREFIX)
-    {
+    // Compared as bytes: a path's 17th byte may fall inside a letter of another alphabet, where
+    // cutting the text would panic.
+    let prefix = crate::programs::APP_PREFIX.as_bytes();
+    if target.as_bytes().get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix)) {
         return Target::Program;
     }
     let lower = target.to_lowercase();
@@ -1104,6 +1105,31 @@ mod tests {
         }
         assert_eq!(classify(""), Target::Unknown);
         assert_eq!(classify("  "), Target::Unknown);
+    }
+
+    /// Paths in other alphabets whose 17th byte (the length of `programs::APP_PREFIX`) falls
+    /// inside a letter are classed, not cut inside the letter (which would panic).
+    #[test]
+    fn paths_in_other_alphabets_are_classed() {
+        let prefix = crate::programs::APP_PREFIX.len();
+        let cases = [
+            // Cyrillic: "а" takes bytes 16 and 17.
+            ("C:\\Users\\Anna\\Рабочий стол\\x.exe", Target::Program),
+            // Greek: "ά" takes bytes 16 and 17 (after "C:\Users\Jo\" and two letters).
+            ("C:\\Users\\Jo\\Επάνω\\οδηγός.pdf", Target::Document),
+            // Three-byte letters: the profile name's third letter takes bytes 15 to 17.
+            ("C:\\Users\\山田太郎\\AppData\\Local\\Programs\\a.exe", Target::Program),
+            ("C:\\Users\\山田太郎\\a.exe", Target::Program),
+            ("C:\\Игры\\Ведьмак 3\\witcher3.exe", Target::Program),
+            ("C:\\Users\\Jo\\Документы\\справка.chm", Target::Document),
+        ];
+        for (path, kind) in cases {
+            assert!(!path.is_char_boundary(prefix), "the test's own case: byte {prefix} inside a letter in {path}");
+            assert_eq!(classify(path), kind, "{path}");
+        }
+        // Shorter than the prefix, and ending inside it.
+        assert_eq!(classify("Блокнот.exe"), Target::Program);
+        assert_eq!(classify("шелл:AppsFolder\\x"), Target::Document);
     }
 
     #[test]

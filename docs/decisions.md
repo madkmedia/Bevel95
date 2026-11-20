@@ -4424,6 +4424,16 @@ it, but write nothing).
     changed by the new group; no other picture changed.
   - On the PC it was built on: 268 entries in all (4 of them Bevel95's own), 45 hidden by the
     target rule (24 web pages, 19 documents, 2 folders), 16 by the name rule, 207 listed.
+  - **Paths are compared as bytes, never cut** (2026-11-19, the review before 0.1.1): the
+    first version cut a target's text at byte 17 to compare it with `shell:AppsFolder\`, and a
+    shortcut's name 4 bytes from its end to compare it with ".lnk". Where that byte fell inside
+    a letter of another alphabet (a target under a folder with a Cyrillic, Greek or Chinese
+    name) the cut panicked, and by the panic rule the bar ended a few seconds after every
+    start. Both compare bytes now (`find::classify`, `find_window::is_shortcut`), tested with
+    such paths. A sweep of the whole workspace for text cut by a count of bytes found one more
+    place that text from outside could reach: a folder window's name of a file without its
+    extension was cut by the length of the lowercased extension, which can differ from the
+    original's (`shell::quick_item`: it takes the path's own stem now).
 - **Quick Search's column line can be dragged** (2026-11-18, the owner: "the attribute divider
   can't be moved in quick search"). The line between Name and In Folder works as a folder
   window's Details header divider (`find::Part::Divider`): it takes the mouse 8 left to 7 right of

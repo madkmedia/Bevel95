@@ -357,8 +357,12 @@ pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>) -> Item {
     let file_name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let extension = if s.folder { String::new() } else { s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default() };
     let kind = kinds.entry((extension.clone(), s.folder)).or_insert_with(|| kind_of(&extension, s.folder)).clone();
-    let mut name = if !s.folder && !kind.shows_extension && !extension.is_empty() && file_name.len() > extension.len() + 1 {
-        file_name[..file_name.len() - extension.len() - 1].to_string()
+    // The name without its extension is the path's own stem, never a cut by the lowercase
+    // extension's length: lowercasing can change a letter's length in bytes (Kelvin sign, İ),
+    // and a cut inside a letter would panic.
+    let stem = s.path.file_stem().map(|n| n.to_string_lossy().into_owned()).filter(|stem| !stem.is_empty() && stem.len() < file_name.len());
+    let mut name = if let Some(stem) = stem.filter(|_| !s.folder && !kind.shows_extension && !extension.is_empty()) {
+        stem
     } else {
         file_name.clone()
     };
