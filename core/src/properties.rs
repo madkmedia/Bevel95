@@ -42,9 +42,6 @@ pub struct Values {
     pub clock_offset: i64,
     /// Bevel95's own desktop is shown over Windows' (the desktop's own menu switches it off).
     pub desktop: bool,
-    /// Properties on the desktop's menu opens Windows' own Display settings (Bevel95 Settings,
-    /// Desktop page; `windows_display_settings`).
-    pub display_settings: bool,
     /// What the Programs menu shows (Bevel95 Settings, Programs page). The programs ticked by
     /// hand are not a value here: they are the window's list (`ProgramList`).
     pub programs: Shown,
@@ -70,9 +67,6 @@ pub enum Check {
     StartWithWindows,
     /// Bevel95 Settings, Desktop page: show Bevel95's own desktop.
     Desktop,
-    /// Bevel95 Settings, Desktop page: Properties on the desktop's menu opens Windows' own
-    /// Display settings.
-    DisplaySettings,
     /// Bevel95 Settings, Taskbar page: a program's windows share one button.
     Group,
     /// Bevel95 Settings, Taskbar page: Quick Search lists documents and web pages too.
@@ -266,8 +260,6 @@ fn check_label(check: Check) -> &'static str {
         Check::PersonalizedMenus => "Use &Personalized Menus",
         Check::StartWithWindows => "&Start Bevel95 when Windows starts",
         Check::Desktop => "&Show the classic desktop",
-        // Ours (PROVISIONAL), under the group's title "Properties on the desktop's menu".
-        Check::DisplaySettings => "Opens Windows' &display settings",
         // Windows XP's own wording.
         Check::Group => "&Group similar taskbar buttons",
         // Ours (PROVISIONAL), under the group's title "Quick Search".
@@ -746,7 +738,6 @@ fn check_value(v: &mut Values, c: Check) -> &mut bool {
         Check::PersonalizedMenus => &mut v.start_with_windows,
         Check::StartWithWindows => &mut v.start_with_windows,
         Check::Desktop => &mut v.desktop,
-        Check::DisplaySettings => &mut v.display_settings,
         Check::Group => &mut v.group,
         Check::QuickSearchAll => &mut v.quick_search_all,
     }
@@ -782,7 +773,7 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
                 .chain([Part::Check(Check::Group), Part::Check(Check::QuickSearchAll)])
                 .collect()
         }
-        Page::Desktop => vec![Part::Check(Check::Desktop), Part::Check(Check::DisplaySettings)],
+        Page::Desktop => vec![Part::Check(Check::Desktop)],
         Page::Programs => Shown::ALL.iter().map(|&s| Part::Shown(s)).chain([Part::Programs]).collect(),
     }
 }
@@ -958,11 +949,6 @@ const DESKTOP_TEXT: [&str; 3] = [
     "Windows' own desktop stays underneath it,",
     "with your icons where you left them.",
 ];
-/// 8 below it, a second group (as high as the Taskbar page's Quick Search group) with the check
-/// box that sends Properties on the desktop's menu to Windows' own Display settings.
-const DISPLAY_GROUP: Rect = Rect::new(24, 164, 296, 47);
-const DISPLAY_CHECK: (i32, i32) = (36, 181);
-const DISPLAY_GROUP_TITLE: &str = "Properties on the desktop's menu";
 
 /// Bevel95 Settings' Programs page (ours): one group down to where the General page ends, the
 /// three option rows as the General page has its looks, and under them the list of programs,
@@ -1083,10 +1069,7 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
             parts.push(check(Part::Check(Check::Group), GROUP_CHECK.0, GROUP_CHECK.1));
             parts.push(check(Part::Check(Check::QuickSearchAll), SEARCH_CHECK.0, SEARCH_CHECK.1));
         }
-        Page::Desktop => {
-            parts.push(check(Part::Check(Check::Desktop), DESKTOP_CHECK.0, DESKTOP_CHECK.1));
-            parts.push(check(Part::Check(Check::DisplaySettings), DISPLAY_CHECK.0, DISPLAY_CHECK.1));
-        }
+        Page::Desktop => parts.push(check(Part::Check(Check::Desktop), DESKTOP_CHECK.0, DESKTOP_CHECK.1)),
         Page::Programs => {
             for (shown, x, y) in SHOWN_ROWS {
                 let part = Part::Shown(shown);
@@ -1456,8 +1439,6 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             group_box(fb, c, font, DESKTOP_GROUP, "Desktop", false);
             check(fb, Part::Check(Check::Desktop), DESKTOP_CHECK.0, DESKTOP_CHECK.1);
             lines(fb, 36, DESKTOP_CHECK.1 + 22, &DESKTOP_TEXT);
-            group_box(fb, c, font, DISPLAY_GROUP, DISPLAY_GROUP_TITLE, false);
-            check(fb, Part::Check(Check::DisplaySettings), DISPLAY_CHECK.0, DISPLAY_CHECK.1);
         }
         Page::Programs => {
             group_box(fb, c, font, PROGRAMS_GROUP, "The Programs menu shows", false);
@@ -1839,7 +1820,6 @@ mod tests {
             start_with_windows: false,
             clock_offset: 0,
             desktop: true,
-            display_settings: false,
             programs: Shown::Everything,
             windows_key: WindowsKey::Find,
             group: true,
@@ -2061,25 +2041,16 @@ mod tests {
         let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, values());
         p.show_page(2);
         assert_eq!(p.current_page(), Page::Desktop);
-        assert_eq!(p.focus, Part::Check(Check::Desktop), "its first control");
-        assert_eq!(
-            p.tab_stops(),
-            [Part::Tab(2), Part::Check(Check::Desktop), Part::Check(Check::DisplaySettings), Part::Ok, Part::Cancel]
-        );
+        assert_eq!(p.focus, Part::Check(Check::Desktop), "its one control");
+        assert_eq!(p.tab_stops(), [Part::Tab(2), Part::Check(Check::Desktop), Part::Ok, Part::Cancel]);
         assert_eq!(p.access_key('s'), Some(Part::Check(Check::Desktop)));
-        assert_eq!(p.access_key('d'), Some(Part::Check(Check::DisplaySettings)));
         assert!(p.is_checked(Check::Desktop));
-        assert!(!p.is_checked(Check::DisplaySettings), "off unless switched on");
         assert!(p.choose(Part::Check(Check::Desktop)));
         assert!(!p.values.desktop && p.enabled(Part::Apply));
-        assert!(p.choose(Part::Check(Check::DisplaySettings)));
-        assert!(p.values.display_settings);
-        // Both are Bevel95's own: Windows' window leaves them as they are in effect.
-        let now = Values { desktop: false, display_settings: true, ..values() };
+        // The desktop is Bevel95's own: Windows' window leaves it as it is in effect.
+        let now = Values { desktop: false, ..values() };
         assert!(!Sheet::Taskbar.merge(values(), now).desktop);
-        assert!(Sheet::Taskbar.merge(values(), now).display_settings);
         assert!(Sheet::Bevel95.merge(values(), now).desktop);
-        assert!(!Sheet::Bevel95.merge(values(), now).display_settings);
     }
 
     /// A list of programs: "Programs", a folder with `in_folder` programs (the first two

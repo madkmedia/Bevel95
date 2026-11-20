@@ -331,7 +331,6 @@ pub(super) fn sixteen_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 start_with_windows: false,
                 clock_offset: 0,
                 desktop: true,
-                display_settings: false,
                 programs: bevel_core::programs::Shown::Everything,
                 windows_key: bevel_core::config::WindowsKey::Find,
                 quick_search_all: false,

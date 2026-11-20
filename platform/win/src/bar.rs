@@ -75,7 +75,7 @@ pub const POWER_KEY: tray::Key = (-95, 2);
 /// How often (in ticks) the connection's counters are looked at: the screens' blink rate.
 const NETWORK_TICKS: u32 = 2;
 /// Windows' own Display settings (the screen's resolution and scale): what Properties on the
-/// desktop's menu opens when Bevel95 Settings' Desktop page says so.
+/// desktop's menu opens, where Windows 95 to XP had their Display Properties.
 const WINDOWS_DISPLAY_SETTINGS: &str = "ms-settings:display";
 
 /// Not in windows-sys; WinUser.h defines them as HSHELL_REDRAW | HSHELL_HIGHBIT and
@@ -273,9 +273,6 @@ pub struct App {
     pub start_options: StartOptions,
     /// Bevel95's own desktop is switched on (it shows while our bar does: `desktop.rs`).
     pub desktop: bool,
-    /// Properties on the desktop's menu opens Windows' own Display settings (Bevel95 Settings,
-    /// Desktop page); off, Bevel95 Settings' Desktop page.
-    pub display_settings: bool,
     /// What the Programs menu shows (Bevel95 Settings, Programs page).
     pub programs_shown: Shown,
     /// What a lone press of the Windows key opens (Bevel95 Settings, Taskbar page).
@@ -611,7 +608,6 @@ pub fn run() -> u32 {
             options: settings.options,
             start_options: settings.start,
             desktop: settings.desktop,
-            display_settings: settings.display_settings,
             programs_shown: settings.programs,
             windows_key: settings.windows_key,
             group: settings.group,
@@ -1007,14 +1003,15 @@ fn run_desktop_command_now(code: usize, by_keyboard: bool, ticket: u32) {
             }
         }
         Some(DesktopCommand::SwitchToWindowsDesktop) => set_desktop(false),
-        // Windows' own Display settings when Bevel95 Settings says so (its Desktop page), else
-        // that page, where the desktop is switched on and off. Started as the Start menu's
-        // Settings entries start Windows' pages.
-        Some(DesktopCommand::Properties) if with_app(|app| app.display_settings).unwrap_or(false) => {
+        // Windows' own Display settings, started as the Start menu's Settings entries start
+        // Windows' pages (a failure is logged there). Bevel95 Settings stays on the menu's
+        // Bevel95 entry.
+        Some(DesktopCommand::Properties) => {
             log("desktop: Properties opens Windows' display settings");
             window_list::launch(WINDOWS_DISPLAY_SETTINGS);
         }
-        Some(DesktopCommand::Settings | DesktopCommand::Properties) => properties_window::open_settings_on(Page::Desktop),
+        // Its Desktop page, where the desktop is switched on and off.
+        Some(DesktopCommand::Settings) => properties_window::open_settings_on(Page::Desktop),
         Some(DesktopCommand::Arrange(by)) => desktop::arrange(by),
         Some(DesktopCommand::AutoArrange) => desktop::toggle_auto_arrange(),
         Some(DesktopCommand::LineUp) => desktop::line_up(),
@@ -1902,12 +1899,10 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
         let changed = app.options != values.options
             || app.start_options != values.start
             || app.desktop != values.desktop
-            || app.display_settings != values.display_settings
             || app.group != values.group;
         app.options = values.options;
         app.start_options = values.start;
         app.desktop = values.desktop;
-        app.display_settings = values.display_settings;
         app.group = values.group;
         app.task_list.group = values.group;
         changed
@@ -1918,7 +1913,6 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
             options: values.options,
             start: values.start,
             desktop: values.desktop,
-            display_settings: values.display_settings,
             group: values.group,
             ..Config::default()
         };
@@ -1936,8 +1930,8 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
             log(&format!("could not save the taskbar options to {}: {e}", crate::log::path_kind(&path)));
         }
         log(&format!(
-            "properties: {:?}, {:?}, desktop {}, desktop's Properties to Windows' display settings {}, group {}",
-            values.options, values.start, values.desktop, values.display_settings, values.group
+            "properties: {:?}, {:?}, desktop {}, group {}",
+            values.options, values.start, values.desktop, values.group
         ));
     }
     set_programs_shown(values.programs);
