@@ -4997,6 +4997,104 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   `win98-start-menu` 356 and `win98-favorites` 356 (Windows Update), `win2000-start-menu-small` 75
   (Log Off). The README's `docs/img/start-menus.png` drawn again: 356 pixels (98's Windows Update).
 
+## Quick Launch (2026-11-20, the owner: "Sure go ahead on quick launch")
+- **What it is**: the band of one-click icons right of the Start button that Internet Explorer 4
+  brought and Windows 98 and 2000 had from the start (asked for by a person and remembered by the
+  owner from 98). The facts: `private/probes/quick-launch/survey.md` (the captures and files on
+  the disk) and `captures.md` (116 new captures of both PCs); the numbers in theme-spec.md, "Quick
+  Launch". First pass, in five steps (each its own commit).
+- **Where it shows**: in the 98 and 2000 looks it is on by default (every capture of them has it);
+  in the 95 look off by default (plain 95 had none) and, switched on, drawn by 98's rule on 95's
+  bar. `quick_launch = yes | no` in settings.txt (`Config::quick_launch`, `quick_launch_in(era)`):
+  while the line is absent the look decides, and it is written only when the person changes it
+  (Bevel95 Settings, the Toolbars menu, the band's Close), so a settings.txt never gains it by
+  itself. Bevel95 Settings' Taskbar page: "Show Quick &Launch" (PROVISIONAL words) in the Buttons
+  group, which is 21 taller for it (the Quick Search and Battery groups moved down 21).
+- **What is on it**, left to right: the look's own icons in its own order (98 and 95: Internet
+  Explorer, Outlook Express, Show Desktop; 2000: Show Desktop, Internet Explorer, Outlook Express;
+  98's View Channels is left out: nothing today opens it), then Windows Explorer (Bevel95's own,
+  with the look's Explorer picture), then the person's own shortcuts: the files directly in
+  Windows' own Quick Launch folder (the known folder FOLDERID_QuickLaunch), A to Z, without
+  Windows' own `Shows Desktop.lnk` and `Window Switcher.lnk`, `desktop.ini`, hidden and system
+  files and every folder (`quick_launch::shown_files`), each with the shell's 16×16 picture
+  (`start_menu::file_icon`). At most 10 icons (`MAX_ICONS`); more are left out and the log says
+  how many. The 95 look takes 95's own pictures: its globe (SHELL32 group 14, the Internet picture
+  its files have) for the browser, its desktop (EXPLORER.EXE 103) for Show Desktop; 95's files
+  have no mail picture, so Outlook Express is left out of the 95 look. Bevel95's band is always
+  right of Start in the look's default order (not copied: that a band switched on again appears at
+  the right end, and 2000's sorting by name after that).
+- **The folder is read on a thread of its own** ("quick launch", `platform/win/src/quick_launch.rs`),
+  never on the bar's: every 2 s a listing (names, attributes, times), and when anything changed
+  (or the band's Refresh, or a Delete) the pictures are read and the bar is repainted; the bar
+  takes the new list at its next paint (`State::refresh`). This is the classic desktop's way of
+  learning of changes (`desktop_items.rs`); the Programs menu, which the brief named, has none:
+  it reads its folders afresh at each opening.
+- **What a click does** (one click, on the release over the same icon): Internet Explorer starts
+  the program Windows has registered for web addresses, Outlook Express the one for mail addresses
+  (`quick_launch::registered`: AssocQueryString's executable for "http" / "mailto", by its whole
+  path and with no argument, if it is a program file outside Windows' own folder (Windows names its
+  "Open with" helper when the program registered is gone); else the Store-style app the person
+  chose (UserChoice's ProgId, its `Application\AppUserModelID`), started as the Start menu starts
+  those (`shell:AppsFolder\<id>`); else none: the icon is left out and the log says so once).
+  Nothing typed or read from a file goes into the call. A mail association that names an app no
+  longer installed gives none (seen on the PC where it was built).
+  Show Desktop is Windows' own (Win+D's), which the classic desktop follows ("Win+D and the
+  classic desktop"): Shell.Application's IShellDispatch4::ToggleDesktop (hand-written COM, method
+  41), on a thread of its own; on the owner's Windows 11 it answered S_FALSE and nothing happened,
+  so the command then goes to Windows' own taskbar window (WM_COMMAND 407, its "toggle desktop").
+  Whether that shows the desktop was not seen live (see below). Windows Explorer starts as the
+  Programs menu's entry does (folders.exe without a folder); a shortcut opens as a Programs menu
+  entry is opened (`window_list::launch`).
+- **How it looks**: the band's lines, grips, buttons, raised and sunken edges and the task buttons'
+  start and end exactly as captured (`quick_launch::layout`, `paint::paint_quick_launch`); the
+  task area ends 7 before the well on 98 with its etched line 4 before it, 6 before it on 2000;
+  tooltips with the originals' words where each look put them (98 above the bar, 2000 over it,
+  2000's Internet Explorer with its second line: `tooltip::place_quick_launch`). In 16 Colors the
+  files' 4-bit images (`colors16_art`). Not in this pass: dragging the grips, the arrows or "»",
+  Show Text, Show Title, Large icons, dragging a shortcut off or onto the band (a held icon stays
+  pressed until the release, as 98's did while it dragged; nothing is dragged).
+- **The menus**: the bar's menu in 98 and 2000 begins with Toolbars and a line again
+  (`bar_menu::menu(era, clock)`; a right-click on the clock puts Adjust Date/Time after them, as
+  2000's captures show); Toolbars ▸ Address, Links, Desktop, Quick Launch (✓ while it shows), a
+  line, New Toolbar...: only Quick Launch works (`BarCommand::QuickLaunch`), the others are grayed.
+  The 95 look's menu stays as plain 95 had it. The band's own menu (a right-click on its grips,
+  lines and gaps; `quick_launch::band_menu`) as captured, 2000's with Adjust Date/Time and Task
+  Manager...: Refresh, Open (the Quick Launch folder in Bevel95's folder window), Toolbars, Adjust
+  Date/Time, Properties and Close work, View, Show Text, Show Title, the window arrangements,
+  Minimize All Windows and Task Manager are grayed (Bevel95's bar menu leaves the last ones out;
+  here they are shown because the band's menu is as captured). The menu on an icon
+  (`quick_launch::icon_menu`): Open (bold), Delete, and for the person's shortcut Properties
+  (Windows' own window, the desktop's command); the originals' Quick View, Send To, Cut, Copy,
+  Create Shortcut and 2000's Rename are left out for now. Delete on the person's shortcut is the
+  desktop icons' Delete (`confirm_window::ask_delete`: the look's question, then the Recycle Bin,
+  the same code); on a built-in icon it only takes the icon off the band, remembered in
+  `quick-launch.txt` (`quick_launch::removed_text`, written through `winkit::state_file`; in
+  `state_file::OWN_FILES`, Setup's Remove list and README's list of files). There is no way back
+  for a built-in icon yet except deleting that file (todo). A menu acts on the icon it opened on
+  (`quick_launch::Target`: a built-in icon, or the shortcut by its file) and only while that icon
+  is still on the band ("Remembered by what it is, never by where it is").
+- **New BarCommands** (at the end, so the old codes stay): `QuickLaunch` 15 (toggle),
+  `QuickLaunchOpen` 16, `QuickLaunchClose` 17, `QuickLaunchRefresh` 18. **New message**
+  `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages).
+- **Proof**: the golden pictures of the bar without the band did not change in steps 1 to 5 (the
+  intended changes: the three Taskbar pages of Bevel95 Settings for the check box, and the 98 and
+  2000 pictures of the bar's menu for Toolbars); new scenes `<look>-quick-launch`,
+  `-quick-launch-pressed`, `-quick-launch-band-menu`, `-quick-launch-icon-menu`,
+  `<98|2000>-toolbars-menu`, `<look>-16-quick-launch`. Comparison cases against the captures (all
+  exact): `vm-<pc>-quick-launch-0..7` (the whole bar from x 0 to the notification area with the
+  windows of `tasks-<n>`, no narrowed task area), `-hot-<icon>`, `-pressed-<icon>`,
+  `win98-taskbar-quick-launch`, `win2000-taskbar-quick-launch`; the older cases that cut the band
+  away stay as they were (they still prove the bar without it).
+- **Live** (2026-11-20, the owner's bar in the 98 look, by messages only): the band shows (counts in
+  the log: two shortcuts of the owner's, a browser, no mail program); a leak check of 20 refreshes
+  and 40 menus opened by posted right-clicks (the second round of 40: GDI 44 and USER 30 before
+  and after; the first round's +3/+6 once, the first menus' own); Show Desktop by
+  `Bevel95.Bar.QuickLaunch` 2 (twice in two pairs, each switched back at once): ToggleDesktop
+  answered S_FALSE, the fallback was posted; no window counted as minimized (Windows 11's Show
+  Desktop raises its desktop rather than minimizing), so whether it worked is the owner's
+  checklist. Not tried live: a real click on any icon, Delete, the menus' entries, the browser or
+  mail starting, the 2000 look.
+
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean
 copy, for the owner to publish when they decide (a fresh history, todo.md "Towards something

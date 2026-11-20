@@ -242,6 +242,41 @@ PROVISIONAL, the same in the three looks (`layout::NUMBER_EXTRA`, `NUMBER_PAD`):
 | What comes after the part | the next icon starts at the part's end; everything right of it, and the clock, keeps its place: the well grows to the left by the gap and the part (95/98: 38, 2000: 39) |
 | Pointer and clicks | the part and the gap before it belong to the battery icon (its tooltip, click, double-click, right-click) |
 
+## Quick Launch
+
+Measured on the Reference PCs' True Color captures (`vm/<pc>-truecolor-tasks-<n>`,
+`-ql-default-0`, `-ql-kbd-focus-<icon>`, `-ql-pressed-<icon>`, `-ql-hover-<icon>-tooltip`;
+the 256- and 16-color captures give the same geometry) and GUIdebook's S14 and S11. 800×600,
+the bar from y 572; L = the x of the etched line after Start. Code: `core::quick_launch`
+(`layout`), `paint::paint_quick_launch`, `tooltip::place_quick_launch`.
+
+| What | 98 (and the 95 look, by 98's rule) | 2000 |
+|---|---|---|
+| L (the line after Start) | 58: Start's right edge (`start.right()`) + 2 | 60: + 3 (Start is one wider) |
+| Etched lines | shadow column at x, highlight at x+1, the buttons' rows (y 576..597) | same |
+| Grip | L+4, 3×18 from y 578: highlight top row and left column, shadow bottom row and right column, face inside | same |
+| Buttons | 23×22, x = L+11+23k, y 576..597, touching; the 16×16 icon at +3,+3 | same |
+| Under the pointer (or keyboard focus) | a 1px raised edge: highlight top and left, shadow bottom and right (corners as `Framebuffer::frame`) | same |
+| Held down | the edge inverted, the icon at +4,+4 | same |
+| After the last button | 4 face columns, the second line at L+15+23n, its grip 4 after it | same |
+| First task button | L+26+23n (176 with 98's four icons, 155 with 2000's three) | same |
+| Task area's right end | 7 before the well (the line 4 before it: x 696/697 with the well at 700) | 6 before the well, no line |
+| Tooltip | at the pointer's x, its bottom row on the button's top row - 1 (y 559..575) | one pixel left of the pointer, its bottom row 16 below the bar's top (572..588); 2000's Internet Explorer has a second line (its shortcut's description), growing upward to 559 |
+| Tooltip words | "Launch Internet Explorer Browser", "Launch Outlook Express", "Show Desktop" (the shortcuts' file names); Windows Explorer's (Bevel95's own) "Windows Explorer"; the person's shortcuts their file name without the extension | the same, Internet Explorer's with "Finds and displays information and Web sites on the Internet." |
+
+The pictures: True Color cut from the captures (98 cells x 72, 95, 118; 2000 x 74, 97, 120; y
+579), 16 colors the files' 4-bit images (0 pixels differ from the 256- and 16-color captures).
+Comparison cases `vm-<pc>-quick-launch-<n>` (the whole bar from x 0 to the well, with the windows
+of `tasks-<n>`; 98's View Channels cell masked: Bevel95 leaves it out), `-hot-<icon>`,
+`-pressed-<icon>` (the pointer masked), `win98-taskbar-quick-launch`, `win2000-taskbar-quick-launch`.
+
+Not measured, Bevel95's own: Windows Explorer's place (after the look's own icons); at most 10
+icons; the 95 look's band (95 had none: 98's rule on 95's bar). The bar's menu, the Toolbars
+submenu, the band's menu and the icon's menu are as captured (`captures.md`, 2 and 3); 2000's band
+menu with Adjust Date/Time and Task Manager... as its capture shows. The menu on an icon is
+shortened to Open, Delete (and Properties for the person's shortcuts) in this first pass.
+PROVISIONAL: the words "Show Quick Launch" in Bevel95 Settings.
+
 ## Text
 
 | Value | WIN95 | WIN2000 | Source |
@@ -829,7 +864,7 @@ What the captures also showed: the pressed buttons' checkerboard follows the fir
 and 2000's Quick Launch band ends a few pixels before the notification area, so their task areas
 are 517 and 566 pixels wide in these captures (the only widths that give the buttons the
 measured widths with 4, 5 and 6 windows), and the cases draw our bar with those task areas
-(Bevel95 has no Quick Launch); Windows 2000 SP4's Tahoma fits one letter more before "..." in the
+(drawn without Quick Launch; the same captures with the band are compared whole in [Quick Launch](#quick-launch)); Windows 2000 SP4's Tahoma fits one letter more before "..." in the
 91-pixel buttons ("My Docume...", "Untitled - N..." against today's "My Docum...", "Untitled -
 ..."), so those two label ends are masked: see [D16](#discrepancies) and [flagged
 item](#flagged-for-your-eyes) 25.

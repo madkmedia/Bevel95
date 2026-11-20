@@ -17,6 +17,8 @@ look you choose.
 - **The taskbar**: a button for each window (grouped by program, or one per window, as you
   like), the Start button, the notification area with your programs' icons, the clock, the
   volume control, the network and battery icons.
+- **Quick Launch** (on in the 98 and 2000 looks): one-click icons for your browser, your mail
+  program, Show Desktop and Windows Explorer, then the shortcuts in Windows' own Quick Launch folder.
 - **The Start menu**: your programs, Documents, Settings, Find, Help, Run and Shut Down, as each
   of the three Windows showed them.
 - **Three looks**: Windows 95, Windows 98 and Windows 2000, each with its own pictures, fonts and
@@ -97,7 +99,7 @@ exiting it and deleting its folder.
 
 ## What is not built yet
 
-Bevel95 is young and incomplete. Among what is missing: a taskbar on every screen, Quick Launch,
+Bevel95 is young and incomplete. Among what is missing: a taskbar on every screen,
 the taskbar on other edges of the screen, the classic balloon messages, Windows 98 Second
 Edition, more classic programs (Notepad, Paint), other languages than English. See
 [docs/roadmap.md](docs/roadmap.md).

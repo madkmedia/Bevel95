@@ -2078,6 +2078,47 @@ fn regenerate_golden_images() {
     println!("wrote {}", preview_path().display());
 }
 
+/// The owner's sheet of Quick Launch (not a golden image, and not public): the left end of the bar
+/// in each look (95 with the band switched on), True Color and 16 Colors, plain, with the pointer
+/// on the first icon and with the second icon held down, Bevel95's own icons only, drawn by the
+/// real code; labels outside the pictures; everything enlarged 3 times by whole pixels. Written to
+/// the file named by BEVEL95_SHEET: run it with `BEVEL95_SHEET=<file> cargo test -p bevel-core
+/// --test golden -- --ignored --exact draw_quick_launch_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of Quick Launch to BEVEL95_SHEET; run it on request"]
+fn draw_quick_launch_sheet() {
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const CROP: i32 = 200;
+    const LABEL_W: i32 = 150;
+    const GAP: i32 = 10;
+    const ROW_H: i32 = 28 + 16;
+    let label_font = load_font(&WIN95, false);
+    let rows = [(Era::Win95, Depth::TrueColor), (Era::Win98, Depth::TrueColor), (Era::Win2000, Depth::TrueColor), (Era::Win95, Depth::Sixteen), (Era::Win98, Depth::Sixteen), (Era::Win2000, Depth::Sixteen)];
+    let columns: [(&str, Option<usize>, Option<usize>); 3] = [("plain", None, None), ("pointer on the first icon", Some(0), None), ("second icon held down", None, Some(1))];
+    let width = LABEL_W + columns.len() as i32 * (CROP + GAP);
+    let height = 16 + rows.len() as i32 * ROW_H;
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    for (c, (title, _, _)) in columns.iter().enumerate() {
+        label_font.draw(&mut sheet, LABEL_W + c as i32 * (CROP + GAP), 2, title, rgb(0x000000));
+    }
+    for (r, &(era, depth)) in rows.iter().enumerate() {
+        let theme = bevel_core::theme::theme_in(era, depth);
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let y = 16 + r as i32 * ROW_H;
+        let name = format!("{}{}", era.title(), if depth == Depth::Sixteen { ", 16 Colors" } else { "" });
+        label_font.draw(&mut sheet, 2, y + 8, &name, rgb(0x000000));
+        for (c, &(_, hot, pressed)) in columns.iter().enumerate() {
+            let bar = quick_launch_scene(theme, era, &fonts, hot, pressed, CROP);
+            sheet.blit(&bar, LABEL_W + c as i32 * (CROP + GAP), y);
+        }
+    }
+    write_png(Path::new(&path), &upscale(&sheet, 3));
+    println!("wrote the sheet");
+}
+
 /// The README's first picture, `docs/img/start-menus.png`: the three looks side by side, each
 /// showing what a real Bevel95 shows with its Programs menu set to Bevel95's own programs. It
 /// is not a golden image (no test compares it). Run it with

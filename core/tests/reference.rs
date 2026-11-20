@@ -589,6 +589,7 @@ fn cases() -> Vec<Case> {
         vga: false,
     });
     start_menu_cases(&mut out, &f95, &f2k);
+    quick_launch_cases(&mut out, &f95, &f2k);
     popup_cases(&mut out, &f95);
     dialog_cases(&mut out, &f95, &f2k);
     run_list_cases(&mut out, &f95, &f2k);
@@ -2844,6 +2845,152 @@ fn task_icon_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 vga: false,
             });
         }
+    }
+}
+
+/// Quick Launch on the Reference PCs (brief 55; private/probes/quick-launch/captures.md): the bar
+/// from its left edge to the notification area, band and task buttons together, as Bevel95 draws it
+/// with Quick Launch on: the default band with no window (`ql-default-0`) and the band with the
+/// windows of `tasks-<n>` (the task buttons where the band puts them, with no narrowed task area);
+/// the band alone with each icon raised (`ql-kbd-focus-<icon>`: the keyboard's focus draws the same
+/// edge as the pointer, without the pointer over it); and the band alone in GUIdebook's S14 and S11.
+/// Windows 98's fourth icon, View Channels, is not Bevel95's: its cell is left empty and masked.
+fn quick_launch_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
+    use bevel_core::quick_launch::{self, Band, Builtin};
+    use bevel_core::window_icons::{self, ClassicWindow::*};
+    let band = |era: Era, hot: Option<usize>| {
+        let icons = match era {
+            Era::Win98 => vec![
+                quick_launch::picture(era, Builtin::InternetExplorer),
+                quick_launch::picture(era, Builtin::OutlookExpress),
+                quick_launch::picture(era, Builtin::ShowDesktop),
+                None,
+            ],
+            _ => vec![
+                quick_launch::picture(era, Builtin::ShowDesktop),
+                quick_launch::picture(era, Builtin::InternetExplorer),
+                quick_launch::picture(era, Builtin::OutlookExpress),
+            ],
+        };
+        Band { icons, hot, pressed: None }
+    };
+    let draw = |theme: &Theme, fonts: &Fonts, width: i32, tasks: Vec<Task>, tray: usize, band: Band| {
+        let mut fb = Framebuffer::new(width, theme.bar.height, 0);
+        let invisible = Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let state = Bar {
+            tasks,
+            tray: vec![Some(invisible); tray],
+            clock: WIDEST.to_string(),
+            clock_widest: WIDEST.to_string(),
+            quick_launch: Some(band),
+            ..Bar::default()
+        };
+        let layout = paint::paint_bar(&mut fb, theme, fonts, &state);
+        (fb, layout)
+    };
+    let sets = [
+        (
+            "win98",
+            &WIN98,
+            f95,
+            Era::Win98,
+            // The tasks-<n> captures have two notification icons, ql-default-0 three.
+            (2, 3),
+            vec![Rect::new(141, 579, 16, 16)],
+            &[
+                ("My Documents", MyDocuments),
+                ("My Computer", MyComputer),
+                ("Recycle Bin", RecycleBin),
+                ("Untitled - Notepad", Notepad),
+                ("Control Panel", ControlPanel),
+                ("Temp", Folder),
+            ][..],
+            &["ie", "oe", "showdesktop", "channels"][..],
+        ),
+        (
+            "win2000",
+            &WIN2000,
+            f2k,
+            Era::Win2000,
+            (0, 1),
+            Vec::new(),
+            &[
+                ("My Computer", MyComputer),
+                ("My Documents", MyDocuments),
+                ("Recycle Bin", RecycleBin),
+                ("Untitled - Notepad", Notepad),
+                ("Control Panel", ControlPanel),
+                ("Temp", Folder),
+            ][..],
+            &["showdesktop", "ie", "oe"][..],
+        ),
+    ];
+    for (prefix, theme, fonts, era, (tray_tasks, tray_default), cells, windows, focus) in sets {
+        for n in 0..=windows.len() + 1 {
+            let tasks: Vec<Task> = windows[..n.min(windows.len())]
+                .iter()
+                .enumerate()
+                .map(|(i, &(title, kind))| Task {
+                    title: title.to_string(),
+                    icon: Some(window_icons::icon(era, kind)),
+                    state: if i + 1 == n { TaskState::Active } else { TaskState::Normal },
+                })
+                .collect();
+            let tray = if n == 0 { tray_default } else { tray_tasks };
+            let (ours, layout) = draw(theme, fonts, 800, tasks, tray, band(era, None));
+            // Windows 2000 SP4's Tahoma fits one letter more before "..." in the narrowest buttons
+            // (as in `task_icon_cases`).
+            let mut masks = cells.clone();
+            if prefix == "win2000" && n >= 6 {
+                masks.extend([Rect::new(318, 578, 21, 18), Rect::new(504, 578, 21, 18)]);
+            }
+            let file = if n == 0 { format!("vm/{prefix}-truecolor-ql-default-0.png") } else { format!("vm/{prefix}-truecolor-tasks-{n}.png") };
+            out.push(Case {
+                name: format!("vm-{prefix}-quick-launch-{n}").leak(),
+                file: file.leak(),
+                regions: vec![region((0, 0), Rect::new(0, 572, layout.well.x, 28))],
+                ours,
+                masks,
+                vga: false,
+            });
+        }
+        for (k, icon) in focus.iter().enumerate() {
+            let (ours, layout) = draw(theme, fonts, 800, Vec::new(), tray_default, band(era, Some(k)));
+            let right = layout.quick.as_ref().expect("the band").rect.right();
+            out.push(Case {
+                name: format!("vm-{prefix}-quick-launch-hot-{icon}").leak(),
+                file: format!("vm/{prefix}-truecolor-ql-kbd-focus-{icon}.png").leak(),
+                regions: vec![region((0, 0), Rect::new(0, 572, right, 28))],
+                ours,
+                masks: cells.clone(),
+                vga: false,
+            });
+        }
+    }
+    // An icon held down (`ql-pressed-<icon>`): the edge the other way round, the icon 1 pixel right
+    // and down; the pointer over it is masked.
+    for (name, file, theme, fonts, era, k, pointer) in [
+        ("vm-win98-quick-launch-pressed-ie", "vm/win98-truecolor-ql-pressed-ie.png", &WIN98, f95, Era::Win98, 0, Rect::new(79, 586, 15, 14)),
+        ("vm-win2000-quick-launch-pressed-showdesktop", "vm/win2000-truecolor-ql-pressed-showdesktop.png", &WIN2000, f2k, Era::Win2000, 0, Rect::new(80, 582, 18, 18)),
+    ] {
+        let pressed = Band { pressed: Some(k), ..band(era, None) };
+        let (ours, layout) = draw(theme, fonts, 800, Vec::new(), 0, pressed);
+        let right = layout.quick.as_ref().expect("the band").rect.right();
+        let mut masks = vec![pointer];
+        if era == Era::Win98 {
+            masks.push(Rect::new(141, 579, 16, 16));
+        }
+        out.push(Case { name, file, regions: vec![region((0, 0), Rect::new(0, 572, right, 28))], ours, masks, vga: false });
+    }
+    // GUIdebook's S14 (98, 640 wide) and S11 (2000, 800 wide): the band from its first line to the
+    // first task button (the same default band, the bar at y 0).
+    for (name, file, theme, fonts, era, width, cells) in [
+        ("win98-taskbar-quick-launch", "win98-taskbar-quicklaunch-3tasks-1active-tray-640x28.png", &WIN98, f95, Era::Win98, 640, vec![Rect::new(141, 7, 16, 16)]),
+        ("win2000-taskbar-quick-launch", "win2000pro-taskbar-quicklaunch-3tasks-1active-tray-800x28.png", &WIN2000, f2k, Era::Win2000, 800, Vec::new()),
+    ] {
+        let (ours, layout) = draw(theme, fonts, width, Vec::new(), 1, band(era, None));
+        let b = layout.quick.as_ref().expect("the band").rect;
+        out.push(Case { name, file, regions: vec![region((b.x, 0), Rect::new(b.x, 0, b.w, 28))], ours, masks: cells, vga: false });
     }
 }
 
