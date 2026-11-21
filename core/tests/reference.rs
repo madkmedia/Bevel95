@@ -592,6 +592,7 @@ fn cases() -> Vec<Case> {
     });
     start_menu_cases(&mut out, &f95, &f2k);
     quick_launch_cases(&mut out, &f95, &f2k);
+    quick_launch_size_cases(&mut out, &f95, &f2k);
     popup_cases(&mut out, &f95);
     dialog_cases(&mut out, &f95, &f2k);
     run_list_cases(&mut out, &f95, &f2k);
@@ -3048,6 +3049,92 @@ fn quick_launch_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         let (ours, layout) = draw(theme, fonts, width, Vec::new(), 1, band(era, None));
         let b = layout.quick.as_ref().expect("the band").rect;
         out.push(Case { name, file, regions: vec![region((b.x, 0), Rect::new(b.x, 0, b.w, 28))], ours, masks: cells, vga: false });
+    }
+}
+
+/// Quick Launch made narrower and wider on the Reference PCs (brief 70; private/probes/quick-launch/
+/// resize.md, captures `<pc>-truecolor-qlsize-*`): the band from x 0 to the first task button with
+/// the width the capture shows, its icons and its overflow control. The test shortcuts of the
+/// captures were the PCs' own programs (games, System Tools, 98's View Channels), which Bevel95
+/// does not have: their cells are drawn empty and masked; so is the pointer where it is drawn into
+/// the capture. Windows 2000's list is compared whole, its rows' pictures masked.
+fn quick_launch_size_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
+    use bevel_core::quick_launch::{self, Band, Builtin, Control};
+    // The band's first `own` icons are Bevel95's (the look's built-in ones in the capture's order),
+    // the others the PCs' own programs.
+    let icons = |era: Era, count: usize| -> Vec<Option<Icon>> {
+        let own: Vec<Builtin> = match era {
+            Era::Win98 => vec![Builtin::InternetExplorer, Builtin::OutlookExpress, Builtin::ShowDesktop],
+            _ => vec![Builtin::ShowDesktop, Builtin::InternetExplorer, Builtin::OutlookExpress],
+        };
+        (0..count).map(|i| own.get(i).and_then(|&b| quick_launch::picture(era, b))).collect()
+    };
+    struct Q {
+        name: &'static str,
+        file: &'static str,
+        era: Era,
+        icons: usize,
+        width: i32,
+        scroll: i32,
+        hot: Option<Control>,
+        pressed: Option<Control>,
+        list: Option<(&'static [&'static str], Option<usize>)>,
+        pointer: Option<Rect>,
+    }
+    let q = |name, file, era, icons, width| Q { name, file, era, icons, width, scroll: 0, hot: None, pressed: None, list: None, pointer: None };
+    // The names on 2000's band in the 7-icon captures (its list is as wide as the longest).
+    const NAMES_7: &[&str] = &["Show Desktop", "Launch Internet Explorer Browser", "Launch Outlook Express", "FreeCell", "Minesweeper", "Pinball", "Solitaire"];
+    let cases = [
+        q("vm-win98-ql-size-kept-width-arrow", "vm/win98-truecolor-qlsize-8icons-3windows-band-kept-width-arrow.png", Era::Win98, 8, 107),
+        Q { hot: Some(Control::Right), pointer: Some(Rect::new(154, 584, 13, 16)), ..q("vm-win98-ql-size-right-arrow-hot", "vm/win98-truecolor-qlsize-8icons-pointer-on-right-arrow.png", Era::Win98, 8, 107) },
+        Q { scroll: i32::MAX, ..q("vm-win98-ql-size-scrolled-to-end", "vm/win98-truecolor-qlsize-8icons-scrolled-to-end-pointer-away.png", Era::Win98, 8, 107) },
+        q("vm-win98-ql-size-narrowest", "vm/win98-truecolor-qlsize-run3-8icons-released-after-left-92.png", Era::Win98, 8, 131),
+        Q { pointer: Some(Rect::new(200, 580, 16, 18)), ..q("vm-win98-ql-size-widened", "vm/win98-truecolor-qlsize-1window-released-wider-by-40.png", Era::Win98, 4, 147) },
+        q("vm-win98-ql-size-widened-8", "vm/win98-truecolor-qlsize-8icons-released-wider-by-120.png", Era::Win98, 8, 251),
+        q("vm-win2000-ql-size-chevron", "vm/win2000-truecolor-qlsize-7icons-released-after-left-115.png", Era::Win2000, 7, 119),
+        Q { hot: Some(Control::Chevron), pointer: Some(Rect::new(170, 585, 20, 15)), ..q("vm-win2000-ql-size-chevron-hot", "vm/win2000-truecolor-qlsize-7icons-chevron-hot.png", Era::Win2000, 7, 119) },
+        Q { list: Some((NAMES_7, None)), ..q("vm-win2000-ql-size-list", "vm/win2000-truecolor-qlsize-7icons-chevron-list-open-pointer-away.png", Era::Win2000, 7, 119) },
+        Q { list: Some((NAMES_7, Some(1))), pointer: Some(Rect::new(246, 538, 24, 32)), ..q("vm-win2000-ql-size-list-row-hot", "vm/win2000-truecolor-qlsize-7icons-chevron-list-row-pinball-hot-2.png", Era::Win2000, 7, 119) },
+        q("vm-win2000-ql-size-line-271", "vm/win2000-truecolor-qlsize-11icons-line-271-b.png", Era::Win2000, 11, 211),
+        q("vm-win2000-ql-size-kept-wider", "vm/win2000-truecolor-qlsize-5icons-after-deleting-6-band-shrank.png", Era::Win2000, 5, 211),
+    ];
+    for c in cases {
+        let (theme, fonts) = if c.era == Era::Win2000 { (&WIN2000, f2k) } else { (&WIN98, f95) };
+        let band = Band {
+            icons: icons(c.era, c.icons),
+            width: Some(c.width),
+            scroll: c.scroll,
+            hot_control: c.hot,
+            pressed_control: c.pressed,
+            list_open: c.list.is_some(),
+            ..Band::default()
+        };
+        let mut bar_fb = Framebuffer::new(800, theme.bar.height, 0);
+        let state = Bar { clock: WIDEST.to_string(), clock_widest: WIDEST.to_string(), quick_launch: Some(band.clone()), ..Bar::default() };
+        let layout = paint::paint_bar(&mut bar_fb, theme, fonts, &state);
+        let ql = layout.quick.expect("the band");
+        let mut screen = Screen::new(800, 600, 0);
+        screen.fb.blit(&bar_fb, 0, 572);
+        let mut regions = vec![Rect::new(0, 572, ql.rect.right(), 28)];
+        // The PCs' own programs' cells: the part of each that shows.
+        for i in 3..c.icons {
+            if let Some(r) = ql.visible_button(i) {
+                screen.masks.push(Rect::new(r.x, 572 + r.y, r.w, r.h));
+            }
+        }
+        if let Some((names, hover)) = c.list {
+            let chevron = ql.chevron.expect("the chevron");
+            let rows = ql.hidden.iter().map(|&i| (names[i].to_string(), None)).collect();
+            let all: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+            let menu = Menu { hover, ..quick_launch::list_menu(rows, &all) };
+            let at = Rect::new(chevron.x, 572 + chevron.y, chevron.w, chevron.h);
+            let (r, _) = screen.menu(theme, fonts, &menu, MenuStyle::Cascade, |w, h| quick_launch::place_list(at, w, h, Rect::new(0, 0, 800, 600)));
+            regions.push(r);
+        }
+        if let Some(p) = c.pointer {
+            screen.masks.push(p);
+        }
+        out.push(screen_case(c.name, c.file, screen, (0, 0), &regions));
     }
 }
 

@@ -270,8 +270,31 @@ Comparison cases `vm-<pc>-quick-launch-<n>` (the whole bar from x 0 to the well,
 of `tasks-<n>`; 98's View Channels cell masked: Bevel95 leaves it out), `-hot-<icon>`,
 `-pressed-<icon>` (the pointer masked), `win98-taskbar-quick-launch`, `win2000-taskbar-quick-launch`.
 
-Not measured, Bevel95's own: Windows Explorer's place (after the look's own icons); at most 10
-icons; the 95 look's band (95 had none: 98's rule on 95's bar). The bar's menu, the Toolbars
+Not measured, Bevel95's own: Windows Explorer's place (after the look's own icons); the 95 look's
+band (95 had none: 98's rule on 95's bar).
+
+**Narrower and wider** (brief 70; `vm/<pc>-truecolor-qlsize-*`, private/probes/quick-launch/resize.md;
+"line" = the x of the etched line that ends the band; code `quick_launch::layout_shape`,
+`paint::overflow_control`):
+
+| What | 98 (and the 95 look) | 2000 |
+|---|---|---|
+| Narrowest, 4 icons or fewer | all its icons (line = L+15+23n) | same |
+| Narrowest, more icons | line = L+131: 4 whole icons, the 5th cut at line-17 | line = L+119: 4 whole icons, 4 face columns, the "»" |
+| Icons that do not fit | drawn cut at the edge; seen from L+11 (L+23 with the left arrow) to line-17 (line-5 without the right arrow) | left out: an icon shows only if its button ends at line-17 or before |
+| Overflow control | right arrow 12×22 at line-16..line-5; left arrow at L+11..L+22 while scrolled | "»" 12×22 at line-12..line-1 |
+| Glyph | ▸ / ◂ black 3×5, 8 rows down, the right one 5 in, the left one 4 in | "»" black 8×5, 2 in and 5 rows down |
+| Under the pointer | 1-pixel ring: highlight top and left, shadow right and bottom | same |
+| Held down | ring dark shadow (black) top and left, light (DFDFDF) right and bottom; glyph +1,+1; held at the end: grayed (etched, no ring) until the release | ring shadow top and left, highlight right and bottom, glyph +1,+1; also while its list is open |
+| Scrolling | one press: the icons move so that icon n starts at L+23 (23n-12), the last press only as far as the last icon ending at line-5; ◂ back one icon | — |
+| The drag | the end follows the pointer from the first pixel (98's threshold not measured) | a move under 4 pixels does nothing, then the whole move counts |
+| Icons arriving | the band keeps its width | the band grows to its narrowest (L+119), no further |
+| The list | — | above the "»", its left edge at the chevron's, its bottom row the row above the chevron; Windows 2000's cascading menu: 3-pixel frame, 20-pixel rows, picture at +5, name at +30, navy under the pointer; as wide as the longest name of all the band's icons + 54 (216 with "Launch Internet Explorer Browser") |
+
+Comparison cases (all exact, the PCs' own programs' cells and the pointer masked):
+`vm-win98-ql-size-kept-width-arrow`, `-right-arrow-hot`, `-scrolled-to-end`, `-narrowest`,
+`-widened`, `-widened-8`; `vm-win2000-ql-size-chevron`, `-chevron-hot`, `-list`, `-list-row-hot`,
+`-line-271`, `-kept-wider`. The bar's menu, the Toolbars
 submenu, the band's menu and the icon's menu are as captured (`captures.md`, 2 and 3); 2000's band
 menu with Adjust Date/Time and Task Manager... as its capture shows. The menu on an icon is
 shortened to Open, Delete (and Properties for the person's shortcuts) in this first pass.

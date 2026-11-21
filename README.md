@@ -20,6 +20,8 @@ look you choose.
 - **Quick Launch** (on in the 98 and 2000 looks): one-click icons for your browser, your mail
   program, Show Desktop and Windows Explorer, then the shortcuts in Windows' own Quick Launch folder.
   A built-in icon you delete from the band comes back when you switch Quick Launch off and on again.
+  Drag the grip after the icons to make the band wider or narrower: icons that do not fit are reached
+  by small arrows (98 look) or by the "»" button's list (2000 look), as those Windows did.
 - **The Start menu**: your programs, Documents, Settings, Find, Help, Run and Shut Down, as each
   of the three Windows showed them.
 - **Three looks**: Windows 95, Windows 98 and Windows 2000, each with its own pictures, fonts and
@@ -125,7 +127,7 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
   of recent file operations, the order of the task buttons, the commands typed into Run, the
   width of Quick Search's Name column.
 - `quick-launch.txt`: the built-in Quick Launch icons you took off the band (your own shortcuts
-  stay in Windows' own Quick Launch folder).
+  stay in Windows' own Quick Launch folder), and the band's width once you have dragged it.
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options
   and scores.
 - `bevel95.log` and `bevel95.old.log`: the log (see below).

@@ -2357,6 +2357,53 @@ fn draw_quick_launch_sheet() {
     println!("wrote the sheet");
 }
 
+/// The owner's sheet of Quick Launch made narrower and wider (brief 70; not a golden image, and not
+/// public): per look the band at its default, dragged wider, dragged to its narrowest with the
+/// look's overflow control (98 and the 95 look: also scrolled and the arrow held at the end; 2000:
+/// also with its list open), Bevel95's own icons only, drawn by the real code, labels outside the
+/// pictures, enlarged 3 times by whole pixels. `BEVEL95_SHEET=<file> cargo test -p bevel-core
+/// --test golden -- --ignored --exact draw_quick_launch_size_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of Quick Launch sizes to BEVEL95_SHEET; run it on request"]
+fn draw_quick_launch_size_sheet() {
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const LABEL_W: i32 = 240;
+    const GAP: i32 = 8;
+    let label_font = load_font(&WIN95, false);
+    let bold = load_font(&WIN95, true);
+    let mut pictures: Vec<(String, Framebuffer)> = Vec::new();
+    for era in Era::ALL {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let look = era.title();
+        pictures.push((format!("{look}: never dragged (as before)"), quick_launch_scene(theme, era, &fonts, None, None, 240)));
+        pictures.push((format!("{look}: dragged 40 wider"), quick_launch_sized(theme, era, &fonts, BandSize::Widened)));
+        if era == Era::Win2000 {
+            pictures.push((format!("{look}: 9 icons, narrowest, \u{bb}"), quick_launch_sized(theme, era, &fonts, BandSize::Narrowed)));
+            pictures.push((format!("{look}: the \u{bb} list open"), quick_launch_sized(theme, era, &fonts, BandSize::List)));
+        } else {
+            pictures.push((format!("{look}: 9 icons, narrowest, arrow"), quick_launch_sized(theme, era, &fonts, BandSize::Narrowed)));
+            pictures.push((format!("{look}: scrolled two icons"), quick_launch_sized(theme, era, &fonts, BandSize::Scrolled)));
+            pictures.push((format!("{look}: arrow held at the end"), quick_launch_sized(theme, era, &fonts, BandSize::HeldAtEnd)));
+        }
+    }
+    let width = LABEL_W + pictures.iter().map(|(_, p)| p.width).max().unwrap_or(0) + GAP;
+    let height = 20 + pictures.iter().map(|(_, p)| p.height + GAP).sum::<i32>();
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    bold.draw(&mut sheet, 2, 2, "Quick Launch made narrower and wider (Bevel95's own icons)", rgb(0x000000));
+    let mut y = 20;
+    for (label, picture) in &pictures {
+        label_font.draw(&mut sheet, 2, y + picture.height.min(28) / 2 - 6, label, rgb(0x000000));
+        sheet.blit(picture, LABEL_W, y);
+        y += picture.height + GAP;
+    }
+    write_png(Path::new(&path), &upscale(&sheet, 3));
+    println!("wrote the sheet");
+}
+
 /// The owner's sheet of 256 Colors (not a golden image, and not public): for each look the same
 /// three scenes (the desktop's left part with the bar and an open Start menu; a folder window; Run
 /// with its title bar) in True Color, 256 Colors and 16 Colors side by side, drawn by the real

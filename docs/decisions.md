@@ -5266,8 +5266,8 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   Windows' own Quick Launch folder (the known folder FOLDERID_QuickLaunch), A to Z, without
   Windows' own `Shows Desktop.lnk` and `Window Switcher.lnk`, `desktop.ini`, hidden and system
   files and every folder (`quick_launch::shown_files`), each with the shell's 16×16 picture
-  (`start_menu::file_icon`). At most 10 icons (`MAX_ICONS`); more are left out and the log says
-  how many. **On a narrow bar** (a big Size on a small screen, or many icons; the review before
+  (`start_menu::file_icon`). Until brief 70 at most 10 icons (`MAX_ICONS`, gone since: every
+  shortcut is on the band, see "Narrower and wider" below). **On a narrow bar** (a big Size on a small screen, or many icons; the review before
   0.1.2, B3: the band took the whole bar, the task buttons ended under the notification area and
   the scroll arrows inside the band) the band shows only as many icons as leave the task area room
   for one task button at the look's full width plus its scroll arrows (`quick_launch::fitting`,
@@ -5281,6 +5281,71 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   have no mail picture, so Outlook Express is left out of the 95 look. Bevel95's band is always
   right of Start in the look's default order (not copied: that a band switched on again appears at
   the right end, and 2000's sorting by name after that).
+- **Narrower and wider** (2026-11-21, brief 70; a person: "Would it be possible to resize the
+  quick launch? ... windows created a little arrow"). Measured on the 98 and 2000 Reference PCs
+  (`private/probes/quick-launch/resize.md`, 125 captures `<pc>-truecolor-qlsize-*`); the numbers
+  are in theme-spec.md, "Quick Launch", "Narrower and wider".
+  - **What the old Windows did**: the grip between the band and the task buttons drags the band's
+    end, live while the button is held, wider (empty face after the icons) and narrower; never
+    narrower than its icons while it has 4 or fewer, otherwise down to a fixed minimum (98 L+131,
+    2000 L+119: 4 icons and the control). Neither showed 3, 2, 1 or no icon. Icons that do not fit:
+    98's pager draws the icon at the edge cut and shows small arrow buttons (one icon per press,
+    at the press; the left arrow once scrolled; the right one gone at the end); 2000 leaves the
+    icon out and shows "»", whose list holds only the icons left out, in the band's order, as wide
+    as the longest name of ALL the band's icons. Icons arriving: 98's band keeps its width, 2000's
+    grows at once to its minimum and keeps that width when icons go again. Both remember the width.
+  - **Built** (`quick_launch::Shape`, `layout_shape`, `min_width`, `wanted_width`, `grown`,
+    `max_width`, `scroll_right`/`scroll_left`, `WidthDrag`/`Sizing`, `list_menu`, `list_choice`,
+    `place_list`; `paint::overflow_control`; the glyphs in `art/src/quick_launch.rs`). Layout
+    `buttons` holds 98's buttons where they are drawn (partly or wholly outside `view`) and only
+    2000's shown ones (`hidden` the rest); `part_at` finds an icon, a control or the grip. The
+    icons on a pager are painted on a strip of their own and only the part in view is copied, so
+    a band without overflow is painted exactly as before. **A band never dragged** (no width in
+    the file) is as wide as its icons, as before; icons that do not fit the bar's room (the narrow
+    bar of the review before 0.1.2, B3) are now reached by the look's control instead of left out.
+    Once dragged, icons arriving behave as each Windows did. Never wider than leaves the task area
+    room for one button and its arrows (`max_width`, the old `fitting` rule as a width).
+  - **The Windows side** (`bar.rs`: `press_quick_part`, `drag_quick_width`, `end_quick_drag`,
+    `quick_pointer`; `popup.rs`: `Kind::QuickList`, `open_quick_list`, `At::Chevron`). The press on
+    the grip takes the mouse; the end follows the pointer between `min_width` and `max_width`;
+    the release, and also losing the mouse (`WM_CAPTURECHANGED`), ends the drag and keeps the width
+    reached, saved when the drag moved it. Pointers: `IDC_SIZEWE` over the grip, comctl32's
+    divider pointer (`Pointer::HeaderDivider`, the captures' split arrow) while dragging, set at
+    every move since a window holding the mouse gets no `WM_SETCURSOR`. 98's arrows scroll at the
+    press and stay pushed in until the release (`pressed_control`); one press, one step (repeating
+    while held was not measured). 2000's "»" opens the list at the press as a menu window of the
+    bar's (Cascade style: its keys, Esc, a click elsewhere close it); a press on the "»" while it
+    is open only closes it; a row starts its icon by what it is (`Target`) and only while it is
+    still on the band (`quick_item_command`, refused and logged otherwise). An auto-hidden bar
+    stays up during a drag or while an arrow or icon is held. Pictures are read for every icon up
+    to 64 and for 8 beyond the last one seen (`PICTURES_ALWAYS`, `PICTURES_AHEAD`).
+  - **Remembered**: `width = <n>` in quick-launch.txt, from the band's first etched line to its
+    last in 1x pixels, one number for all three looks (their bands are built of the same sizes and
+    counted from L). Read at the bar's start; written only by the bar, read-modify-write through
+    `state_file::change`, so the icons taken off and the width never overwrite each other. A width
+    that is not a whole number from 15 to 10000 counts as none (the band as wide as its icons).
+    Bevel95 0.1.3 skips the line (its parser knows only icons) and drops it at its next save.
+    2000's band grown by arriving icons saves its new width once (only when the count really grew
+    since the last paint, not again at a narrow bar's limit: the review of brief 70).
+  - **PROVISIONAL** (private/todo.md, decision 48): a band never dragged follows its icons; one
+    width for all looks; no threshold on 98's drag; one step per arrow press; the list below the
+    "»" on a bar at the top and moved left at the screen's edge, from the screen's top when taller
+    than the room; the width kept when the mouse is lost. **Not built**: dragging the band's own
+    left grip (both Windows then moved Quick Launch right of the task buttons), Show Text, Show
+    Title, large icons, dropping files onto the band, reordering icons, Esc to cancel a drag.
+  - **Proof**: core tests (`the_narrowest_band_per_look_and_icon_count`,
+    `windows_98_cuts_the_icon_at_the_edge_and_scrolls_one_icon_per_press`,
+    `windows_2000_leaves_out_what_does_not_fit_and_lists_it`,
+    `the_grip_drags_the_width_and_the_drag_ends_when_the_mouse_is_lost`,
+    `a_row_of_the_list_starts_what_it_was_made_for`, `the_width_is_kept_and_nonsense_falls_back_to_all_the_icons`,
+    `the_list_opens_above_the_chevron`; the platform's
+    `the_width_and_the_icons_taken_off_share_their_file`); new golden scenes
+    `<look>-quick-launch-widened`, `-narrowed`, 95/98 `-scrolled`, `-held-at-end`, 2000 `-list`
+    (no existing golden picture changed); 12 comparison cases `vm-<pc>-ql-size-*`, all exact.
+    Live (the owner's bar, 98 look, 3 icons that fit): the band photographed before and after the
+    install is identical and no quick-launch.txt was written; the list window opened and closed 20
+    times by `Bevel95.Bar.QuickLaunch` 101/102 (GDI 43 / USER 32 before and after). No drag, no
+    arrow and no "»" were tried with the mouse (the owner's checklist).
 - **The folder is read on a thread of its own** ("quick launch", `platform/win/src/quick_launch.rs`),
   never on the bar's: every 2 s a listing (names, attributes, times), and when anything changed
   (or the band's Refresh, or a Delete) the pictures are read and the bar is repainted; the bar
@@ -5335,7 +5400,8 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   task area ends 7 before the well on 98 with its etched line 4 before it, 6 before it on 2000;
   tooltips with the originals' words where each look put them (98 above the bar, 2000 over it,
   2000's Internet Explorer with its second line: `tooltip::place_quick_launch`). In 16 Colors the
-  files' 4-bit images (`colors16_art`). Not in this pass: dragging the grips, the arrows or "»",
+  files' 4-bit images (`colors16_art`). Not in this pass (the grip before the task buttons, the
+  arrows and "»" came with brief 70, "Narrower and wider" above): dragging the band's own grip,
   Show Text, Show Title, Large icons, dragging a shortcut off or onto the band (a held icon stays
   pressed until the release, as 98's did while it dragged; nothing is dragged).
 - **The menus**: the bar's menu in 98 and 2000 begins with Toolbars and a line again
@@ -5431,8 +5497,10 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   brings back the built-in icons taken off.
 - **New BarCommands** (at the end, so the old codes stay): `QuickLaunch` 15 (toggle),
   `QuickLaunchOpen` 16, `QuickLaunchClose` 17, `QuickLaunchRefresh` 18. **New message**
-  `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages): only wParam 100,
-  the band's Refresh. It clicks no icon (the review before 0.1.2, A1: an icon starts the person's
+  `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages): wParam 100, the
+  band's Refresh; since brief 70 also 101 (open 2000's list; where nothing is left out, a list of
+  every icon of the band, for the list window's leak check) and 102 (close it). Neither starts
+  anything. It clicks no icon (the review before 0.1.2, A1: an icon starts the person's
   real programs, and a test command acts on test items only).
 - **Proof**: the golden pictures of the bar without the band did not change in steps 1 to 5 (the
   intended changes: the three Taskbar pages of Bevel95 Settings for the check box, and the 98 and
