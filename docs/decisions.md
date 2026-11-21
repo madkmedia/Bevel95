@@ -5099,7 +5099,10 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   takes the new list at its next paint (`State::refresh`). Since the review before 0.1.2 (B5, B6,
   C3, C4): the browser and the mail program are asked on this thread only, at its first look and
   every 30 s (never on the bar's thread at its start, where a program on an unreachable network
-  place held the bar up; their icons join the band a moment after it shows); the bar is given a
+  place held the bar up; their icons join the band a moment after it shows; since the second
+  review before 0.1.2, C5, they are asked after the folder has been read and given to the bar, so
+  a program on an unreachable network place delays only their own icons, never the person's
+  shortcuts); the bar is given a
   new list whenever the folder, quick-launch.txt, the pictures or the browser and mail program
   changed, so a new default browser is learnt within 30 s whether or not the folder changed;
   pictures are read only for the shortcuts that show (the bar says how many after each paint,
@@ -5196,7 +5199,18 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   one whose rights deny reading its contents, one replaced, one removed, a folder in its name, a
   link to a file). A menu acts on the icon it opened on
   (`quick_launch::Target`: a built-in icon, or the shortcut by its file) and only while that icon
-  is still on the band ("Remembered by what it is, never by where it is").
+  is still on the band ("Remembered by what it is, never by where it is"). **Its questions close
+  with the bar and its look** (the second review before 0.1.2, B2: at the bar's end, with a file
+  job still running, a question stayed as a window that did not answer; at a change of look or
+  colors it stayed in the old look): at the bar's end (`on_destroy`) and at a change of look or
+  colors (`set_era`, `set_colors`), beside its dialogs, the bar closes an open Quick Launch
+  question (`winkit::confirm::close_asked`: a question asked with `ask_then`, which only Quick
+  Launch uses; its action is dropped before the window goes, so nothing of it is done; the
+  desktop's Delete, Empty Recycle Bin and Undo Copy questions are left as they were). Test:
+  `confirm::tests::an_askers_question_closed_by_its_program_does_nothing` (the action dropped, a
+  late Yes does nothing, another kind of question stays). The log line for a built-in icon taken
+  off says "taken off the band" only when quick-launch.txt was saved; when the save was refused it
+  says the icon is off for now only and comes back at the next reading.
 - **The bar without the band** (step 6, its own commit, after steps 1 to 5 had proved with
   unchanged golden pictures that nothing else moved): Windows 98's and 2000's bar with Quick Launch
   off was not what Bevel95 drew. The captures `<pc>-truecolor-ql-off-0`, `-1`, `-6` show that the
@@ -5217,6 +5231,14 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   target the person changes keeps its old picture until the bar restarts (`start_menu::file_icon`
   keeps every picture it read by path); the Delete question names a shortcut without its ending
   ("Foo.lnk" and "Foo.url" both ask about "Foo", and "report.docx" is asked about as "report").
+  From the second review before 0.1.2 (written down, not repaired): a bar narrower than about 220
+  pixels at 1x (a task area under about 41) still lets the one task button run over the scroll
+  arrows and the notification area; the shortcuts' pictures blink for a moment after a folder
+  change (the new list is given to the bar before its pictures are read again); Delete on a
+  shortcut reads the file's identity on the bar's thread, at the menu and at Yes, so a vanished
+  network place can hold the bar for the network's wait; switching Quick Launch off and on, which
+  any program of the same person can ask for (`Bevel95.Bar.Command` 15, or 17 then 15), also
+  brings back the built-in icons taken off.
 - **New BarCommands** (at the end, so the old codes stay): `QuickLaunch` 15 (toggle),
   `QuickLaunchOpen` 16, `QuickLaunchClose` 17, `QuickLaunchRefresh` 18. **New message**
   `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages): only wParam 100,

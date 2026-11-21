@@ -152,6 +152,19 @@ pub fn ask_then(place: Place, question: Question, by_keyboard: bool, yes: Box<dy
     ask(place, question, Pending::Then(yes), by_keyboard);
 }
 
+/// Closes the open question if it is an asker's own (`ask_then`), without an answer: its action is
+/// dropped first, so nothing of it is done. A question of another kind (Delete, Empty Recycle Bin,
+/// Undo Copy) is left open. For the bar at its end and at a change of look or colors (the second
+/// review before 0.1.2, B2: Quick Launch's questions outlived the bar and its look).
+pub fn close_asked() {
+    if !PENDING.with(|p| matches!(*p.borrow(), Some(Pending::Then(_)))) {
+        return;
+    }
+    drop_pending();
+    log("a question was closed without an answer (its program closed it); nothing was done");
+    kit::close::<ConfirmHost>();
+}
+
 /// Empty Recycle Bin: the look's question (one item by its name, several by their number).
 pub fn ask_empty(place: Place, by_keyboard: bool) {
     let n = file_ops::recycle_bin_count();
@@ -439,5 +452,24 @@ mod tests {
         take_over(Pending::EmptyRecycleBin, drop_pending);
         let left = PENDING.with(|p| p.borrow_mut().take());
         assert!(matches!(left, Some(Pending::EmptyRecycleBin)), "the new question's action is the one waiting");
+    }
+
+    /// The bar closes an asker's question (Quick Launch's) at its end or a change of look: its
+    /// action is dropped and never run, also when Yes would come after; other questions stay.
+    #[test]
+    fn an_askers_question_closed_by_its_program_does_nothing() {
+        use std::rc::Rc;
+        let done = Rc::new(Cell::new(false));
+        let flag = done.clone();
+        PENDING.with(|p| *p.borrow_mut() = Some(Pending::Then(Box::new(move || flag.set(true)))));
+        close_asked();
+        assert!(PENDING.with(|p| p.borrow().is_none()), "its action is gone");
+        // A Yes arriving late (a click already queued) finds nothing to do.
+        ConfirmHost::activate(Part::Yes);
+        assert!(!done.get(), "nothing was done");
+
+        PENDING.with(|p| *p.borrow_mut() = Some(Pending::EmptyRecycleBin));
+        close_asked();
+        assert!(matches!(PENDING.with(|p| p.borrow_mut().take()), Some(Pending::EmptyRecycleBin)), "another kind of question stays");
     }
 }

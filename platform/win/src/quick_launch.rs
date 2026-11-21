@@ -151,10 +151,10 @@ fn run() {
     let mut logged_count: Option<usize> = None;
     while !STOP.load(Ordering::SeqCst) {
         let again = AGAIN.swap(false, Ordering::SeqCst);
-        if again || looks.is_multiple_of(PROGRAMS_EVERY) {
-            programs = (registered("http"), registered("mailto"));
-        }
-        let programs_changed = published_programs.as_ref() != Some(&programs);
+        // The browser and the mail program are asked for after the folder is read and given to
+        // the bar (the second review before 0.1.2, C5): a program on an unreachable network place
+        // then delays only their own icons, never the person's shortcuts.
+        let ask_programs = again || looks.is_multiple_of(PROGRAMS_EVERY);
         looks = looks.wrapping_add(1);
         // The built-in icons taken off: read again whenever the file changed (also by hand, or
         // deleted), so that the band and the file never disagree.
@@ -200,7 +200,7 @@ fn run() {
         if took > 500 {
             log(&format!("quick launch: reading its folder took {took} ms"));
         }
-        if folder_changed || removed_changed || pictures_read || programs_changed {
+        let publish = |programs: &(Option<String>, Option<String>)| {
             if let Ok(mut latest) = LATEST.lock() {
                 *latest = Some(Snapshot {
                     shortcuts: shortcuts.clone(),
@@ -209,8 +209,18 @@ fn run() {
                     removed: removed.clone(),
                 });
             }
-            published_programs = Some(programs.clone());
             repaint();
+        };
+        if folder_changed || removed_changed || pictures_read {
+            publish(&programs);
+            published_programs = Some(programs.clone());
+        }
+        if ask_programs {
+            programs = (registered("http"), registered("mailto"));
+        }
+        if published_programs.as_ref() != Some(&programs) {
+            publish(&programs);
+            published_programs = Some(programs.clone());
         }
         // Waits for the next look (EVERY), or until woken: Refresh, more pictures, the end.
         if let Ok(guard) = WAKE.0.lock() {
@@ -488,9 +498,15 @@ pub fn take_off(builtin: Builtin) -> Vec<Builtin> {
     if !removed.contains(&builtin) {
         removed.push(builtin);
     }
-    save_removed(&removed);
+    if save_removed(&removed) {
+        log(&format!("quick launch: {} taken off the band", builtin.key()));
+    } else {
+        log(&format!(
+            "quick launch: {} taken off the band for now only: quick-launch.txt was not saved, so it comes back at the next reading",
+            builtin.key()
+        ));
+    }
     read_again();
-    log(&format!("quick launch: {} taken off the band", builtin.key()));
     removed
 }
 
@@ -504,13 +520,18 @@ pub fn put_back_all() {
     read_again();
 }
 
-/// Remembers the built-in icons taken off the band.
-pub fn save_removed(removed: &[Builtin]) {
+/// Remembers the built-in icons taken off the band. False when the save was refused or failed
+/// (the reason is logged: here, or already by `state_file`).
+pub fn save_removed(removed: &[Builtin]) -> bool {
     let path = state_path();
-    if let Err(e) = state_file::save(&path, &quick_launch::removed_text(removed))
-        && !state_file::already_logged(&e)
-    {
-        log(&format!("could not save the Quick Launch icons taken off to {}: {e}", crate::log::path_kind(&path)));
+    match state_file::save(&path, &quick_launch::removed_text(removed)) {
+        Ok(()) => true,
+        Err(e) => {
+            if !state_file::already_logged(&e) {
+                log(&format!("could not save the Quick Launch icons taken off to {}: {e}", crate::log::path_kind(&path)));
+            }
+            false
+        }
     }
 }
 

@@ -2470,8 +2470,10 @@ fn set_era(bar: HWND, era: Era) {
                 return;
             }
         };
-    // A dialog open in the old look goes away; menus are already closed.
+    // A dialog open in the old look goes away, and so does a question of Quick Launch's (its
+    // action with it: nothing is done); menus are already closed.
     dialogs::close();
+    bevel_winkit::confirm::close_asked();
     let widest = widest_time(&regular);
     let quick_launch = with_app(|app| {
         let before = app.quick_launch_on();
@@ -2510,8 +2512,10 @@ fn set_colors(bar: HWND, depth: Depth) {
     let Some(era) = with_app(|app| (app.colors != depth).then_some(app.era)).flatten() else {
         return;
     };
-    // A dialog open in the old colors goes away, as for a new look; menus are already closed.
+    // A dialog open in the old colors goes away, as for a new look, and so does a question of
+    // Quick Launch's (nothing of it is done); menus are already closed.
     dialogs::close();
+    bevel_winkit::confirm::close_asked();
     with_app(|app| {
         app.colors = depth;
         app.theme = theme::theme_in(era, depth);
@@ -2557,6 +2561,9 @@ fn on_destroy(bar: HWND) {
     dialogs::close();
     properties_window::close();
     about_window::close();
+    // A question of Quick Launch's goes too, doing nothing (with a file job still running the
+    // process outlives this window, and the question would stay as a window that does not answer).
+    bevel_winkit::confirm::close_asked();
     desktop::hide();
     quick_launch::stop();
     tip::destroy();
