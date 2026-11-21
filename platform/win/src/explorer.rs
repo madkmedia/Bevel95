@@ -314,6 +314,39 @@ pub fn main_tray() -> HWND {
     }
 }
 
+/// Explorer's own taskbar window: the first "Shell_TrayWnd" that is not one of Bevel95's stand-ins
+/// and whose process is Windows' own explorer.exe (the file in Windows' folder); another taskbar
+/// program's window of that class is never taken. Nothing is sent to any window here (the windows
+/// are found by class, their process asked of Windows), so a hung Explorer cannot hold it up.
+/// Null when there is none.
+pub fn explorer_tray() -> HWND {
+    let class = wide("Shell_TrayWnd");
+    let mark = wide(STAND_IN_MARK);
+    let explorer = windows_explorer_exe();
+    let mut after: HWND = null_mut();
+    loop {
+        // SAFETY: valid null-terminated strings; `after` is null or a window this loop just found.
+        let (found, marked) = unsafe {
+            after = FindWindowExW(null_mut(), after, class.as_ptr(), null());
+            (after, !after.is_null() && !GetPropW(after, mark.as_ptr()).is_null())
+        };
+        if found.is_null() {
+            return null_mut();
+        }
+        if !marked && Path::new(&crate::window_list::program_path(found).to_lowercase()) == explorer.as_path() {
+            return found;
+        }
+    }
+}
+
+/// Windows' own explorer.exe, in Windows' folder (the system folder's parent). Compared without
+/// regard to case, as Windows names files.
+fn windows_explorer_exe() -> PathBuf {
+    let system = PathBuf::from(bevel_winkit::shell::system_program("explorer.exe"));
+    let windows = system.parent().and_then(Path::parent).map_or_else(|| PathBuf::from("C:\\Windows"), Path::to_path_buf);
+    PathBuf::from(windows.join("explorer.exe").to_string_lossy().to_lowercase())
+}
+
 /// All Windows taskbar windows: the main one plus one per extra monitor.
 fn trays() -> Vec<HWND> {
     let mut out = Vec::new();

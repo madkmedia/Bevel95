@@ -2859,8 +2859,10 @@ it, but write nothing).
       `Bevel95.Bar.DragEsc` (WM_APP + 13, the keyboard hook's), `Bevel95.Bar.Colors` (WM_APP + 40),
       `Bevel95.Bar.OwnIcon` (WM_APP + 41, the callback of Bevel95's icon in Windows' notification
       area), `Bevel95.Bar.QuickLaunch` (WM_APP + 42, never a number: new with Quick Launch, for live
-      tests: wParam 0 to 3 clicks that built-in icon if it is on the band, 100 reads the folder
-      again). wParam and lParam are as before. The bar registers them all as it starts
+      tests: wParam 100 reads the folder again, any other wParam does nothing; until the review
+      before 0.1.2, A1, wParam 0 to 3 clicked that built-in icon, which started the person's real
+      browser, mail program or Explorer or ran Show Desktop, so any program could make the bar
+      act on real programs and windows; taken out). wParam and lParam are as before. The bar registers them all as it starts
       (`bar::register_messages`), so the keyboard hook never asks Windows for a number. Left as
       numbers, since they only paint, read or answer: `WM_REPAINT` (+ 2), `WM_VOLUME_CHANGED`
       (+ 9), Quick Search's `WM_FIND_PROGRAMS_READ` (+ 12), `WM_TASK_AT` (+ 16, a live test's
@@ -5039,10 +5041,15 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   Nothing typed or read from a file goes into the call. A mail association that names an app no
   longer installed gives none (seen on the PC where it was built).
   Show Desktop is Windows' own (Win+D's), which the classic desktop follows ("Win+D and the
-  classic desktop"): Shell.Application's IShellDispatch4::ToggleDesktop (hand-written COM, method
-  41), on a thread of its own; on the owner's Windows 11 it answered S_FALSE and nothing happened,
-  so the command then goes to Windows' own taskbar window (WM_COMMAND 407, its "toggle desktop").
-  Whether that shows the desktop was not seen live (see below). Windows Explorer starts as the
+  classic desktop"), in **one way only** (the review before 0.1.2, B1): WM_COMMAND 407 (its
+  "toggle desktop") posted once to Explorer's own taskbar window (`explorer::explorer_tray`: the
+  first `Shell_TrayWnd` without Bevel95's mark whose process is Windows' own explorer.exe, so
+  never a stand-in of any Bevel95 copy and never another taskbar program's window of that class;
+  found by class and asked of Windows by process, nothing sent, and posting never waits, so a hung
+  Explorer cannot hold up the bar). Before, Shell.Application's ToggleDesktop came first: it
+  reached Bevel95's stand-in, which forwards it to Explorer (one toggle), answered S_FALSE, and the
+  fallback then posted 407 too (a second toggle): together nothing. The COM call is gone. What was
+  seen live is under "Live" below. Windows Explorer starts as the
   Programs menu's entry does (folders.exe without a folder); a shortcut opens as a Programs menu
   entry is opened (`window_list::launch`).
 - **How it looks**: the band's lines, grips, buttons, raised and sunken edges and the task buttons'
@@ -5086,7 +5093,9 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   `vm-<pc>-tasks-<n>` cases now narrow their task area from Bevel95's new end of it.
 - **New BarCommands** (at the end, so the old codes stay): `QuickLaunch` 15 (toggle),
   `QuickLaunchOpen` 16, `QuickLaunchClose` 17, `QuickLaunchRefresh` 18. **New message**
-  `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages).
+  `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages): only wParam 100,
+  the band's Refresh. It clicks no icon (the review before 0.1.2, A1: an icon starts the person's
+  real programs, and a test command acts on test items only).
 - **Proof**: the golden pictures of the bar without the band did not change in steps 1 to 5 (the
   intended changes: the three Taskbar pages of Bevel95 Settings for the check box, and the 98 and
   2000 pictures of the bar's menu for Toolbars); new scenes `<look>-quick-launch`,
@@ -5104,7 +5113,18 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   answered S_FALSE, the fallback was posted; no window counted as minimized (Windows 11's Show
   Desktop raises its desktop rather than minimizing), so whether it worked is the owner's
   checklist. Not tried live: a real click on any icon, Delete, the menus' entries, the browser or
-  mail starting, the 2000 look.
+  mail starting, the 2000 look. (That pair of toggles was the double toggle of B1 above: it could
+  not have shown anything.)
+- **Live, after the repair** (2026-11-20, once, after hours without input from the owner, by a
+  private probe that posts the bar's command the bar's way: `private/probes/quick-launch/repairs/
+  showdesktop.ps1`, switched back at once by a second post): Explorer's own taskbar window was
+  found as the bar finds it. Not proven either way: every one of the owner's windows was already
+  minimized (23 minimized, none shown), so there was nothing to hide; the window in front stayed
+  Windows' desktop (Progman, explorer.exe) throughout, and after the second post the classic
+  desktop's check logged once that it had been put back in its place (Windows' desktop had moved,
+  a sign that Explorer acted on the command, not proof). The COM call alone was not tried: on that
+  screen it could not have been judged either. Whether Show Desktop hides and brings back windows
+  stays the owner's checklist.
 
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean

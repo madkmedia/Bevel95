@@ -18,13 +18,11 @@ use bevel_core::theme::Era;
 use bevel_winkit::state_file;
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::Graphics::Gdi::InvalidateRect;
-use windows_sys::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows_sys::Win32::System::Registry::{HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
 use windows_sys::Win32::UI::Shell::{
     ASSOCF_INIT_IGNOREUNKNOWN, ASSOCF_IS_PROTOCOL, ASSOCF_NOTRUNCATE, ASSOCSTR_EXECUTABLE, AssocQueryStringW,
     FOLDERID_QuickLaunch,
 };
-use windows_sys::core::GUID;
 
 use crate::log::{data_dir, log};
 use crate::util::wide;
@@ -236,59 +234,31 @@ fn reg_string(root: HKEY, key: &str, value: &str) -> Option<String> {
     Some(String::from_utf16_lossy(&buf[..end]))
 }
 
-/// Shell.Application (CLSID_Shell) and its IShellDispatch4, whose ToggleDesktop is Windows' own
-/// Show Desktop (Win+D's): every window away, and back at the next call. From shldisp.h.
-const CLSID_SHELL: GUID = GUID::from_u128(0x13709620_C279_11CE_A49E_444553540000);
-const IID_ISHELLDISPATCH4: GUID = GUID::from_u128(0xEFD84B2D_4BCF_4298_BE25_EB542A59FBDA);
-/// ToggleDesktop's place in the method table: IUnknown's 3 and IDispatch's 4, IShellDispatch's 23,
-/// IShellDispatch2's 9, IShellDispatch3's 1 (AddToRecent), then IShellDispatch4's WindowsSecurity
-/// and ToggleDesktop.
-const TOGGLE_DESKTOP: usize = 3 + 4 + 23 + 9 + 1 + 1;
-/// Explorer's taskbar command for Show Desktop (what ToggleDesktop asks it for).
+/// Explorer's taskbar command for Show Desktop (what Win+D and its own corner button do: every
+/// window away, and back at the next one).
 const TRAY_TOGGLE_DESKTOP: usize = 407;
-type ToggleDesktop =unsafe extern "system" fn(*mut c_void) -> windows_sys::core::HRESULT;
 
 /// Show Desktop: Windows' own, as Win+D (which Bevel95's classic desktop follows: "Win+D and the
-/// classic desktop"). On a thread of its own: Windows passes it to the taskbar window, which is
-/// Bevel95's stand-in on the bar's thread (it forwards it to Explorer's).
+/// classic desktop"), in one way only: the command posted once to Explorer's own taskbar window
+/// (`explorer::explorer_tray`: never Bevel95's stand-in, never another program's window of that
+/// class). Posting never waits, so a hung Explorer cannot hold up the bar. (Until the review
+/// before 0.1.2, B1, Shell.Application's ToggleDesktop came first: it reached Bevel95's stand-in,
+/// which forwarded it to Explorer, and its S_FALSE then had the command posted a second time, so
+/// the two toggles undid each other.)
 pub fn show_desktop() {
-    let spawned = std::thread::Builder::new().name("show desktop".into()).spawn(|| {
-        bevel_winkit::com::init();
-        let mut shell: *mut c_void = null_mut();
-        // SAFETY: documented CLSID and IID; the method table slot as shldisp.h declares it; the
-        // reference is released.
-        unsafe {
-            let hr = CoCreateInstance(&CLSID_SHELL, null_mut(), CLSCTX_INPROC_SERVER, &IID_ISHELLDISPATCH4, &mut shell);
-            if hr != 0 || shell.is_null() {
-                log(&format!("quick launch: Show Desktop: Shell.Application could not be made (error {hr:#x})"));
-                return;
-            }
-            let hr = bevel_winkit::com::method::<ToggleDesktop>(shell, TOGGLE_DESKTOP)(shell);
-            bevel_winkit::com::release(shell);
-            if hr != 0 {
-                // Seen on Windows 11 with Bevel95's bar (S_FALSE, nothing happened): the same command
-                // then goes to Windows' own taskbar window, which carries out Show Desktop for Win+D
-                // and its own corner button (its tray command 407, "toggle desktop").
-                let tray = crate::explorer::main_tray();
-                let posted = !tray.is_null()
-                    && windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                        tray,
-                        windows_sys::Win32::UI::WindowsAndMessaging::WM_COMMAND,
-                        TRAY_TOGGLE_DESKTOP,
-                        0,
-                    ) != 0;
-                static LOGGED: AtomicBool = AtomicBool::new(false);
-                if !posted || !LOGGED.swap(true, Ordering::SeqCst) {
-                    log(&format!(
-                        "quick launch: Show Desktop: ToggleDesktop answered {hr:#x}; {}",
-                        if posted { "given to Windows' taskbar window instead (logged once)" } else { "Windows' taskbar window is not there either" }
-                    ));
-                }
-            }
-        }
-    });
-    if let Err(e) = spawned {
-        log(&format!("quick launch: Show Desktop: no thread ({e})"));
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_COMMAND};
+    let tray = crate::explorer::explorer_tray();
+    if tray.is_null() {
+        log("quick launch: Show Desktop: Explorer's own taskbar window is not there; nothing was done");
+        return;
+    }
+    // SAFETY: a window handle just found; PostMessageW only queues the message.
+    let posted = unsafe { PostMessageW(tray, WM_COMMAND, TRAY_TOGGLE_DESKTOP, 0) } != 0;
+    static LOGGED: AtomicBool = AtomicBool::new(false);
+    if !posted {
+        log(&format!("quick launch: Show Desktop: the command could not be posted to Explorer's taskbar window (error {})", std::io::Error::last_os_error()));
+    } else if !LOGGED.swap(true, Ordering::SeqCst) {
+        log("quick launch: Show Desktop: posted to Explorer's own taskbar window (logged once)");
     }
 }
 

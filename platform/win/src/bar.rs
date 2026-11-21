@@ -139,9 +139,10 @@ pub const WM_TASK_AT: u32 = WM_APP + 16;
 /// The colors were chosen (the Colors submenu, Quick Search, a live test): wParam = its index
 /// in `Depth::ALL` (0: 16 Colors, 1: True Color).
 pub static WM_BAR_COLORS: Private = Private::new("Bevel95.Bar.Colors");
-/// Quick Launch, for live tests (`tools\dev\postbar.ps1 QuickLaunch <wParam>`): wParam 0 to 3
-/// clicks the built-in icon `quick_launch::Builtin::ALL[wParam]` if it is on the band (2: Show
-/// Desktop), 100 has the folder read again (the band's Refresh).
+/// Quick Launch, for live tests (`tools\dev\postbar.ps1 QuickLaunch 100`): wParam 100 has the
+/// folder read again (the band's Refresh); any other wParam does nothing. It never clicks an icon:
+/// those start the person's real programs and act on their windows, and a test command acts on
+/// test items only (the review before 0.1.2, A1).
 pub static WM_QUICK_LAUNCH: Private = Private::new("Bevel95.Bar.QuickLaunch");
 
 /// Every message of the bar registered by name, with the `WM_APP + n` it was before (the names
@@ -2935,19 +2936,6 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         m if m == WM_QUICK_LAUNCH.id() => {
             if wparam == 100 {
                 quick_launch::read_again();
-            } else if let Some(&b) = bevel_core::quick_launch::Builtin::ALL.get(wparam) {
-                let at = with_app(|app| {
-                    let on = app.quick_launch_on();
-                    on.then(|| app.ql.items.iter().position(|i| *i == bevel_core::quick_launch::Item::Builtin(b))).flatten()
-                })
-                .flatten();
-                match at {
-                    Some(i) => {
-                        log(&format!("quick launch: a test's message clicks {}", b.key()));
-                        click_quick(i);
-                    }
-                    None => log("quick launch: a test's message was refused (that icon is not on the band)"),
-                }
             }
             return 0;
         }
