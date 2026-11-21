@@ -826,16 +826,14 @@ use crate::paint::{Menu, MenuEntry};
 /// default, in bold) and Open; Cut, Copy and Paste for a folder of files; Create Shortcut and
 /// Delete; Properties. Left out for now (todo): Find..., Send To, Format..., Rename, Sharing.
 /// `locked`: the row is a drive found locked by BitLocker; Windows' own Unlock Drive... follows
-/// Open, as on the drive's icon (`desktop::ItemKind::LockedDrive`).
+/// Open, as on the drive's icon (`desktop::ItemKind::LockedDrive`), and Paste is left out: it
+/// would put files into a drive that cannot be written until it is unlocked (the review before
+/// 0.1.3, B5). Its other entries do not need the drive's contents: a shortcut to the drive, and
+/// Windows' own Properties.
 pub fn row_entries(kind: NodeKind, can_paste: bool, locked: bool) -> Vec<Option<D>> {
     match kind {
         NodeKind::Drive(_) if locked => {
-            let mut out = vec![Some(D::Explore), Some(D::Open), Some(D::UnlockDrive)];
-            if can_paste {
-                out.extend([None, Some(D::Paste)]);
-            }
-            out.extend([None, Some(D::CreateShortcut), None, Some(D::ItemProperties)]);
-            out
+            vec![Some(D::Explore), Some(D::Open), Some(D::UnlockDrive), None, Some(D::CreateShortcut), None, Some(D::ItemProperties)]
         }
         NodeKind::Desktop => Vec::new(),
         NodeKind::Folder => {
@@ -1079,6 +1077,11 @@ mod tests {
             assert_eq!(m.entries[2].label, crate::bitlocker::UNLOCK_LABEL);
             assert!(m.entries[0].bold && !m.entries[2].bold);
         }
+        // No Paste on a locked drive, whatever the Clipboard holds (the review before 0.1.3, B5);
+        // a drive that reads keeps it.
+        assert!(!row_entries(drive, true, true).contains(&Some(D::Paste)));
+        assert_eq!(row_entries(drive, true, true), row_entries(drive, false, true));
+        assert!(row_entries(drive, true, false).contains(&Some(D::Paste)));
         // A drive that reads, and any other row: no such entry, whatever `locked` says.
         assert!(!row_entries(drive, true, false).contains(&Some(D::UnlockDrive)));
         for kind in [NodeKind::Folder, NodeKind::MyComputer, NodeKind::MyDocuments, NodeKind::RecycleBin, NodeKind::ControlPanel] {

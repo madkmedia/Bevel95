@@ -6,16 +6,17 @@
 //! is only read, and the unlock window is Windows' own program (`bdeunlock.exe`, by its whole
 //! path), which asks for the password itself; Bevel95 never sees it.
 
-use std::ptr::{null, null_mut};
+use std::ptr::null_mut;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use bevel_core::bitlocker::{self, UnlockStart, UnlockStarts};
-use windows_sys::Win32::Foundation::{GetLastError, PROPERTYKEY};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, PROPERTYKEY, WAIT_TIMEOUT};
 use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
 use windows_sys::Win32::System::Com::StructuredStorage::{PROPVARIANT, PropVariantClear};
+use windows_sys::Win32::System::Threading::WaitForSingleObject;
 use windows_sys::Win32::UI::Shell::PropertiesSystem::{GPS_DEFAULT, PSGetPropertyKeyFromName, SHGetPropertyStoreFromParsingName};
-use windows_sys::Win32::UI::Shell::ShellExecuteW;
+use windows_sys::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows_sys::core::GUID;
 
@@ -118,15 +119,64 @@ fn now_ms() -> u64 {
     EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
-/// Whether the unlock window may be started for `letter` now (`bitlocker::UnlockStarts`); a start
-/// left out is logged once.
+/// The process of the unlock window started last for each drive (A to Z), as a number (a
+/// `HANDLE`, kept open until it is seen to have ended; 0: none).
+static RUNNING: Mutex<[usize; 26]> = Mutex::new([0; 26]);
+
+/// The slot of drive `letter` in `RUNNING`, if it is a letter A to Z.
+fn slot(letter: char) -> Option<usize> {
+    let l = letter.to_ascii_uppercase();
+    l.is_ascii_uppercase().then(|| (l as u8 - b'A') as usize)
+}
+
+/// Whether the unlock window started last for `letter` is still running; one that has ended is
+/// let go of.
+fn still_running(letter: char) -> bool {
+    let Some(i) = slot(letter) else { return false };
+    let Ok(mut running) = RUNNING.lock() else { return false };
+    let h = running[i];
+    if h == 0 {
+        return false;
+    }
+    // SAFETY: a process handle this program got from ShellExecuteExW and has not closed yet;
+    // a wait of 0 ms only asks.
+    if unsafe { WaitForSingleObject(h as HANDLE, 0) } == WAIT_TIMEOUT {
+        return true;
+    }
+    // SAFETY: the same handle, closed exactly once (its slot is emptied with it).
+    unsafe { CloseHandle(h as HANDLE) };
+    running[i] = 0;
+    false
+}
+
+/// The unlock window just started for `letter` runs as process `h` (kept until it ends).
+fn started(letter: char, h: HANDLE) {
+    if h.is_null() {
+        return;
+    }
+    let (Some(i), Ok(mut running)) = (slot(letter), RUNNING.lock()) else {
+        // SAFETY: a handle ShellExecuteExW gave and nothing else keeps.
+        unsafe { CloseHandle(h) };
+        return;
+    };
+    if running[i] != 0 {
+        // SAFETY: the older handle of that slot, closed exactly once as it is replaced.
+        unsafe { CloseHandle(running[i] as HANDLE) };
+    }
+    running[i] = h as usize;
+}
+
+/// Whether the unlock window may be started for `letter` now (`bitlocker::UnlockStarts`): not
+/// while the one started last for it still runs, nor within two seconds of a start; a start left
+/// out is logged once.
 fn may_start(letter: char) -> bool {
+    let running = still_running(letter);
     let Ok(mut starts) = STARTS.lock() else { return false };
-    match starts.ask(letter, now_ms()) {
+    match starts.ask(letter, now_ms(), running) {
         UnlockStart::Start => true,
         UnlockStart::LeftOut { first } => {
             if first {
-                log(&format!("bitlocker: Windows' unlock window was started for {}: just now; not started again", letter.to_ascii_uppercase()));
+                log(&format!("bitlocker: Windows' unlock window for {}: is open or was started just now; not started again", letter.to_ascii_uppercase()));
             }
             false
         }
@@ -135,8 +185,9 @@ fn may_start(letter: char) -> bool {
 }
 
 /// Windows' own unlock window for drive `letter`, started as Windows' own entry starts it (its
-/// program by its whole path, the drive's root as the argument), on a thread of its own; at most
-/// once for one drive within `bitlocker::UNLOCK_AGAIN_AFTER_MS`, whoever asks.
+/// program by its whole path, the drive's root as the argument), on a thread of its own; not
+/// while the one started last for that drive still runs, and at most once for one drive within
+/// `bitlocker::UNLOCK_AGAIN_AFTER_MS`, whoever asks.
 pub fn start_unlock(letter: char) {
     if !may_start(letter) {
         return;
@@ -145,11 +196,22 @@ pub fn start_unlock(letter: char) {
     let spawned = std::thread::Builder::new().name("unlock drive".into()).spawn(move || {
         crate::com::init();
         let (exe, arg) = (wide(&unlock_program()), wide(&root(letter)));
-        // SAFETY: null-terminated program and argument; a null verb is its default command.
-        let r = unsafe { ShellExecuteW(null_mut(), null(), exe.as_ptr(), arg.as_ptr(), null(), SW_SHOWNORMAL) };
-        if r as usize <= 32 {
-            log(&format!("bitlocker: Windows' unlock window could not start for {letter}: (ShellExecute error {})", r as usize));
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+            // Its process is kept, to know while it runs.
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            lpFile: exe.as_ptr(),
+            lpParameters: arg.as_ptr(),
+            nShow: SW_SHOWNORMAL,
+            ..Default::default()
+        };
+        // SAFETY: a filled structure of the size given, with null-terminated program and
+        // argument that live until the call returns; a null verb is its default command.
+        if unsafe { ShellExecuteExW(&mut info) } == 0 {
+            // SAFETY: a plain query, right after the call that failed.
+            log(&format!("bitlocker: Windows' unlock window could not start for {letter}: (error {})", unsafe { GetLastError() }));
         } else {
+            started(letter, info.hProcess);
             log(&format!("bitlocker: Windows' unlock window started for {letter}:"));
         }
     });

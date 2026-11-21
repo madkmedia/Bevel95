@@ -33,7 +33,7 @@ use bevel_core::disk_box::{DiskBox, Part as DiskPart};
 use bevel_core::folder::pane::{self, NodeKind, NodeSpec};
 use bevel_core::folder::options::{Choice, FolderOptions, Part as OptionsPart};
 use bevel_core::folder::web::{Guard, Kind as WebKind, Link, WebFonts};
-use bevel_core::folder::{FolderWindow, History, ListRow, Part, Place, Space, Tool, address, status, tree_art};
+use bevel_core::folder::{FolderWindow, History, ListRow, Part, Place, Space, Step, Tool, address, status, tree_art};
 use bevel_core::kit::Form;
 use bevel_core::paint::{MenuEntry, MenuStyle};
 use bevel_core::text::escape_access_keys;
@@ -227,6 +227,9 @@ struct FolderHost {
     /// 98 and 2000: the places it has shown (Back, Forward), and the address bar's list's entries
     /// while it is open.
     history: History,
+    /// How the window came to the place it shows (`None`: it was opened there), for a drive found
+    /// locked once the window was there (`locked_found`: that step is undone).
+    came: Option<Step>,
     entries: Vec<address::Entry>,
     /// Explorer: when the icons follow the tree's selection (after keys); rows to read again
     /// at a moment (after a file command on a tree row).
@@ -452,6 +455,12 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
                 Shows::Desktop => read_desktop(era),
                 Shows::Folder(dir) => shell::list_folder(dir).map(|(s, h)| (s, h.count, h.total_size)),
             };
+            // A drive's root that was read is not locked (any more) (B2 of the review before 0.1.3).
+            if listed.is_some()
+                && let Some(l) = drive_letter_of(&shows)
+            {
+                note_lock(l, false);
+            }
             let snapshot = match &shows {
                 Shows::MyComputer => {
                     let s = read_my_computer(era, true);
@@ -866,8 +875,10 @@ fn known_facts(shows: &Shows) -> Facts {
     Facts { names, documents, desktops, ..Facts::default() }
 }
 
-/// A drive's kind and label, as My Computer reads them (`read_my_computer`).
-fn drive_of(root: &Path) -> Option<(DriveKind, String)> {
+/// A drive's kind and label, as My Computer reads them (`read_my_computer`). `ask_lock`: a drive
+/// that cannot be read is asked whether it is locked by BitLocker (on a reading thread only:
+/// false on a window's thread, the review before 0.1.3, B4).
+fn drive_of(root: &Path, ask_lock: bool) -> Option<(DriveKind, String)> {
     let letter = root.to_string_lossy().chars().next()?.to_ascii_uppercase();
     let w = wide(&format!("{letter}:\\"));
     // SAFETY: a null-terminated root path.
@@ -889,7 +900,7 @@ fn drive_of(root: &Path) -> Option<(DriveKind, String)> {
             let len = label.iter().position(|&c| c == 0).unwrap_or(0);
             text = String::from_utf16_lossy(&label[..len]);
             note_lock(letter, false);
-        } else {
+        } else if ask_lock {
             // SAFETY: a plain query, right after the call that failed.
             lock_after_failed_read(letter, drive_type, unsafe { GetLastError() });
         }
@@ -917,7 +928,7 @@ fn read_facts(shows: &Shows) -> Facts {
         if let Place::Folder(p) = &place {
             let path = PathBuf::from(p);
             let named = if path.parent().is_none() {
-                Named { drive: drive_of(&path), display: None }
+                Named { drive: drive_of(&path, true), display: None }
             } else {
                 Named { drive: None, display: shell::display_name(p) }
             };
@@ -980,11 +991,12 @@ fn title_of(era: Era, shows: &Shows) -> (String, Small) {
     title_from(era, shows, &read_facts_names(shows))
 }
 
-/// Only the names `title_from` needs (no listing, no space).
+/// Only the names `title_from` needs (no listing, no space). On a window's thread: no drive is
+/// asked whether it is locked (`drive_of(.., false)`).
 fn read_facts_names(shows: &Shows) -> Facts {
     let mut facts = known_facts(shows);
     if let Shows::Folder(p) = shows {
-        let named = if p.parent().is_none() { Named { drive: drive_of(p), display: None } } else { Named { drive: None, display: shell::display_name(&p.to_string_lossy()) } };
+        let named = if p.parent().is_none() { Named { drive: drive_of(p, false), display: None } } else { Named { drive: None, display: shell::display_name(&p.to_string_lossy()) } };
         facts.names.insert(shows.key(), named);
         if facts.documents.is_none() {
             facts.documents = shell::documents_folder();
@@ -1594,6 +1606,7 @@ fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
         stop: stop.clone(),
         select: None,
         history: History::new(shows.place()),
+        came: None,
         entries: Vec::new(),
         settle: None,
         reread: Vec::new(),
@@ -1663,6 +1676,9 @@ enum Go {
     /// `n` places back or forward.
     Back(usize),
     Forward(usize),
+    /// The place shown cannot be shown (a drive found locked): the step that came there undone
+    /// (`History::undo`).
+    Undo,
 }
 
 /// The current window goes to another place in the same window (Windows 98 and 2000): its reader
@@ -1690,10 +1706,26 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
                     return None;
                 }
                 h.history.go(s.place());
+                h.came = Some(Step::New);
                 s.place()
             }
-            Go::Back(n) => h.history.back(n)?,
-            Go::Forward(n) => h.history.forward(n)?,
+            Go::Back(n) => {
+                let p = h.history.back(n)?;
+                h.came = Some(Step::Back(n));
+                p
+            }
+            Go::Forward(n) => {
+                let p = h.history.forward(n)?;
+                h.came = Some(Step::Forward(n));
+                p
+            }
+            Go::Undo => {
+                let p = h.history.undo(h.came)?;
+                // The place gone back to is one the window showed before; how it first came
+                // there is not known any more.
+                h.came = None;
+                p
+            }
         };
         let shows = Shows::of_place(&place);
         h.stop.store(true, Ordering::SeqCst);
@@ -1909,8 +1941,8 @@ static TREE_ROWS: Mutex<Vec<TreeRows>> = Mutex::new(Vec::new());
 /// What a tree row that could not be read leads to, once it is marked as not readable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UnreadableRow {
-    /// Nothing more (not a drive; or a locked drive's row opened by a drag: Windows' unlock window
-    /// is never started by a drag resting on a row).
+    /// Nothing more (not a drive; or any row a drag opened: neither Windows' unlock window nor
+    /// the look's message box comes up in the middle of a drag, the review before 0.1.3, B6).
     Nothing,
     /// The look's "not accessible" message for the drive (Retry opens it again).
     DriveMessage,
@@ -1920,9 +1952,9 @@ enum UnreadableRow {
 
 fn after_unreadable_row(id: &str, locked: bool, by: OpenedBy) -> UnreadableRow {
     match (root_letter(id).is_some() && locked, by) {
+        (_, OpenedBy::Drag) => UnreadableRow::Nothing,
         (true, OpenedBy::Person) => UnreadableRow::Unlock,
-        (true, OpenedBy::Drag) => UnreadableRow::Nothing,
-        (false, _) if id.len() == 3 && id.ends_with(":\\") => UnreadableRow::DriveMessage,
+        (false, OpenedBy::Person) if id.len() == 3 && id.ends_with(":\\") => UnreadableRow::DriveMessage,
         _ => UnreadableRow::Nothing,
     }
 }
@@ -1938,6 +1970,13 @@ fn read_tree_rows(hwnd: HWND, era: Era, ids: Vec<String>, by: OpenedBy) {
         bevel_winkit::com::init();
         for id in ids {
             let rows = tree_rows(era, &id);
+            // A drive whose rows were read is not locked (any more): its menu loses Unlock
+            // Drive... and Open opens it (the review before 0.1.3, B2).
+            if rows.is_some()
+                && let Some(l) = root_letter(&id)
+            {
+                note_lock(l, false);
+            }
             // A drive that could not be read: is it locked? (asked here, off the window's thread)
             let locked = rows.is_none()
                 && root_letter(&id).is_some_and(|l| {
@@ -1973,6 +2012,9 @@ fn tree_rows_ready() {
                     None => {
                         log("folders: a folder of the tree could not be read");
                         h.form.tree.unreadable(&id);
+                        if by == OpenedBy::Drag {
+                            drag_found_unreadable(hwnd, &id);
+                        }
                         // A drive opened in the tree: the look's message (Retry opens it again);
                         // one locked by BitLocker: Windows' own unlock window instead, but only
                         // for a row the person opened, never for one a drag opened.
@@ -2097,6 +2139,32 @@ struct Hover {
     since: std::time::Instant,
     at: (i32, i32),
     scrolled: std::time::Instant,
+    /// The rows this drag opened that could not be read: it does not open them again (no
+    /// reader, no reading of the drive, no log line at every movement; the review before 0.1.3,
+    /// B6). Forgotten with the drag.
+    unreadable: Vec<String>,
+}
+
+/// Whether a drag resting on a closed row of the tree opens it now: 2000 after `ROW_OPENS_2000`
+/// without moving, 95 and 98 at a move after `ROW_OPENS_98`; never a row this drag found
+/// unreadable.
+fn drop_row_opens(era: Era, moved: bool, rested: Duration, unreadable: bool) -> bool {
+    !unreadable
+        && match era {
+            Era::Win2000 => rested >= ROW_OPENS_2000,
+            _ => moved && rested >= ROW_OPENS_98,
+        }
+}
+
+/// A row a drag opened on window `hwnd` could not be read: that drag leaves it closed.
+fn drag_found_unreadable(hwnd: HWND, id: &str) {
+    HOVER.with(|hv| {
+        if let Some(e) = hv.borrow_mut().get_mut(&(hwnd as isize))
+            && !e.unreadable.iter().any(|u| u == id)
+        {
+            e.unreadable.push(id.to_string());
+        }
+    });
 }
 
 thread_local! {
@@ -2224,7 +2292,7 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
             let (open, scroll) = HOVER.with(|hv| {
                 let mut hv = hv.borrow_mut();
                 let id = row.as_ref().map(|(_, id)| id.clone());
-                let e = hv.entry(hwnd as isize).or_insert(Hover { row: id.clone(), since: now, at: (x, y), scrolled: now });
+                let e = hv.entry(hwnd as isize).or_insert(Hover { row: id.clone(), since: now, at: (x, y), scrolled: now, unreadable: Vec::new() });
                 let moved = e.at != (x, y);
                 if e.row != id {
                     e.row = id;
@@ -2232,10 +2300,10 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
                 }
                 e.at = (x, y);
                 let rested = now.duration_since(e.since);
-                let open = row.map(|(i, _)| i).filter(|_| match era {
-                    Era::Win2000 => rested >= ROW_OPENS_2000,
-                    _ => moved && rested >= ROW_OPENS_98,
-                });
+                let open = row
+                    .as_ref()
+                    .filter(|(_, id)| drop_row_opens(era, moved, rested, e.unreadable.iter().any(|u| u == id)))
+                    .map(|&(i, _)| i);
                 let scroll = now.duration_since(e.scrolled) >= EDGE_SCROLL;
                 if scroll {
                     e.scrolled = now;
@@ -2371,8 +2439,10 @@ impl Hosted for DiskBoxHost {
 }
 
 /// A window went to a drive that its reading found locked by BitLocker (the lock was not known
-/// before the window went there): Windows' own unlock window for it, and the window goes back to
-/// where it was, or closes if it was opened on that drive, as if it had never gone there.
+/// before the window went there): Windows' own unlock window for it, and the window returns to
+/// where it came from by undoing the step that brought it there (a new place, Back or Forward:
+/// `History::undo`, the review before 0.1.3, B3); it closes only if it has no other place to show
+/// at all.
 fn locked_found(owner: HWND, letter: char) {
     log(&format!("folders: {letter}: is locked by BitLocker; Windows' unlock window instead"));
     bevel_winkit::bitlocker::start_unlock(letter);
@@ -2384,8 +2454,11 @@ fn locked_found(owner: HWND, letter: char) {
         if !still_there {
             return;
         }
-        if kit::with::<FolderHost, _>(|h| h.history.can_back()).unwrap_or(false) {
-            navigate(owner, None, Go::Back(1));
+        // Whether any place is left once the step is undone (a copy of the history: `navigate`
+        // undoes it on the real one).
+        let elsewhere = kit::with::<FolderHost, _>(|h| h.history.clone().undo(h.came).is_some()).unwrap_or(false);
+        if elsewhere {
+            navigate(owner, None, Go::Undo);
         } else {
             kit::close::<FolderHost>();
         }
@@ -2657,7 +2730,8 @@ fn tree_command(hwnd: HWND, c: D, by_keyboard: bool) {
                 show_cut(ids);
             }
         }
-        D::Paste => {
+        // Not into a drive shown locked (its menu has no Paste; a key on its row does nothing).
+        D::Paste if !node_locked(&node) => {
             if let Some(dir) = folder {
                 file_ops::paste(hwnd, dir);
                 reread_soon(Some(node.id.clone()));
@@ -3003,8 +3077,14 @@ fn open_selected(hwnd: HWND) {
     let own = the_look().is_some_and(|(e, _)| e == Era::Win2000)
         && SAVED.with(|s| s.borrow().own_window)
         && !kit::with::<FolderHost, _>(|h| h.form.tree_shown || h.form.exploring).unwrap_or(false);
+    // A drive shown locked and found so just now: Windows' unlock window at once. Shown locked
+    // by an older reading: it opens as any drive (`unlock_shown_locked`).
     if let [one] = targets.as_slice()
-        && !matches!(one.kind, ItemKind::LockedDrive)
+        && unlock_shown_locked(one)
+    {
+        return;
+    }
+    if let [one] = targets.as_slice()
         && let Some(shows) = place_of(one)
         && !own
     {
@@ -3016,13 +3096,23 @@ fn open_selected(hwnd: HWND) {
     }
 }
 
-/// Open on a drive whose icon is shown as locked (`kind_of`: its menu has Unlock Drive...):
-/// Windows' own unlock window at once, without going to the drive first (true).
+/// Open on a drive whose icon is shown as locked (`kind_of`: its menu has Unlock Drive...) and
+/// whose reading found it so just now (`LOCK_BELIEVED`): Windows' own unlock window at once,
+/// without going to the drive first (true). An older record is not believed (the drive may have
+/// been unlocked meanwhile by a way no reader saw): the drive opens in the ordinary way, and if it
+/// is still locked, its reading finds that out (`Facts::locked`, `locked_found`; the review
+/// before 0.1.3, B2).
 fn unlock_shown_locked(t: &Target) -> bool {
-    let Some(letter) = root_letter(&t.id).filter(|_| matches!(t.kind, ItemKind::LockedDrive)) else { return false };
+    let Some(letter) = root_letter(&t.id).filter(|&l| shown_locked_acts(t.kind, known_locked(l, true))) else { return false };
     log(&format!("folders: {letter}: is shown locked by BitLocker; Windows' unlock window instead"));
     bevel_winkit::bitlocker::start_unlock(letter);
     true
+}
+
+/// Whether Open or Explore on an item of `kind` starts Windows' unlock window instead
+/// (`fresh_locked`: the drive's last reading found it locked within `LOCK_BELIEVED`).
+fn shown_locked_acts(kind: ItemKind, fresh_locked: bool) -> bool {
+    matches!(kind, ItemKind::LockedDrive) && fresh_locked
 }
 
 /// Opens an item as Explorer would: a folder or a drive in a window of its own here, Control Panel
@@ -4626,18 +4716,58 @@ mod tests {
     /// A tree row that could not be read: a locked drive's row opened by the person starts
     /// Windows' unlock window, one a drag opened is only marked as not readable (the review of
     /// 2026-11-21, A1); a drive that cannot be read for another reason gets the look's message
-    /// as before, by either. (Plain values: nothing is started.)
+    /// when the person opened it, and nothing in the middle of a drag (the review before 0.1.3,
+    /// B6). (Plain values: nothing is started.)
     #[test]
     fn a_drag_resting_on_a_locked_drive_starts_nothing() {
         use super::{OpenedBy, UnreadableRow, after_unreadable_row};
         assert_eq!(after_unreadable_row("E:\\", true, OpenedBy::Person), UnreadableRow::Unlock);
         assert_eq!(after_unreadable_row("E:\\", true, OpenedBy::Drag), UnreadableRow::Nothing);
+        assert_eq!(after_unreadable_row("E:\\", false, OpenedBy::Person), UnreadableRow::DriveMessage);
+        assert_eq!(after_unreadable_row("E:\\", false, OpenedBy::Drag), UnreadableRow::Nothing);
         for by in [OpenedBy::Person, OpenedBy::Drag] {
-            assert_eq!(after_unreadable_row("E:\\", false, by), UnreadableRow::DriveMessage, "{by:?}");
             assert_eq!(after_unreadable_row("E:\\folder", true, by), UnreadableRow::Nothing, "{by:?}");
             assert_eq!(after_unreadable_row("E:\\folder", false, by), UnreadableRow::Nothing, "{by:?}");
             assert_eq!(after_unreadable_row("::my-computer", true, by), UnreadableRow::Nothing, "{by:?}");
         }
+    }
+
+    /// A drag that opened a row which could not be read does not open it again, however long it
+    /// rests or moves there (the review before 0.1.3, B6); other rows open as before.
+    #[test]
+    fn a_drag_does_not_open_again_a_row_it_found_unreadable() {
+        use super::{Era, ROW_OPENS_2000, ROW_OPENS_98, drop_row_opens};
+        use std::time::Duration;
+        let long = Duration::from_secs(60);
+        for era in Era::ALL {
+            assert!(drop_row_opens(era, true, long, false), "{era:?}: a readable row opens");
+            assert!(!drop_row_opens(era, true, long, true), "{era:?}: found unreadable: stays closed");
+            assert!(!drop_row_opens(era, false, long, true), "{era:?}");
+        }
+        assert!(drop_row_opens(Era::Win2000, false, ROW_OPENS_2000, false), "2000: a rest without moving");
+        assert!(!drop_row_opens(Era::Win2000, false, ROW_OPENS_2000 - Duration::from_millis(1), false));
+        assert!(!drop_row_opens(Era::Win98, false, long, false), "98: at a move only");
+        assert!(drop_row_opens(Era::Win98, true, ROW_OPENS_98, false));
+    }
+
+    /// Open and Explore on a drive shown locked start Windows' unlock window instead only while
+    /// that reading is fresh; an older record lets the drive open as any drive (the review before
+    /// 0.1.3, B2). A drive whose rows the tree read is noted as not locked. (Letters no PC here
+    /// has; nothing is started.)
+    #[test]
+    fn a_drive_shown_locked_long_ago_opens_as_any_drive() {
+        use super::{known_locked, note_lock, shown_locked_acts};
+        use bevel_core::desktop::ItemKind;
+        assert!(shown_locked_acts(ItemKind::LockedDrive, true));
+        assert!(!shown_locked_acts(ItemKind::LockedDrive, false), "an old record: opened in the ordinary way");
+        assert!(!shown_locked_acts(ItemKind::Drive, true));
+        assert!(!shown_locked_acts(ItemKind::Folder, true));
+        // Found locked, then read by the tree (the reader notes it as not locked): neither fresh
+        // nor old says locked any more.
+        note_lock('P', true);
+        assert!(known_locked('P', true) && known_locked('P', false));
+        note_lock('P', false);
+        assert!(!known_locked('P', true) && !known_locked('P', false));
     }
 
     /// "This drive turned out locked" is acted on only when this program's own reader told it,
@@ -4809,6 +4939,7 @@ mod tests {
                 stop: Arc::new(AtomicBool::new(false)),
                 select: None,
                 history: History::new(root.place()),
+                came: None,
                 entries: Vec::new(),
                 settle: None,
                 reread: Vec::new(),

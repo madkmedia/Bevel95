@@ -729,7 +729,10 @@ impl Properties {
                 && after == self.values
             {
                 self.values.scale = scale;
-                self.changed = changed;
+                // The programs ticked by hand are not part of `Values` (they are the window's
+                // list): a change there meanwhile still waits for OK or Apply (the review
+                // before 0.1.3, B1).
+                self.changed = changed || self.programs.edited;
             }
             return true;
         }
@@ -2574,6 +2577,25 @@ mod tests {
         p.follow_size();
         p.choose(Part::Check(Check::QuarterSizes));
         assert_eq!(p.values.scale, Scale::whole(2).with_way(Way::Smooth));
+    }
+
+    #[test]
+    fn ticking_allow_quarter_sizes_again_keeps_a_change_on_the_programs_page() {
+        // The review before 0.1.3, B1: opened at 1.75 with "Only the programs ticked here";
+        // unticked (the list goes to 2), a program unticked on the Programs page, the box
+        // ticked again: 1.75 is back, and the program's change still waits for OK or Apply.
+        let mut v = values();
+        v.scale = Scale::from_quarters(7).with_way(Way::Smooth);
+        v.programs = Shown::Ticked;
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, v);
+        p.set_programs(program_rows(3, 2));
+        assert!(!p.changed);
+        assert!(p.choose(Part::Check(Check::QuarterSizes)) && p.changed);
+        assert!(p.choose(Part::ProgramRow(5)) && p.programs.edited);
+        assert_eq!(p.values, Values { scale: Scale::whole(2).with_way(Way::Smooth), ..v }, "the programs are not in `Values`");
+        assert!(p.choose(Part::Check(Check::QuarterSizes)));
+        assert_eq!(p.values, v, "the size in force is back");
+        assert!(p.changed, "the program unticked still waits for OK or Apply");
     }
 
     #[test]

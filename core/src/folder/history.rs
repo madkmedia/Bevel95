@@ -149,6 +149,32 @@ impl History {
     pub fn replace_now(&mut self, place: Place) {
         self.now = place;
     }
+
+    /// The place shown cannot be shown after all (a drive found locked by BitLocker once the
+    /// window was there): `step`, the one that brought the window there, is undone (a new place
+    /// is forgotten as if never gone to; Back is undone by Forward and Forward by Back). Without
+    /// such a step (the window was opened there) or when it cannot be undone, the nearest place
+    /// Back, else Forward, holds. `None`: there is no other place to show at all.
+    pub fn undo(&mut self, step: Option<Step>) -> Option<Place> {
+        let undone = match step {
+            Some(Step::New) => self.back.pop().map(|p| {
+                self.now = p;
+                self.now.clone()
+            }),
+            Some(Step::Back(n)) => self.forward(n),
+            Some(Step::Forward(n)) => self.back(n),
+            None => None,
+        };
+        undone.or_else(|| self.back(1)).or_else(|| self.forward(1))
+    }
+}
+
+/// How a window went to the place it shows: a new place, or `n` places back or forward.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    New,
+    Back(usize),
+    Forward(usize),
 }
 
 #[cfg(test)]
@@ -180,6 +206,45 @@ mod tests {
         assert_eq!(h.back(5), None);
         h.go(Place::MyComputer);
         assert_eq!(h.back_list().len(), 2, "going to the place shown changes nothing");
+    }
+
+    #[test]
+    fn a_place_that_cannot_be_shown_is_left_by_undoing_the_step_that_came_there() {
+        // The review before 0.1.3, B3: E:\ (a stick), then C:\x; the stick is locked again
+        // meanwhile. Back to E:\, found locked: Forward undoes it, back at C:\x.
+        let mut h = History::new(f("E:\\"));
+        h.go(f("C:\\x"));
+        assert_eq!(h.back(1), Some(f("E:\\")));
+        assert_eq!(h.undo(Some(Step::Back(1))), Some(f("C:\\x")));
+        assert_eq!((h.can_back(), h.can_forward()), (true, false));
+        // Back two places at once, from its little arrow: Forward two.
+        let mut h = History::new(Place::MyComputer);
+        h.go(f("E:\\"));
+        h.go(f("C:\\"));
+        h.go(f("C:\\x"));
+        h.back(2);
+        assert_eq!(h.undo(Some(Step::Back(2))), Some(f("C:\\x")));
+        // Forward onto it: Back undoes it.
+        let mut h = History::new(f("C:\\x"));
+        h.go(f("E:\\"));
+        h.back(1);
+        assert_eq!(h.forward(1), Some(f("E:\\")));
+        assert_eq!(h.undo(Some(Step::Forward(1))), Some(f("C:\\x")));
+        assert_eq!(h.forward_list(), [f("E:\\")]);
+        // A new place: forgotten, as if never gone to (Forward does not lead there).
+        let mut h = History::new(f("C:\\x"));
+        h.go(f("E:\\"));
+        assert_eq!(h.undo(Some(Step::New)), Some(f("C:\\x")));
+        assert!(!h.can_back() && !h.can_forward());
+        // Opened on the drive, gone on and come back: no step of its own; the nearest place.
+        let mut h = History::new(f("E:\\"));
+        h.go(f("C:\\x"));
+        h.back(1);
+        assert_eq!(h.undo(None), Some(f("C:\\x")), "Forward's place: the window stays open");
+        // Opened on the drive, nowhere else: nothing to show, the window closes.
+        let mut h = History::new(f("E:\\"));
+        assert_eq!(h.undo(None), None);
+        assert_eq!(h.undo(Some(Step::New)), None);
     }
 
     #[test]

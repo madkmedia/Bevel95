@@ -45,6 +45,28 @@ pub const SUPPORT_URL: &str = "https://github.com/madkmedia/Bevel95#supporting-b
 /// The About window's button that opens `SUPPORT_URL` (PROVISIONAL words).
 pub const SUPPORT_LABEL: &str = concat!("&Support ", product_name!(), "...");
 
+/// The support page is asked for at most once within this time, whatever is held down: a held
+/// Enter, Space or Alt+S repeats about 30 times a second (the review before 0.1.3, B7).
+pub const SUPPORT_AGAIN_AFTER_MS: u64 = 1_000;
+
+/// When the Support button last asked for the page (`now_ms` from any clock that only goes
+/// forward).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SupportAsks {
+    last: Option<u64>,
+}
+
+impl SupportAsks {
+    /// Whether the page may be asked for at `now_ms`; when it may, that time is remembered.
+    pub fn ask(&mut self, now_ms: u64) -> bool {
+        if self.last.is_some_and(|last| now_ms.saturating_sub(last) < SUPPORT_AGAIN_AFTER_MS) {
+            return false;
+        }
+        self.last = Some(now_ms);
+        true
+    }
+}
+
 /// "Version 0.1.3 (build 1a2b3c4)"; `build` is "unknown" for a build made without git.
 pub fn version_line(build: &str) -> String {
     format!("Version {VERSION} (build {build})")
@@ -266,6 +288,17 @@ mod tests {
         assert!(SUPPORT_URL.starts_with("https://github.com/madkmedia/Bevel95"));
         assert!(!SUPPORT_URL.contains(char::is_whitespace));
         assert_eq!(SUPPORT_LABEL, "&Support Bevel95...");
+    }
+
+    #[test]
+    fn the_support_page_is_asked_for_at_most_once_a_second() {
+        let mut asks = SupportAsks::default();
+        assert!(asks.ask(0), "the first press asks");
+        // A key held down: about 30 repeats a second; only one ask in each second.
+        let asked = (1..=70).map(|i| i * 33).filter(|&t| asks.ask(t)).collect::<Vec<_>>();
+        assert_eq!(asked, [1023, 2046], "once a second while held");
+        assert!(!asks.ask(2046 + 999));
+        assert!(asks.ask(2046 + 1000));
     }
 
     /// The window in `era`'s look, laid out in its own font.

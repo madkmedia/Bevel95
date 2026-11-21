@@ -42,7 +42,7 @@ use crate::theme::{Era, Theme};
 use crate::window::{self, TitleButton, TitleLook};
 
 pub use explorer::{ListRow, Tool};
-pub use history::{History, Place};
+pub use history::{History, Place, Step};
 pub use menus::Command;
 use explorer::Chrome;
 use status::Status;

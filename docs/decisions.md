@@ -3805,31 +3805,54 @@ it, but write nothing).
     only makes the reader wait). What was found is kept with its time (`LOCKED` in folders.exe).
     The window's thread never asks: the places that read My Computer's drives on it (`ask_drive`,
     the address bar's list and Enter: `toggle_list`, `list_chosen`, `go_typed`) call
-    `read_my_computer(era, false)` and use what the readers found (`known_locked`). (That they read
-    the drives' labels on the window's thread at all is older, and stays: todo.md.)
+    `read_my_computer(era, false)` and use what the readers found (`known_locked`); so does the
+    title of a drive's root for the places menu beside Back and Forward and the address list's
+    way down (`title_of` -> `read_facts_names` -> `drive_of(.., false)`; the review before 0.1.3,
+    B4). (That they read the drives' labels on the window's thread at all is older, and stays:
+    todo.md.) Every reading that succeeds notes the drive as not locked: My Computer's reader,
+    `drive_of`, a folder window's reader of a drive's root, and the tree's reader of a drive's
+    rows (the review before 0.1.3, B2).
   - **Open and Explore** (a double-click, the menu, the File menu's Open, the tree's row,
     `folders.exe E:\`) on a drive found locked in the last 3 seconds start Windows' own unlock
     window for it and nothing else (`unlock_instead` in `navigate` and `open_window`):
     `bdeunlock.exe` by its whole path (`shell::system_program`) with the drive's root, as Windows'
     entry starts it (`winkit::bitlocker::start_unlock`). On a drive whose icon or tree row is
-    shown locked (its menu has Unlock Drive...), Open and Explore start it at once, whatever the
-    age of the reading, without going to the drive first (`unlock_shown_locked`). A typed address
+    shown locked (its menu has Unlock Drive...), Open and Explore start it at once, without going
+    to the drive first, when that reading is fresh too (the same 3 seconds, `LOCK_BELIEVED`:
+    `unlock_shown_locked`, `shown_locked_acts`). An older record is not believed (the drive may
+    have been unlocked by a way no reader saw, or its letter gone to another drive): the drive
+    opens in the ordinary way, and if it is still locked, its reading finds that out as below (the
+    review before 0.1.3, B2). So a drive at A: or B:, which My Computer never reads, is read again
+    like any other when it is opened. A typed address
     of a locked drive ("E:\" in the address bar) is not one of them: it is not a folder that can
     be read, so it goes to Windows as typed, which deals with it (the review of 2026-11-21, C2).
     The password goes to Windows' window only. When the lock was not known yet, the reading finds
-    it: a window being opened does not open (`Facts::locked`), a window that went there goes back,
-    or closes if it was opened on that drive (`locked_found`), a tree row that was opened closes as
-    an unreadable one does, and the unlock window comes instead of the look's "not accessible"
-    message. A drive that cannot be read for any other reason behaves as before.
+    it: a window being opened does not open (`Facts::locked`), a window that went there returns
+    to where it came from by undoing the very step that brought it there (`locked_found`,
+    `History::undo` with the host's `came`: a new place is forgotten as if never gone to, Back is
+    undone by Forward, Forward by Back; the review before 0.1.3, B3), and closes only if it has no
+    other place to show at all (opened on that drive, nowhere else in its history), a tree row
+    that was opened closes as an unreadable one does, and the unlock window comes instead of the
+    look's "not accessible" message. A drive that cannot be read for any other reason behaves as
+    before.
   - **Never started over and over** (the review of 2026-11-21, A1 and B2): `start_unlock` starts
     the unlock window at most once for one drive letter within 2 seconds, whoever asks
     (`bitlocker::UnlockStarts`, `UNLOCK_AGAIN_AFTER_MS`; the log says once that a start was left
     out). Two seconds, not the first ten: a person who closed the window and chose Unlock
     Drive... again at once got nothing for up to ten seconds, and two stop every runaway case
     as well. Only folders.exe starts it, one process per copy, so the guard lives in that process.
-    A tree row opened by a drag resting on it (`OpenedBy::Drag`) never starts it: a locked
-    drive's row is only marked as not readable, and closes (`after_unreadable_row`); the drag
-    may open it again, which reads it again and starts nothing.
+    On top of the two seconds, the start keeps the unlock window's process (ShellExecuteExW with
+    `SEE_MASK_NOCLOSEPROCESS`, one handle per letter, `winkit::bitlocker::RUNNING`): while the
+    window started last for a drive still runs, every other start for that drive is left out,
+    however long the person takes over the password (`UnlockStarts::ask`'s `running`; the review
+    before 0.1.3, B5: a click on a drive's plus and 3 seconds later on its row, the re-reads after
+    a Paste, two windows' trees). Its handle is let go of when it is seen to have ended. (Whether
+    bdeunlock.exe hands over to another process and ends at once is not known: then only the two
+    seconds hold.) A tree row opened by a drag resting on it (`OpenedBy::Drag`) never starts it
+    and shows no message box either: an unreadable row is only marked as not readable, and closes
+    (`after_unreadable_row`), and that drag does not open it again (`Hover::unreadable`,
+    `drop_row_opens`: no reader, no reading of the drive, no log line at every movement; the
+    review before 0.1.3, B6). The next drag may try it once again.
   - **A message from outside does nothing**: `Bevel95.Folders.Unreadable` with `LOCKED_FLAG`
     (registered by name, so any program can send it) is acted on only when this program's own
     reader for that window recorded that drive as locked just before it posted (`tell_locked`,
@@ -3839,8 +3862,11 @@ it, but write nothing).
     windows give, from the last reading: `kind_of`), in all three looks, after Open and Explore in
     the first group, one drive at a time; also in the File menu of the 98 and 2000 windows (after
     Open and Explore; `folders::menu_state` gives the menus the selection's kinds as `kind_of`
-    has them) and on a locked drive's tree row (Explore, Open, Unlock Drive...:
-    `pane::row_entries(.., locked)`). 95's File menu is left as its Reference PC's. PROVISIONAL:
+    has them) and on a locked drive's tree row (Explore, Open, Unlock Drive..., Create Shortcut,
+    Properties: `pane::row_entries(.., locked)`; no Paste, which would put files into a drive
+    that cannot be written until it is unlocked, and Ctrl+V on its row does nothing: the review
+    before 0.1.3, B5. A drive's icon menu never had Paste; Create Shortcut and Properties do not
+    need the drive's contents). 95's File menu is left as its Reference PC's. PROVISIONAL:
     the place is where today's Windows lists its registered drive entries, not seen on a locked
     drive (this PC has none); its status-bar words are empty (Windows' are not known).
   - **Not known**: a locked drive that answers "not ready" (`ERROR_NOT_READY`) on some Windows
@@ -3857,12 +3883,18 @@ it, but write nothing).
     `each_drive_is_found_as_windows_says`): C: to G: all read, none locked, the shell said 2 (Off)
     for C:, E:, F:, G: and 7 (Not encryptable) for D:; `windows_own_unlock_program_is_the_one_started`:
     bdeunlock.exe exists and is what the registry's unlock-bde command names (nothing started).
-    The repairs of 2026-11-21: `the_unlock_window_starts_once_per_drive_within_ten_seconds`,
+    The repairs of 2026-11-21: `the_unlock_window_starts_once_per_drive_within_two_seconds`,
     `only_fixed_and_removable_drives_are_asked` (core), folders'
     `a_drag_resting_on_a_locked_drive_starts_nothing` and
     `a_locked_drive_message_from_outside_does_nothing`, the menus'
     `a_locked_drive_has_unlock_drive_in_the_file_menu_of_98_and_2000` and
-    `a_locked_drive_row_has_unlock_drive_after_open`, all on plain values.
+    `a_locked_drive_row_has_unlock_drive_after_open`, all on plain values. The repairs before
+    0.1.3: core's `no_second_unlock_window_while_the_first_is_open`, history's
+    `a_place_that_cannot_be_shown_is_left_by_undoing_the_step_that_came_there`, pane's
+    `a_locked_drive_row_has_unlock_drive_after_open` (no Paste), folders'
+    `a_drive_shown_locked_long_ago_opens_as_any_drive` and
+    `a_drag_does_not_open_again_a_row_it_found_unreadable`, on plain values; the process handle
+    and the window-thread callers of `drive_of` by reading only (no locked drive here).
     Not tried: a real locked drive (none here; none was made, no BitLocker setting was changed,
     no virtual disk attached), the unlock window itself; the real try is the reporting user's.
     Windows' other entries on a drive (Format, Eject, sharing, turning BitLocker on) are not built
@@ -4910,6 +4942,10 @@ Three small changes before strangers run Bevel95, report problems and send their
     README's section, which can change without a release), the way the Start menu's web
     entries are started (`window_list::start`, ShellExecute's "open"); nothing typed or read
     from a file reaches that call, and Bevel95 itself uses no network. The window stays open.
+    The page is asked for at most once a second (`about::SupportAsks`,
+    `SUPPORT_AGAIN_AFTER_MS`), whatever is held down: a held Enter, Space or Alt+S repeats about
+    30 times a second and had opened as many browser tabs (the review before 0.1.3, B7). How keys
+    repeat elsewhere in the kit is unchanged.
     The log says "About Bevel95: the support page was asked for", and "About Bevel95: Windows
     could not open the support page" after a failure. **The owner's rule** (a user had
     suggested a window asking for a donation): nothing asks by itself, ever: nothing in the
@@ -5509,7 +5545,9 @@ exact, the default left to us (even, the mock-ups' B1).
   a box the person ticked stays ticked. Unticking it at a quarter size moves the list to the
   nearest whole size (half up, at most 4x), in effect at OK or Apply; ticking it again with
   nothing else changed meanwhile brings the quarter size back, and with it whether anything was
-  to apply, so OK then saves nothing (the review of 2026-11-21, C5, C6). A quarter size applied
+  to apply, so OK then saves nothing (the review of 2026-11-21, C5, C6); a change on the Programs
+  page meanwhile (the programs ticked by hand, which are the window's list, not one of its
+  values) still waits for OK or Apply (the review before 0.1.3, B1). A quarter size applied
   from this window asks nothing more. The question has no time limit (Windows' own "Keep these
   display settings?" goes back by itself after 15 seconds): unanswered, the quarter size stays
   on, unsaved, until the bar ends, and the next start is at the saved size (C4; a choice left

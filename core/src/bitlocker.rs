@@ -46,7 +46,9 @@ pub fn may_be_locked(drive_type: u32) -> bool {
 /// How long after Windows' unlock window was started for a drive it is not started again for
 /// that drive, whoever asks (a click on its plus and then on its row, two windows): one
 /// password window for one drive. Short, so that a person who closed it and asks again at once
-/// gets it again.
+/// gets it again. On top of it, the window started last for a drive holds back every other start
+/// for it while it is still running (`ask`'s `running`, the review before 0.1.3, B5): a person
+/// may take as long as they need over the password.
 pub const UNLOCK_AGAIN_AFTER_MS: u64 = 2_000;
 
 /// When Windows' unlock window was last started for each drive letter (A to Z), in
@@ -62,8 +64,9 @@ pub struct UnlockStarts {
 pub enum UnlockStart {
     /// Start Windows' unlock window (the start is noted).
     Start,
-    /// Leave it out: it was started for this drive less than `UNLOCK_AGAIN_AFTER_MS` ago
-    /// (`first`: the first one left out since that start, the one the log tells).
+    /// Leave it out: it was started for this drive less than `UNLOCK_AGAIN_AFTER_MS` ago, or the
+    /// window started last for it is still running (`first`: the first one left out since that
+    /// start, the one the log tells).
     LeftOut { first: bool },
     /// Not a drive letter A to Z: nothing is started.
     NotADrive,
@@ -74,15 +77,16 @@ impl UnlockStarts {
         Self { at: [None; 26] }
     }
 
-    /// Whether the unlock window may be started for drive `letter` at `now_ms`.
-    pub fn ask(&mut self, letter: char, now_ms: u64) -> UnlockStart {
+    /// Whether the unlock window may be started for drive `letter` at `now_ms`; `running`: the
+    /// unlock window started last for that drive is still running.
+    pub fn ask(&mut self, letter: char, now_ms: u64, running: bool) -> UnlockStart {
         let letter = letter.to_ascii_uppercase();
         if !letter.is_ascii_uppercase() {
             return UnlockStart::NotADrive;
         }
         let slot = &mut self.at[(letter as u8 - b'A') as usize];
         match slot {
-            Some((then, told)) if now_ms.saturating_sub(*then) < UNLOCK_AGAIN_AFTER_MS => {
+            Some((then, told)) if running || now_ms.saturating_sub(*then) < UNLOCK_AGAIN_AFTER_MS => {
                 let first = !*told;
                 *told = true;
                 UnlockStart::LeftOut { first }
@@ -149,25 +153,45 @@ mod tests {
     fn the_unlock_window_starts_once_per_drive_within_two_seconds() {
         use UnlockStart::*;
         let mut starts = UnlockStarts::new();
-        assert_eq!(starts.ask('E', 1_000), Start);
+        assert_eq!(starts.ask('E', 1_000, false), Start);
         // Several asks a second (a click on its plus and then on its row, two windows): none
         // of them starts it, and only the first one left out is told.
-        assert_eq!(starts.ask('E', 1_050), LeftOut { first: true });
+        assert_eq!(starts.ask('E', 1_050, false), LeftOut { first: true });
         for t in (1_100..3_000).step_by(100) {
-            assert_eq!(starts.ask('E', t), LeftOut { first: false }, "{t}");
-            assert_eq!(starts.ask('e', t), LeftOut { first: false }, "small letter, same drive {t}");
+            assert_eq!(starts.ask('E', t, false), LeftOut { first: false }, "{t}");
+            assert_eq!(starts.ask('e', t, false), LeftOut { first: false }, "small letter, same drive {t}");
         }
         // Another drive is not held back.
-        assert_eq!(starts.ask('F', 1_200), Start);
+        assert_eq!(starts.ask('F', 1_200, false), Start);
         // Two seconds after the start: again (the person closed the window and asks again),
         // and a new start is told afresh when its doubles are left out.
-        assert_eq!(starts.ask('E', 3_000), Start);
-        assert_eq!(starts.ask('E', 3_001), LeftOut { first: true });
+        assert_eq!(starts.ask('E', 3_000, false), Start);
+        assert_eq!(starts.ask('E', 3_001, false), LeftOut { first: true });
         // A clock that goes back does not let it through twice.
-        assert_eq!(starts.ask('E', 500), LeftOut { first: false });
+        assert_eq!(starts.ask('E', 500, false), LeftOut { first: false });
         // Not a drive letter: never.
-        assert_eq!(starts.ask('1', 50_000), NotADrive);
-        assert_eq!(starts.ask('\u{e9}', 50_000), NotADrive);
+        assert_eq!(starts.ask('1', 50_000, false), NotADrive);
+        assert_eq!(starts.ask('\u{e9}', 50_000, false), NotADrive);
+    }
+
+    #[test]
+    fn no_second_unlock_window_while_the_first_is_open() {
+        // The review before 0.1.3, B5: the person takes their time over the password; a click
+        // on the drive's row 3 s after its plus, the two re-reads after a Paste at 1.5 s and 4 s,
+        // a second window's tree: none of them starts another while the first runs.
+        use UnlockStart::*;
+        let mut starts = UnlockStarts::new();
+        assert_eq!(starts.ask('E', 0, false), Start);
+        assert_eq!(starts.ask('E', 1_500, true), LeftOut { first: true });
+        for t in [3_000, 4_000, 10_000, 60_000, 600_000] {
+            assert_eq!(starts.ask('E', t, true), LeftOut { first: false }, "{t}");
+        }
+        // Another drive is not held back by E:'s window.
+        assert_eq!(starts.ask('F', 3_000, false), Start);
+        // Once the window has ended, the next ask starts it again (the two seconds have passed).
+        assert_eq!(starts.ask('E', 600_100, false), Start);
+        // Ended, but within two seconds of the start: the time guard still holds.
+        assert_eq!(starts.ask('E', 600_200, false), LeftOut { first: true });
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! Bevel95... asks Windows to open the one fixed page `about::SUPPORT_URL` in the person's
 //! browser and leaves the window open; nothing else in Bevel95 ever asks for it.
 
-use bevel_core::about::{AboutWindow, Part, SUPPORT_URL};
+use bevel_core::about::{AboutWindow, Part, SUPPORT_URL, SupportAsks};
 
 use crate::bar::with_app;
 use crate::kit::{self, Hosted};
@@ -32,8 +32,23 @@ impl Hosted for AboutHost {
 }
 
 /// The Support button: Windows opens the page in the person's browser (Bevel95 itself uses no
-/// network). The window stays open.
+/// network). The window stays open. At most once a second (`SupportAsks`): a held key's repeats
+/// are left out.
 fn open_support_page() {
+    thread_local! {
+        static ASKS: std::cell::Cell<(std::time::Instant, SupportAsks)> =
+            std::cell::Cell::new((std::time::Instant::now(), SupportAsks::default()));
+    }
+    let may = ASKS.with(|cell| {
+        let (since, mut asks) = cell.get();
+        let now = u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let may = asks.ask(now);
+        cell.set((since, asks));
+        may
+    });
+    if !may {
+        return;
+    }
     log("About Bevel95: the support page was asked for");
     if !crate::window_list::start(SUPPORT_URL) {
         log("About Bevel95: Windows could not open the support page");
