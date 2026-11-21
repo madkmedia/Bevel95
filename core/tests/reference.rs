@@ -525,6 +525,8 @@ mod views_cases;
 mod web_cases;
 #[path = "sixteen_cases/mod.rs"]
 mod sixteen_cases;
+#[path = "twofiftysix_cases/mod.rs"]
+mod twofiftysix_cases;
 
 fn cases() -> Vec<Case> {
     let (r95, b95) = (load_font(&WIN95, false), load_font(&WIN95, true));
@@ -637,6 +639,7 @@ fn cases() -> Vec<Case> {
     views_cases::view_cases(&mut out, &f95, &f2k);
     web_cases::web_cases(&mut out, &f95, &f2k);
     sixteen_cases::sixteen_cases(&mut out, &f95, &f2k);
+    twofiftysix_cases::twofiftysix_cases(&mut out, &f95, &f2k);
     out
 }
 
@@ -4713,7 +4716,8 @@ fn compare(case: &Case, dir: &Path) -> (usize, usize, usize) {
         let big = bevel_core::scale::upscale(fb, zoom);
         sheet.blit(&big, 0, i as i32 * (reference.height * zoom + gap));
     }
-    let out = dir.join("out");
+    // BEVEL95_OUT names another folder for the pictures (the captures' folder stays untouched).
+    let out = std::env::var_os("BEVEL95_OUT").map(PathBuf::from).unwrap_or_else(|| dir.join("out"));
     std::fs::create_dir_all(&out).unwrap();
     write_png(&out.join(format!("{}.png", case.name)), &sheet);
     write_png(&out.join(format!("{}.ours.png", case.name)), &ours);
@@ -4750,7 +4754,7 @@ fn compare_with_reference_screenshots() {
         let layout = if reflow == 0 { String::new() } else { format!(" ({reflow} document-reflow pixels)") };
         report.push(format!("{:<28} {n} pixels differ{prose}{layout}", case.name));
     }
-    println!("\n{}\n(pictures in {})", report.join("\n"), dir.join("out").display());
+    println!("\n{}\n(pictures in {})", report.join("\n"), std::env::var_os("BEVEL95_OUT").map(PathBuf::from).unwrap_or_else(|| dir.join("out")).display());
     assert_eq!(total, 0, "some drawings differ from the screenshots");
 }
 

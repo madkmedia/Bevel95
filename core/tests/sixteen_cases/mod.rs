@@ -38,7 +38,7 @@ pub(super) fn read_capture(path: &Path) -> Framebuffer {
 
 /// Where `ours` is in `shot` (its top-left corner), searched in `area` of the shot: the place
 /// where the most of a fixed spread of its pixels match, provided nearly all of them do.
-fn locate(shot: &Framebuffer, ours: &Framebuffer, area: Rect, skip: &[Rect]) -> Option<(i32, i32)> {
+pub(super) fn locate(shot: &Framebuffer, ours: &Framebuffer, area: Rect, skip: &[Rect]) -> Option<(i32, i32)> {
     // A spread of points over the picture (fixed, so the search is the same each run).
     let mut points = Vec::new();
     let mut seed = 12_345u32;

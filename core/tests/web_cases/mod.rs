@@ -85,7 +85,7 @@ fn v1(era: Era) -> Vec<Item> {
 
 /// A folder window of `era` with the web view on, painted at its place.
 #[allow(clippy::too_many_arguments)]
-fn web_window(fonts: &Fonts, era: Era, at: (i32, i32), size: (i32, i32), title: &str, address: &str, small: Small, files: bool, list: Vec<Item>, state: impl FnOnce(&mut FolderWindow)) -> FolderWindow {
+pub(super) fn web_window(fonts: &Fonts, era: Era, at: (i32, i32), size: (i32, i32), title: &str, address: &str, small: Small, files: bool, list: Vec<Item>, state: impl FnOnce(&mut FolderWindow)) -> FolderWindow {
     let icon = art::small(era, small);
     let mut w = FolderWindow::new(era, title, icon.clone(), files, size);
     w.set_screen(at.0, at.1);
@@ -121,14 +121,14 @@ fn painted(w: &FolderWindow, fonts: &Fonts) -> Framebuffer {
 }
 
 /// The large pictures of items `which` (moved to the screen).
-fn picture_masks(w: &FolderWindow, at: (i32, i32), which: &[usize]) -> Vec<Rect> {
+pub(super) fn picture_masks(w: &FolderWindow, at: (i32, i32), which: &[usize]) -> Vec<Rect> {
     which.iter().map(|&i| {
         let r = w.view.icon_rect(i);
         Rect::new(at.0 + r.x - 1, at.1 + r.y - 1, r.w + 2, r.h + 2)
     }).collect()
 }
 
-fn select(w: &mut FolderWindow, which: &[usize]) {
+pub(super) fn select(w: &mut FolderWindow, which: &[usize]) {
     w.view.select_only(None);
     for &i in which {
         w.view.select(i, true);
@@ -290,7 +290,7 @@ fn place(id: &str, name: &str, art: Art) -> Item {
     Item { id: id.into(), name: name.into(), picture: Picture::Art(art), shortcut: false, folder: false, type_name: String::new(), size: 0, modified: 0 }
 }
 
-fn my_computer_98() -> Vec<Item> {
+pub(super) fn my_computer_98() -> Vec<Item> {
     vec![
         place("A:\\", "3\u{bd} Floppy (A:)", Art::Drive(DriveKind::Floppy)),
         place("C:\\", " (C:)", Art::Drive(DriveKind::Fixed)),
@@ -300,7 +300,7 @@ fn my_computer_98() -> Vec<Item> {
     ]
 }
 
-fn my_computer_2000() -> Vec<Item> {
+pub(super) fn my_computer_2000() -> Vec<Item> {
     vec![
         place("A:\\", "3\u{bd} Floppy (A:)", Art::Drive(DriveKind::Floppy)),
         place("C:\\", "Local Disk (C:)", Art::Drive(DriveKind::Fixed)),
