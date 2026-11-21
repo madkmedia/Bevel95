@@ -42,7 +42,7 @@ use windows_sys::Win32::UI::HiDpi::{
 };
 use windows_sys::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetDoubleClickTime, MOD_CONTROL, MOD_NOREPEAT, MOD_WIN, RegisterHotKey, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT,
+    GetCapture, GetDoubleClickTime, MOD_CONTROL, MOD_NOREPEAT, MOD_WIN, RegisterHotKey, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT,
     TrackMouseEvent, UnregisterHotKey,
 };
 use windows_sys::Win32::UI::Shell::{ABN_FULLSCREENAPP, ABN_POSCHANGED};
@@ -1209,14 +1209,24 @@ fn set_quick_hot(bar: HWND, hot: Option<usize>) {
     }
 }
 
-/// A click on Quick Launch icon `index`: what it stands for starts (`quick_launch::start_item`).
-fn click_quick(index: usize) {
-    let Some((target, browser, mail)) =
-        with_app(|app| Some((app.ql.target(index)?, app.ql.browser.clone(), app.ql.mail.clone()))).flatten()
-    else {
+/// A click on the Quick Launch icon `target` (the one pressed, still under the pointer at the
+/// release): what it stands for starts (`quick_launch::start_item`).
+fn click_quick(target: &quick_launch::Target) {
+    let Some((browser, mail)) = with_app(|app| (app.ql.browser.clone(), app.ql.mail.clone())) else {
         return;
     };
-    quick_launch::start_item(&target, browser.as_deref(), mail.as_deref());
+    quick_launch::start_item(target, browser.as_deref(), mail.as_deref());
+}
+
+/// The left button came up: the mouse goes back if the bar still has it (a press the bar took it
+/// for may have been ended meanwhile; it must never stay with the bar).
+fn give_back_mouse(bar: HWND) {
+    // SAFETY: plain calls; only our own window's capture is released.
+    unsafe {
+        if GetCapture() == bar {
+            ReleaseCapture();
+        }
+    }
 }
 
 /// An entry of the menu on a Quick Launch icon, carried out on the icon it opened on, and only
@@ -1262,7 +1272,6 @@ pub fn set_quick_launch(on: bool) {
         let was = app.quick_launch_on();
         app.ql.setting = Some(on);
         app.ql.hot = None;
-        app.ql.pressed = None;
         was
     }) else {
         return;
@@ -2458,7 +2467,6 @@ fn set_era(bar: HWND, era: Era) {
         app.clock_widest = widest;
         app.layout = None;
         app.ql.hot = None;
-        app.ql.pressed = None;
         let after = app.quick_launch_on();
         (before != after).then_some(after)
     })
@@ -2700,12 +2708,18 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             hide_tip(bar);
             // A Quick Launch icon sinks while held; it acts when the button comes up over it.
+            // It is remembered by what it is (`quick_launch::Held`), not only by its place.
             if let Some(i) = quick_at(x, y) {
-                with_app(|app| app.ql.pressed = Some(i));
-                // SAFETY: our own window; capture lets us see the release even off the bar.
-                unsafe {
-                    SetCapture(bar);
-                    InvalidateRect(bar, null(), 0);
+                let held = with_app(|app| {
+                    app.ql.held = app.ql.target(i).map(|target| bevel_core::quick_launch::Held { index: i, target });
+                    app.ql.held.is_some()
+                });
+                if held == Some(true) {
+                    // SAFETY: our own window; capture lets us see the release even off the bar.
+                    unsafe {
+                        SetCapture(bar);
+                        InvalidateRect(bar, null(), 0);
+                    }
                 }
                 return 0;
             }
@@ -2788,15 +2802,18 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             if release_tray(bar, tray::Button::Left, x, y) {
                 return 0;
             }
-            // A Quick Launch icon held down: one click, if the button came up over it.
-            if let Some(i) = with_app(|app| app.ql.pressed.take()).flatten() {
-                // SAFETY: our own window.
-                unsafe {
-                    ReleaseCapture();
-                    InvalidateRect(bar, null(), 0);
+            // A Quick Launch icon held down: the mouse goes back whatever happened to the band
+            // meanwhile, and one click only if that very icon is under the pointer now.
+            if let Some(held) = with_app(|app| app.ql.held.take()).flatten() {
+                let under = quick_at(x, y).and_then(|i| with_app(|app| app.ql.target(i)).flatten());
+                let release = bevel_core::quick_launch::release(Some(held), under);
+                if release.give_back {
+                    give_back_mouse(bar);
                 }
-                if quick_at(x, y) == Some(i) {
-                    click_quick(i);
+                // SAFETY: our own window.
+                unsafe { InvalidateRect(bar, null(), 0) };
+                if let Some(target) = release.start {
+                    click_quick(&target);
                 }
                 return 0;
             }
@@ -2813,6 +2830,8 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 Some((index, app.press.take(), app.drag_from.take(), app.groups.len()))
             })
             .flatten() else {
+                // Nothing of the bar's was held: the mouse must not stay with the bar all the same.
+                give_back_mouse(bar);
                 return 0;
             };
             keys::set_dragging(false);
@@ -2846,7 +2865,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     _ => false,
                 };
-                (app.pressed.take().is_some() | app.scroll_pressed.take().is_some() | app.ql.pressed.take().is_some(), dragged)
+                (app.pressed.take().is_some() | app.scroll_pressed.take().is_some() | app.ql.held.take().is_some(), dragged)
             })
             .unwrap_or((false, false));
             if dragged {

@@ -5031,6 +5031,16 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   takes the new list at its next paint (`State::refresh`). This is the classic desktop's way of
   learning of changes (`desktop_items.rs`); the Programs menu, which the brief named, has none:
   it reads its folders afresh at each opening.
+- **A held icon** (the review before 0.1.2, B2): the press remembers the icon by what it is
+  (`quick_launch::Held`, with the platform's `Target`: the built-in icon, or the shortcut by its
+  file), not by its place; it is drawn sunk only while that icon is still at the place pressed,
+  and the release (`quick_launch::release`) starts something only if that very icon is under the
+  pointer. Nothing else ends a press (a folder read again, a look or the band switched meanwhile
+  no longer clear it), and the release always gives the mouse back: with an icon held, and also
+  when nothing of the bar's is held but the bar still has the mouse (`bar::give_back_mouse`).
+  Before, a band changed during the press cleared it, the release then found nothing and kept the
+  mouse; and a shortcut replaced by another at the same place was started instead. Tests:
+  `quick_launch::tests::a_held_icon_starts_only_itself_and_the_mouse_is_always_given_back`.
 - **What a click does** (one click, on the release over the same icon): Internet Explorer starts
   the program Windows has registered for web addresses, Outlook Express the one for mail addresses
   (`quick_launch::registered`: AssocQueryString's executable for "http" / "mailto", by its whole

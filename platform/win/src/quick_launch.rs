@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use bevel_core::fb::Icon;
-use bevel_core::quick_launch::{self, Band, Builtin, FolderEntry, Item};
+use bevel_core::quick_launch::{self, Band, Builtin, FolderEntry, Held, Item};
 use bevel_core::theme::Era;
 use bevel_winkit::state_file;
 use windows_sys::Win32::Foundation::HWND;
@@ -280,10 +280,11 @@ pub struct State {
     pub shortcuts: Vec<Shortcut>,
     pub browser: Option<String>,
     pub mail: Option<String>,
-    /// The icons shown at the last paint, the one under the pointer and the one held down.
+    /// The icons shown at the last paint, the one under the pointer, and the one held down by what
+    /// it is (`quick_launch::Held`: only its release ends it, whatever happens to the band).
     pub items: Vec<Item>,
     pub hot: Option<usize>,
-    pub pressed: Option<usize>,
+    pub held: Option<Held<Target>>,
     /// What the log said last: how many icons were left out, whether there was a mail program.
     logged_left_out: Option<usize>,
     logged_programs: Option<(bool, bool)>,
@@ -330,9 +331,9 @@ impl State {
                 log(&format!("quick launch: {left_out} icons do not fit and are left out (at most {})", quick_launch::MAX_ICONS));
             }
         }
+        // A held icon is left to its release (`Held`): it decides by what the icon is.
         if items != self.items {
             self.hot = None;
-            self.pressed = None;
         }
         self.items = items;
     }
@@ -347,7 +348,8 @@ impl State {
                 Item::Shortcut(i) => self.shortcuts.get(i).and_then(|s| s.icon.clone()),
             })
             .collect();
-        Band { icons, hot: self.hot, pressed: self.pressed }
+        let pressed = self.held.as_ref().and_then(|h| h.sunk(|i| self.target(i)));
+        Band { icons, hot: self.hot, pressed }
     }
 
     /// What icon `index` is.

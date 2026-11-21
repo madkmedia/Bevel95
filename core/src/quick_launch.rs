@@ -124,6 +124,44 @@ pub fn items(era: Era, removed: &[Builtin], available: impl Fn(Builtin) -> bool,
     (all.into_iter().take(MAX_ICONS).collect(), left_out)
 }
 
+/// A press on an icon, held until the left button comes up (the review before 0.1.2, B2). The icon
+/// is remembered by what it is (`target`: the platform's own name for it, a built-in icon or the
+/// person's shortcut by its file), not only by its place, so a band that changes meanwhile (the
+/// folder read again, the look or the band switched) can never make the release start another
+/// icon. Nothing but the release (and the bar losing the mouse) ends it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Held<T> {
+    pub index: usize,
+    pub target: T,
+}
+
+impl<T: PartialEq> Held<T> {
+    /// The place drawn sunk now: the place pressed, while the icon there (`at(i)`: what icon `i` is
+    /// now) is still the one pressed; else none.
+    pub fn sunk(&self, at: impl Fn(usize) -> Option<T>) -> Option<usize> {
+        (at(self.index).as_ref() == Some(&self.target)).then_some(self.index)
+    }
+}
+
+/// What the left button's release does on the bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Release<T> {
+    /// The bar gives the mouse back (it took it at the press): always when an icon was held,
+    /// whatever happened to the band meanwhile.
+    pub give_back: bool,
+    /// What starts: the icon pressed, and only if that very icon is under the pointer now.
+    pub start: Option<T>,
+}
+
+/// The release of `held` (the press, if any) with `under` the icon under the pointer now (`None`:
+/// none, also when the band has gone).
+pub fn release<T: PartialEq>(held: Option<Held<T>>, under: Option<T>) -> Release<T> {
+    match held {
+        None => Release { give_back: false, start: None },
+        Some(h) => Release { give_back: true, start: (under.as_ref() == Some(&h.target)).then_some(h.target) },
+    }
+}
+
 /// One entry of Windows' own Quick Launch folder, as the platform read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FolderEntry {
@@ -540,6 +578,38 @@ mod tests {
         assert_eq!(labels(&icon_menu(true)), ["&Open", "-", "&Delete", "-", "P&roperties"]);
         assert!(icon_menu(true).entries[0].bold);
         assert_eq!((icon_entry(true, 2), icon_entry(true, 4), icon_entry(false, 1)), (Some(IconEntry::Delete), Some(IconEntry::Properties), None));
+    }
+
+    /// The review before 0.1.2, B2: a held icon is remembered by what it is, and the release starts
+    /// only that very icon, under the pointer; the mouse is always given back.
+    #[test]
+    fn a_held_icon_starts_only_itself_and_the_mouse_is_always_given_back() {
+        // What the platform calls its icons: here simply names.
+        let band = ["Show Desktop", "a.lnk", "b.lnk"];
+        fn at<'a>(list: &'a [&'static str]) -> impl Fn(usize) -> Option<&'static str> + 'a {
+            move |i| list.get(i).copied()
+        }
+        let held = Held { index: 1, target: "a.lnk" };
+        assert_eq!(held.sunk(at(&band)), Some(1));
+        // Released over it: it starts.
+        assert_eq!(release(Some(held.clone()), Some("a.lnk")), Release { give_back: true, start: Some("a.lnk") });
+        // Moved off it: nothing starts, the mouse is given back.
+        assert_eq!(release(Some(held.clone()), Some("b.lnk")), Release { give_back: true, start: None });
+        assert_eq!(release(Some(held.clone()), None), Release { give_back: true, start: None });
+        // The folder changed during the press, the same number of icons: another shortcut is now
+        // at the place pressed. It is not drawn sunk, and a release there starts nothing.
+        let changed = ["Show Desktop", "c.lnk", "b.lnk"];
+        assert_eq!(held.sunk(at(&changed)), None);
+        assert_eq!(release(Some(held.clone()), changed.get(1).copied()), Release { give_back: true, start: None });
+        // The icon pressed moved one place on (a shortcut added before it): the release over it
+        // still starts it, the one pressed.
+        let moved = ["Show Desktop", "0.lnk", "a.lnk"];
+        assert_eq!(release(Some(held.clone()), moved.get(2).copied()), Release { give_back: true, start: Some("a.lnk") });
+        // The band switched off, or the look changed so that it has gone: nothing under the
+        // pointer; the mouse is given back all the same.
+        assert_eq!(release(Some(held), None::<&str>), Release { give_back: true, start: None });
+        // No icon held: the release is not the band's.
+        assert_eq!(release(None, Some("a.lnk")), Release { give_back: false, start: None });
     }
 
     #[test]
