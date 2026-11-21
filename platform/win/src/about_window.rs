@@ -1,8 +1,10 @@
 //! About Bevel95: the bar's Bevel95 > About Bevel95 and Quick Search's "About Bevel95" open it
 //! (`bevel_core::about::AboutWindow`, a window of the control kit), in the middle of the bar's
-//! screen, as the bar's other windows open. OK, Esc and the title bar's X close it.
+//! screen, as the bar's other windows open. OK, Esc and the title bar's X close it. Support
+//! Bevel95... asks Windows to open the one fixed page `about::SUPPORT_URL` in the person's
+//! browser and leaves the window open; nothing else in Bevel95 ever asks for it.
 
-use bevel_core::about::{AboutWindow, Part};
+use bevel_core::about::{AboutWindow, Part, SUPPORT_URL};
 
 use crate::bar::with_app;
 use crate::kit::{self, Hosted};
@@ -24,7 +26,17 @@ impl Hosted for AboutHost {
     fn activate(part: Part) {
         match part {
             Part::Ok | Part::Close => close(),
+            Part::Support => open_support_page(),
         }
+    }
+}
+
+/// The Support button: Windows opens the page in the person's browser (Bevel95 itself uses no
+/// network). The window stays open.
+fn open_support_page() {
+    log("About Bevel95: the support page was asked for");
+    if !crate::window_list::start(SUPPORT_URL) {
+        log("About Bevel95: Windows could not open the support page");
     }
 }
 

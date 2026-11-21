@@ -44,9 +44,10 @@ pub fn may_be_locked(drive_type: u32) -> bool {
 }
 
 /// How long after Windows' unlock window was started for a drive it is not started again for
-/// that drive, whoever asks (a drag resting on the drive's row, a click on its plus and then on
-/// its row, two windows): one password window for one drive.
-pub const UNLOCK_AGAIN_AFTER_MS: u64 = 10_000;
+/// that drive, whoever asks (a click on its plus and then on its row, two windows): one
+/// password window for one drive. Short, so that a person who closed it and asks again at once
+/// gets it again.
+pub const UNLOCK_AGAIN_AFTER_MS: u64 = 2_000;
 
 /// When Windows' unlock window was last started for each drive letter (A to Z), in
 /// milliseconds of any clock that only goes forward, and whether a start left out since then
@@ -145,23 +146,23 @@ mod tests {
     }
 
     #[test]
-    fn the_unlock_window_starts_once_per_drive_within_ten_seconds() {
+    fn the_unlock_window_starts_once_per_drive_within_two_seconds() {
         use UnlockStart::*;
         let mut starts = UnlockStarts::new();
         assert_eq!(starts.ask('E', 1_000), Start);
-        // A drag resting on the row asks several times a second: none of them starts it, and
-        // only the first one left out is told.
+        // Several asks a second (a click on its plus and then on its row, two windows): none
+        // of them starts it, and only the first one left out is told.
         assert_eq!(starts.ask('E', 1_050), LeftOut { first: true });
-        for t in (1_100..11_000).step_by(100) {
+        for t in (1_100..3_000).step_by(100) {
             assert_eq!(starts.ask('E', t), LeftOut { first: false }, "{t}");
             assert_eq!(starts.ask('e', t), LeftOut { first: false }, "small letter, same drive {t}");
         }
         // Another drive is not held back.
         assert_eq!(starts.ask('F', 1_200), Start);
-        // Ten seconds after the start: again (the person closed the window and asks again),
+        // Two seconds after the start: again (the person closed the window and asks again),
         // and a new start is told afresh when its doubles are left out.
-        assert_eq!(starts.ask('E', 11_000), Start);
-        assert_eq!(starts.ask('E', 11_001), LeftOut { first: true });
+        assert_eq!(starts.ask('E', 3_000), Start);
+        assert_eq!(starts.ask('E', 3_001), LeftOut { first: true });
         // A clock that goes back does not let it through twice.
         assert_eq!(starts.ask('E', 500), LeftOut { first: false });
         // Not a drive letter: never.

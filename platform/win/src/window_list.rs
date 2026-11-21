@@ -513,8 +513,14 @@ pub fn group_command(windows: &[HWND], command: GroupCommand) {
     }
 }
 
-/// Starts another copy of a program (middle-click on its button).
+/// Starts another copy of a program (middle-click on its button), a Windows page or a web
+/// address (a failure is logged).
 pub fn launch(path: &str) {
+    start(path);
+}
+
+/// `launch`, telling whether Windows took it.
+pub fn start(path: &str) -> bool {
     let (verb, file) = (wide("open"), wide(path));
     // One of a portable copy's own programs is told where its data is (`log::flag_for`).
     let flag = crate::log::flag_for(std::path::Path::new(path)).map(wide);
@@ -523,7 +529,9 @@ pub fn launch(path: &str) {
     let result = unsafe { ShellExecuteW(null_mut(), verb.as_ptr(), file.as_ptr(), params, null(), SW_SHOWNORMAL) };
     if result as usize <= 32 {
         log(&format!("could not start {} (ShellExecute error {})", crate::log::typed_kind(path), result as usize));
+        return false;
     }
+    true
 }
 
 /// `bevel95 --list-windows`: writes what the bar would show to the log, for diagnosis.

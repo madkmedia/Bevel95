@@ -3811,9 +3811,11 @@ it, but write nothing).
     an unreadable one does, and the unlock window comes instead of the look's "not accessible"
     message. A drive that cannot be read for any other reason behaves as before.
   - **Never started over and over** (the review of 2026-11-21, A1 and B2): `start_unlock` starts
-    the unlock window at most once for one drive letter within 10 seconds, whoever asks
+    the unlock window at most once for one drive letter within 2 seconds, whoever asks
     (`bitlocker::UnlockStarts`, `UNLOCK_AGAIN_AFTER_MS`; the log says once that a start was left
-    out). Only folders.exe starts it, one process per copy, so the guard lives in that process.
+    out). Two seconds, not the first ten: a person who closed the window and chose Unlock
+    Drive... again at once got nothing for up to ten seconds, and two stop every runaway case
+    as well. Only folders.exe starts it, one process per copy, so the guard lives in that process.
     A tree row opened by a drag resting on it (`OpenedBy::Drag`) never starts it: a locked
     drive's row is only marked as not readable, and closes (`after_unreadable_row`); the drag
     may open it again, which reads it again and starts nothing.
@@ -4887,6 +4889,21 @@ Three small changes before strangers run Bevel95, report problems and send their
     window) and OK. 380 wide (the shell's About is 348; the line of what it is needs a little
     more). Opens in the middle of the bar's screen, above other windows like the bar's other
     windows; OK, Enter, Esc and X close it; a new look, colors or size close it.
+  - **Support Bevel95...** (2026-11-21): one button in OK's row, left of it, 6 pixels apart, in
+    every look: its label plus 12 on each side, at least 75 (as Date/Time Properties' wide
+    button; 112 wide in 95 and 98, 115 in 2000's Tahoma), "&Support Bevel95..." (PROVISIONAL
+    words), Alt+S. OK keeps the keyboard and the default frame when the window opens, so Enter
+    and Esc do what they did; Tab or a click gives the button the keyboard (Windows' rule: the
+    focused push button is the default one). It asks Windows to open one fixed page,
+    `about::SUPPORT_URL` (`https://github.com/madkmedia/Bevel95#supporting-bevel95`, the
+    README's section, which can change without a release), the way the Start menu's web
+    entries are started (`window_list::start`, ShellExecute's "open"); nothing typed or read
+    from a file reaches that call, and Bevel95 itself uses no network. The window stays open.
+    The log says "About Bevel95: the support page was asked for", and "About Bevel95: Windows
+    could not open the support page" after a failure. **The owner's rule** (a user had
+    suggested a window asking for a donation): nothing asks by itself, ever: nothing in the
+    right-click menus, no timer, no counting of days, nothing stored; this button is the only
+    way to the page.
   - Decided differently from the look's own manner: Windows 2000's About boxes carried Microsoft's
     Windows 2000 banner; Bevel95's does not (it is not Microsoft's product), so the three looks
     share the 95 and 98 layout in their own frame and font.
