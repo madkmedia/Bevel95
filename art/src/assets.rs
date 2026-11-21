@@ -1,7 +1,7 @@
 //! The pictures, sounds and fonts kept as files (`art/assets`): cut from the Reference PCs'
 //! screens and from the files of Windows and its programs.
 
-use crate::Depth::{Sixteen, TrueColor};
+use crate::Depth::{Sixteen, TrueColor, TwoFiftySix};
 use crate::Look::{Win95, Win98, Win2000};
 use crate::{Art, EVERY_LOOK, Entry, Look};
 
@@ -87,6 +87,14 @@ pub(crate) const ENTRIES: &[Entry] = &[
     file!("web/left", &[Win2000], TrueColor, "web/win2000-left.pic"),
     file!("web/logo", &[Win2000], TrueColor, "web/win2000-logo.pic"),
     file!("folder-options/pictures", &[Win2000], TrueColor, "web/win2000-fo.rgb"),
+    // The same at 256 colors, cut from the Reference PCs' 256-color screens (98's watercolor
+    // dithered in the browser's halftone colors, 2000's corner picture with its pale colors
+    // dithered; where text or the folder's picture covered it, or the panel ended, filled:
+    // private/probes/colors256/cut256.ps1), and the throbbers as those Windows drew them there.
+    file!("web/left", &[Win98], TwoFiftySix, "web/win98-left-256.pic"),
+    file!("web/left", &[Win2000], TwoFiftySix, "web/win2000-left-256.pic"),
+    file!("explorer/throbber", &[Win98], TwoFiftySix, "explorer/win98-throbber-256.pic"),
+    file!("explorer/throbber", &[Win2000], TwoFiftySix, "explorer/win2000-throbber-256.pic"),
     // The Confirm File Delete windows' pictures.
     file!("confirm/delete-icons", &[Win95], TrueColor, "win95-delete-icons.rgb"),
     file!("confirm/delete-icons", &[Win98], TrueColor, "win98-delete-icons.rgb"),

@@ -2041,6 +2041,39 @@ fn sixteen_color_scenes_use_only_the_16() {
     assert!(wrong.is_empty(), "\n{}\n", wrong.join("\n"));
 }
 
+/// A 256-color screen shows the 16, the four other static colors, Windows 2000's own desktop and
+/// face, and the colors of the pictures the browser and the folder windows drew from more colors
+/// (cut from the Reference PCs' 256-color screens): every pixel of every 256-color scene is one.
+#[test]
+fn two_fifty_six_color_scenes_use_the_screens_colors() {
+    use bevel_core::colors256;
+    use std::collections::BTreeSet;
+    let mut wrong = Vec::new();
+    for scene in reduced_color_scenes(Depth::TwoFiftySix) {
+        let era = if scene.name.starts_with("win2000") { Era::Win2000 } else if scene.name.starts_with("win98") { Era::Win98 } else { Era::Win95 };
+        let mut allowed: BTreeSet<u32> = bevel_core::colors16::VGA.iter().copied().collect();
+        allowed.extend([0xC0DCC0, 0xA6CAF0, 0xFFFBF0, 0xA0A0A4]);
+        if era == Era::Win2000 {
+            allowed.extend(colors256::KEPT_2000);
+            allowed.insert(0xD7D7D7); // the infotip's edge, the browser's halftone gray
+        }
+        if era == Era::Win98 {
+            allowed.extend([0xFF3300, 0xFFCC00, 0x66CC33, 0x0099FF]); // its web view's line, True Color's own
+        }
+        if era != Era::Win95 {
+            let theme = bevel_core::theme::theme_in(era, Depth::TwoFiftySix);
+            let pictures = [bevel_core::folder::web::corner_picture_256(era).pixels.clone(), colors256::throbber(theme).expect("throbber").pixels];
+            allowed.extend(pictures.iter().flatten().map(|p| p & 0xFF_FFFF));
+        }
+        let others: BTreeSet<u32> = scene.image.pixels.iter().map(|p| p & 0xFF_FFFF).filter(|p| !allowed.contains(p)).collect();
+        if !others.is_empty() {
+            let some: Vec<String> = others.iter().take(6).map(|c| format!("{c:06X}")).collect();
+            wrong.push(format!("{}: {} other colors, e.g. {}", scene.name, others.len(), some.join(" ")));
+        }
+    }
+    assert!(wrong.is_empty(), "\n{}\n", wrong.join("\n"));
+}
+
 #[test]
 fn golden_images_match() {
     let preview = std::fs::read_to_string(preview_path()).unwrap_or_default();

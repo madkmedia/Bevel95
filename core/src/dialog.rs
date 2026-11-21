@@ -328,7 +328,7 @@ pub(crate) fn invert_dots(fb: &mut Framebuffer, theme: &Theme, r: Rect) {
         let p = fb.get(x, y);
         let on = ((x - r.x) + (y - r.y)).rem_euclid(2) == 0;
         match (sixteen, on) {
-            (true, true) => fb.set(x, y, crate::colors16::focus_dot(theme.era, p, true)),
+            (true, true) => fb.set(x, y, crate::colors16::focus_dot(theme, p, true)),
             // Between them black: this list's own (the desktop's labels keep their navy).
             (true, false) => fb.set(x, y, crate::colors16::BLACK),
             (false, true) => fb.set(x, y, p ^ 0x00FF_FFFF),

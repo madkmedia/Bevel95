@@ -723,14 +723,40 @@ pub const WIN2000_16: Theme = Theme {
 // look in the shell, with what each showed richer there (the Reference PCs at 256 colors:
 // private/probes/colors256/survey.md, docs/theme-spec.md "256 Colors").
 
-/// Windows 95 in 256 colors: as its 16 Colors in everything measured.
-pub const WIN95_256: Theme = Theme { depth: Depth::TwoFiftySix, ..WIN95_16 };
+/// Windows 95 in 256 colors: as its 16 Colors (the light edge silver), but a grayed label is
+/// etched with white as in True Color (Taskbar Properties' grayed Apply and Run's grayed OK on its
+/// PC at 256 colors; grayed menu entries were not seen there: PROVISIONAL, etched likewise).
+pub const WIN95_256: Theme = Theme {
+    depth: Depth::TwoFiftySix,
+    colors: Colors { etch: rgb(0xFFFFFF), ..WIN95_16.colors },
+    popup: WIN95.popup,
+    ..WIN95_16
+};
 
-/// Windows 98 in 256 colors: as its 16 Colors in its colors and menus.
-pub const WIN98_256: Theme = Theme { depth: Depth::TwoFiftySix, ..WIN98_16 };
+/// Windows 98 in 256 colors: as its 16 Colors (the light edge silver, the Start menu's icon squares
+/// the menu's own), its grayed labels etched as 95's at 256 colors.
+pub const WIN98_256: Theme = Theme {
+    depth: Depth::TwoFiftySix,
+    colors: Colors { etch: rgb(0xFFFFFF), ..WIN98_16.colors },
+    popup: WIN98.popup,
+    ..WIN98_16
+};
 
-/// Windows 2000 in 256 colors.
-pub const WIN2000_256: Theme = Theme { depth: Depth::TwoFiftySix, ..WIN2000_16 };
+/// Windows 2000 in 256 colors: its 16 Colors, but its own face and desktop stay (D4D0C8, 3A6EA5;
+/// every window and the desktop of its PC at 256 colors), and its tooltip's pale yellow is an
+/// area it dots white and yellow (`colors256::dotted`). The dark shadow is black and the selection
+/// navy, as in 16 colors (Run, the message boxes, the menus there).
+pub const WIN2000_256: Theme = Theme {
+    depth: Depth::TwoFiftySix,
+    colors: Colors {
+        face: rgb(0xD4D0C8),
+        light: rgb(0xD4D0C8),
+        tip_face: rgb(0xFFFFE1),
+        desktop: rgb(0x3A6EA5),
+        ..WIN2000_16.colors
+    },
+    ..WIN2000_16
+};
 
 #[cfg(test)]
 mod tests {

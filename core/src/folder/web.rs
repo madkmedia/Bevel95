@@ -695,7 +695,7 @@ const PIE_2000: (i32, i32, i32) = (120, 59, 9);
 
 /// A picture cut from the Reference PCs' webvw.dll (`core/assets/web/*.pic`, made by
 /// `private/probes/web/cut.ps1`: size, palette, runs of color indexes).
-fn load_pic(bytes: &[u8]) -> Framebuffer {
+pub(crate) fn load_pic(bytes: &[u8]) -> Framebuffer {
     let w = i32::from(u16::from_le_bytes([bytes[0], bytes[1]]));
     let h = i32::from(u16::from_le_bytes([bytes[2], bytes[3]]));
     let n = match bytes[4] {
@@ -714,6 +714,14 @@ fn load_pic(bytes: &[u8]) -> Framebuffer {
         }
     }
     fb
+}
+
+/// The picture in the panel's corner as each Windows showed it at 256 colors
+/// (`colors256::web_picture_bytes`).
+pub fn corner_picture_256(era: Era) -> &'static Framebuffer {
+    static P98: LazyLock<Framebuffer> = LazyLock::new(|| load_pic(crate::colors256::web_picture_bytes(Era::Win98)));
+    static P2000: LazyLock<Framebuffer> = LazyLock::new(|| load_pic(crate::colors256::web_picture_bytes(Era::Win2000)));
+    if era == Era::Win2000 { &P2000 } else { &P98 }
 }
 
 /// The picture in the panel's corner.
@@ -751,7 +759,12 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &WebFonts, laid: &Laid,
     let sixteen = theme.depth.reduced();
     let m = metrics(era);
     fb.fill(Rect::new(0, 0, fb.width, fb.height), WHITE);
-    if sixteen {
+    let true_line = crate::colors256::true_line(theme);
+    if crate::colors256::is_256(theme) {
+        // 256 colors: the picture as each PC showed it there (98's watercolor and 2000's corner
+        // picture, dithered in the browser's halftone colors).
+        fb.blit(corner_picture_256(era), 0, -scroll);
+    } else if sixteen {
         // 16 colors: 98 shows no watercolor at all (the Reference PC); 2000's picture by its rule.
         if era == Era::Win2000 {
             let mut pic = corner_picture(era).clone();
@@ -771,10 +784,12 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &WebFonts, laid: &Laid,
     }
     let room = fb.width - SCROLL_W;
     if era == Era::Win2000 {
-        fb.fill(Rect::new(0, laid.line_y - scroll, room, m.line_h), crate::colors16::line(theme, 0xFF66_99CC));
+        // At 256 colors True Color's own line (6699CC is a halftone color).
+        let blue = if true_line { 0xFF66_99CC } else { crate::colors16::line(theme, 0xFF66_99CC) };
+        fb.fill(Rect::new(0, laid.line_y - scroll, room, m.line_h), blue);
     } else {
         line_98(fb, 0, laid.line_y - scroll, room);
-        if sixteen {
+        if sixteen && !true_line {
             // Each pixel of the stretched line by 98's rule: red, yellow, lime, aqua (the Reference PC).
             for x in 0..room {
                 let (xx, yy) = (x, laid.line_y - scroll);
@@ -819,7 +834,8 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &WebFonts, laid: &Laid,
             Drawn::Note { rect, lines } => {
                 let r = Rect::new(rect.x, rect.y - scroll, rect.w, rect.h);
                 crate::colors16::fill(fb, theme, r, 0xFFFF_FFE1);
-                let edge = crate::colors16::line(theme, 0xFFD3_D3D3);
+                // At 256 colors the browser's halftone gray nearest D3D3D3 (2000's PC: D7D7D7).
+                let edge = if crate::colors256::is_256(theme) { 0xFFD7_D7D7 } else { crate::colors16::line(theme, 0xFFD3_D3D3) };
                 fb.frame(r, edge, edge);
                 for (k, l) in lines.iter().enumerate() {
                     fonts.body.draw(fb, r.x + 1, r.y + 1 + k as i32 * PITCH, l, BLACK);

@@ -126,8 +126,10 @@ pub(super) fn measure(fonts: &Fonts, book: &Catalog, topic: &Topic, width: i32, 
     layout(None, fonts, book, topic, width, 0, Some(links))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn paint(
     fb: &mut Framebuffer,
+    theme: &crate::theme::Theme,
     fonts: &Fonts,
     era: Era,
     book: &Catalog,
@@ -137,6 +139,15 @@ pub(super) fn paint(
 ) {
     let paper = if era == Era::Win95 { rgb(0xFFFFE2) } else { rgb(0xFFFFFF) };
     let mut canvas = Framebuffer::new(viewport.w, viewport.h, paper);
+    // At 256 colors Windows 95 dots its pale yellow white and yellow (`colors256::dotted`).
+    // (16 Colors keeps the pale yellow, as before.)
+    if let Some(d) = crate::colors256::dotted(theme, paper) {
+        for y in 0..canvas.height {
+            for x in 0..canvas.width {
+                canvas.set(x, y, d.at(x, y));
+            }
+        }
+    }
     layout(Some(&mut canvas), fonts, book, topic, viewport.w, scroll, None);
     fb.blit(&canvas, viewport.x, viewport.y);
 }

@@ -17,6 +17,7 @@ mod assets;
 mod banner;
 mod calculator;
 mod colors16;
+mod colors256;
 mod controls;
 mod desktop;
 mod explorer;
@@ -37,11 +38,12 @@ pub enum Look {
     Win2000,
 }
 
-/// The screen it was taken from: True Color, or that Windows on a 16-color screen.
+/// The screen it was taken from: True Color, or that Windows on a 16-color or 256-color screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Depth {
     TrueColor,
     Sixteen,
+    TwoFiftySix,
 }
 
 /// The three Windows, for a picture each of them had alike.
@@ -108,6 +110,7 @@ const GROUPS: &[&[Entry]] = &[
     winhelp::ENTRIES,
     calculator::ENTRIES,
     colors16::ENTRIES,
+    colors256::ENTRIES,
 ];
 
 /// The picture `what` of `look` at `depth`, if there is one.

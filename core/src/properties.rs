@@ -1243,10 +1243,11 @@ fn paint_preview(fb: &mut Framebuffer, theme: &Theme, frame: Rect, o: TaskbarOpt
         pic.vline(x1, y, 4, rgb(0x000000));
     }
     // In 16 colors the pieces cut from the True Color captures take the look's rule (Windows 2000's
-    // face D4D0C8 in them becomes silver, as its system color did).
+    // face D4D0C8 in them becomes silver, as its system color did; at 256 colors it keeps its face
+    // and desktop, `colors256::area_pixel`).
     if theme.depth.reduced() {
         for p in &mut pic.pixels {
-            *p = crate::colors16::convert(era, *p);
+            *p = crate::colors256::area_pixel(theme, *p);
         }
     }
     fb.blit(&pic, inner.x, inner.y);

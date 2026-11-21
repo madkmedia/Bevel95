@@ -471,7 +471,7 @@ impl HelpTopics {
         if self.max_scroll > 0 {
             paper.w -= 16;
         }
-        help_article::paint(fb, fonts, self.era, &self.catalog, &self.catalog.topics[topic], self.scroll, paper);
+        help_article::paint(fb, theme, fonts, self.era,&self.catalog, &self.catalog.topics[topic], self.scroll, paper);
         self.paint_scrollbar(fb, theme);
         if self.options {
             let r = self.rect(Part::Print).unwrap();

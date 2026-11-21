@@ -2064,7 +2064,7 @@ fn focus_frame(fb: &mut Framebuffer, r: Rect, origin: (i32, i32), theme: &Theme)
         let inside = x >= 0 && y >= 0 && x < fb.width && y < fb.height;
         let odd = (x + origin.0 + y + origin.1).rem_euclid(2) == 1;
         if inside && sixteen {
-            fb.set(x, y, crate::colors16::focus_dot(theme.era, fb.get(x, y), odd));
+            fb.set(x, y, crate::colors16::focus_dot(theme, fb.get(x, y), odd));
         } else if inside && odd {
             let p = fb.get(x, y);
             fb.set(x, y, (p & 0xFF00_0000) | (!p & 0x00FF_FFFF));

@@ -115,8 +115,12 @@ pub fn invert(era: Era, pixel: u32) -> u32 {
 /// One pixel of the dotted focus rectangle (DrawFocusRect) on a 16-color screen: those it
 /// inverts take the number turned round (`invert`; on the selection's navy, yellow: the selected
 /// desktop labels of 95 and 2000 on the Reference PCs); the others stay.
-pub fn focus_dot(era: Era, pixel: u32, inverted: bool) -> u32 {
-    if inverted { invert(era, pixel) } else { pixel }
+pub fn focus_dot(theme: &Theme, pixel: u32, inverted: bool) -> u32 {
+    if !inverted {
+        return pixel;
+    }
+    // Windows 2000 at 256 colors: its own desktop and face invert to their own palette numbers.
+    crate::colors256::invert(theme, pixel).unwrap_or_else(|| invert(theme.era, pixel))
 }
 
 fn channels(pixel: u32) -> [i32; 3] {
@@ -180,7 +184,24 @@ pub fn picture(era: Era, icon: &Icon) -> Icon {
 pub fn shown<'a>(theme: &Theme, icon: &'a Icon) -> Cow<'a, Icon> {
     match theme.depth {
         Depth::TrueColor => Cow::Borrowed(icon),
-        Depth::TwoFiftySix | Depth::Sixteen => Cow::Owned(picture(theme.era, icon)),
+        Depth::Sixteen => Cow::Owned(picture(theme.era, icon)),
+        Depth::TwoFiftySix => {
+            if let Some(own) = crate::colors256::own(theme, icon) {
+                return Cow::Owned(own);
+            }
+            let mut out = picture(theme.era, icon);
+            // Windows 2000 at 256 colors kept its face: where the True Color picture shows the
+            // face (D4D0C8, the toolbar pieces cut with the button's face, 2000's Go button), it
+            // stays the face (the 16-color drawing has silver there).
+            if theme.era == Era::Win2000 {
+                for (o, &p) in out.pixels.iter_mut().zip(&icon.pixels) {
+                    if p >> 24 >= 0x80 && crate::colors256::kept(theme, p) && *o == SILVER {
+                        *o = p | 0xFF00_0000;
+                    }
+                }
+            }
+            Cow::Owned(out)
+        }
     }
 }
 
@@ -221,8 +242,17 @@ fn is_dot(x: i32, y: i32, dots: u32) -> bool {
 /// colors with one of the 16, or (95, 98: Rule 4) a pattern of two of them, lined up with the
 /// framebuffer's corner.
 pub fn fill(fb: &mut Framebuffer, theme: &Theme, r: Rect, color: u32) {
-    if theme.depth == Depth::TrueColor || index(color).is_some() {
+    if theme.depth == Depth::TrueColor || index(color).is_some() || crate::colors256::kept(theme, color) {
         fb.fill(r, color);
+        return;
+    }
+    // 256 colors' own dotted areas (`colors256::dotted`), counted from the area's corner.
+    if let Some(d) = crate::colors256::dotted(theme, color) {
+        for y in r.y.max(0)..r.bottom().min(fb.height) {
+            for x in r.x.max(0)..r.right().min(fb.width) {
+                fb.set(x, y, d.at(x - r.x, y - r.y));
+            }
+        }
         return;
     }
     match theme.era {
@@ -246,6 +276,9 @@ pub fn fill(fb: &mut Framebuffer, theme: &Theme, r: Rect, color: u32) {
 /// A line or a single pixel's color as `theme` shows it (lines and 3D edges are never
 /// dotted): unchanged in True Color, else by the look's rule.
 pub fn line(theme: &Theme, color: u32) -> u32 {
+    if crate::colors256::kept(theme, color) {
+        return color;
+    }
     match theme.depth {
         Depth::TrueColor => color,
         Depth::TwoFiftySix | Depth::Sixteen => convert(theme.era, color),

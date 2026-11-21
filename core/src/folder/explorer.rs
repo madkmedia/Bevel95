@@ -320,7 +320,10 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, era: Era, ch: &
     let t = ch.throbber;
     fb.vline(t.x - 2, t.y, t.h, c.shadow);
     fb.vline(t.x - 1, t.y, t.h + 1, c.highlight);
-    if let Some(p) = explorer_art::picture(era, "throbber") {
+    if let Some(p) = crate::colors256::throbber(theme) {
+        // At 256 colors as each PC drew it there.
+        fb.draw_icon(&p, t.x, t.y);
+    } else if let Some(p) = explorer_art::picture(era, "throbber") {
         crate::colors16::draw_picture(fb, theme, &p, t.x, t.y);
     }
     // The menu titles, cut off before the throbber.
