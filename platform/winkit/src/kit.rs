@@ -384,7 +384,15 @@ impl<H: Hosted> Host<H> {
                     let w = i32::from(lparam as u16);
                     let h = i32::from((lparam >> 16) as u16);
                     // Round up: a non-integral last row or column is clipped by the client DC.
-                    self.hosted.resized((s.old_cover(w), s.old_cover(h)), wparam as u32 == SIZE_MAXIMIZED);
+                    let form = (s.old_cover(w), s.old_cover(h));
+                    self.hosted.resized(form, wparam as u32 == SIZE_MAXIMIZED);
+                    if !s.is_whole() && self.origin == (0, 0) {
+                        // Between whole numbers the form's picture is a part-pixel wider than
+                        // the window: the window keeps the size Windows gave it (fitting it to
+                        // the picture would grow it again at every step, a maximized window
+                        // past the work area).
+                        self.extent = self.hosted.form().size();
+                    }
                 }
                 (None, Vec::new(), self.resizable && !minimized)
             }
