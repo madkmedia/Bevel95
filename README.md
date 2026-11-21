@@ -166,6 +166,10 @@ part are in [docs/decisions.md](docs/decisions.md), every measured color and siz
 Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first: it explains the
 layers, what pixel-exact means here and how it is checked.
 
+## Supporting Bevel95
+
+Bevel95 is free and stays free. If you have enjoyed it and would like to support its development, there is a [Patreon page](https://patreon.com/madkmedia). Nothing is held back for supporters.
+
 ## License
 
 GPL-3.0-or-later for Bevel95's own code ([LICENSE](LICENSE)). The Windows artwork belongs to Microsoft and is not covered by it. Bevel95 is a hobby project for nostalgia and study; it is not affiliated with or endorsed by Microsoft.
