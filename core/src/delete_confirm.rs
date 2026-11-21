@@ -36,6 +36,10 @@ pub enum Question {
     /// Delete here (its Show Desktop was a file in the Quick Launch folder), so this is that window,
     /// with Bevel95's own words (PROVISIONAL).
     RemoveFromBand(String),
+    /// A size between whole numbers chosen in the bar's Size menu or Quick Search: it is on
+    /// already; Yes keeps it, No goes back. The one-item window with the look's warning picture
+    /// and Bevel95's own words (PROVISIONAL).
+    KeepSize,
 }
 
 impl Question {
@@ -44,6 +48,7 @@ impl Question {
             Question::File(_) | Question::EmptyOne(_) | Question::RemoveFromBand(_) => "Confirm File Delete",
             Question::Folder(_) => "Confirm Folder Delete",
             Question::Several(_) | Question::EmptySeveral(_) => "Confirm Multiple File Delete",
+            Question::KeepSize => crate::about::NAME,
         }
     }
 
@@ -60,23 +65,27 @@ impl Question {
             Question::EmptyOne(name) => format!("Are you sure you want to delete '{name}'?"),
             Question::EmptySeveral(n) => format!("Are you sure you want to delete these {n} items?"),
             Question::RemoveFromBand(name) => format!("Are you sure you want to remove '{name}' from Quick Launch?"),
+            Question::KeepSize => {
+                "A size between whole numbers is not as sharp as a whole size. Do you want to keep this size?".into()
+            }
         }
     }
 
     /// Which of the four pictures (`icons.rgb`, left to right): to the Recycle Bin a file, a
-    /// folder, several; deleted for good.
-    fn picture(&self) -> usize {
+    /// folder, several; deleted for good. None: the look's warning picture (`icons::WARNING`).
+    fn picture(&self) -> Option<usize> {
         match self {
-            Question::File(_) | Question::RemoveFromBand(_) => 0,
-            Question::Folder(_) => 1,
-            Question::Several(_) => 2,
-            Question::EmptyOne(_) | Question::EmptySeveral(_) => 3,
+            Question::File(_) | Question::RemoveFromBand(_) => Some(0),
+            Question::Folder(_) => Some(1),
+            Question::Several(_) => Some(2),
+            Question::EmptyOne(_) | Question::EmptySeveral(_) => Some(3),
+            Question::KeepSize => None,
         }
     }
 
     fn layout(&self) -> &'static Layout {
         match self {
-            Question::File(_) | Question::EmptyOne(_) | Question::RemoveFromBand(_) => &ONE,
+            Question::File(_) | Question::EmptyOne(_) | Question::RemoveFromBand(_) | Question::KeepSize => &ONE,
             Question::Folder(_) => &FOLDER,
             Question::Several(_) | Question::EmptySeveral(_) => &SEVERAL,
         }
@@ -194,7 +203,11 @@ impl Form for ConfirmWindow {
             fonts,
             &Frame { era: self.era, title: self.title(), active: self.active, icon: None, buttons: &[close] },
         );
-        crate::colors16::draw_picture(fb, theme, &picture(self.era, self.question.picture()), ICON_AT.0, ICON_AT.1);
+        let icon = match self.question.picture() {
+            Some(k) => picture(self.era, k),
+            None => crate::icons::WARNING.icon(),
+        };
+        crate::colors16::draw_picture(fb, theme, &icon, ICON_AT.0, ICON_AT.1);
         let font = fonts.regular;
         for (n, line) in dialog::wrap(font, &self.question.text(), l.text_right - l.text.0).iter().enumerate() {
             font.draw(fb, l.text.0, l.text.1 + 13 * n as i32, line, theme.colors.text);
@@ -308,6 +321,11 @@ mod tests {
         assert_eq!(q.title(), "Confirm File Delete");
         assert_eq!(q.text(), "Are you sure you want to remove 'Show Desktop' from Quick Launch?");
         assert_eq!(ConfirmWindow::new(Era::Win98, q, false).size(), (419, 133));
+        // A size between whole numbers from the bar's Size menu: keep it or go back.
+        let q = Question::KeepSize;
+        assert_eq!(q.title(), "Bevel95");
+        assert_eq!(q.text(), "A size between whole numbers is not as sharp as a whole size. Do you want to keep this size?");
+        assert_eq!((q.picture(), ConfirmWindow::new(Era::Win2000, q, false).size()), (None, (419, 133)));
     }
 
     #[test]

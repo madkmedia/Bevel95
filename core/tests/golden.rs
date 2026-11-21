@@ -693,6 +693,8 @@ enum ItemScene {
     Cut,
     Confirm,
     ExtensionWarning,
+    /// The bar's question after a size between whole numbers was chosen in its Size menu.
+    KeepSize,
 }
 
 /// Bevel95's desktop with some of the owner's items (test pictures) and the menu on an icon,
@@ -743,9 +745,10 @@ fn desktop_item_scene(theme: &Theme, era: Era, fonts: &Fonts, scene: ItemScene) 
             d.rename_paste("letter.dat");
             d.rename_asking(true);
         }
+        ItemScene::KeepSize => d.select_only(None),
         ItemScene::Menu | ItemScene::Confirm => {}
     }
-    if matches!(scene, ItemScene::Confirm | ItemScene::ExtensionWarning) {
+    if matches!(scene, ItemScene::Confirm | ItemScene::ExtensionWarning | ItemScene::KeepSize) {
         d.active = false;
     }
     d.paint(&mut screen, theme, fonts, area);
@@ -758,8 +761,10 @@ fn desktop_item_scene(theme: &Theme, era: Era, fonts: &Fonts, scene: ItemScene) 
             let (x, y) = place_popup(r.x + 16, r.y + 16, fb.width, fb.height, Rect::new(0, 0, WIDTH, SCREEN_H));
             screen.blit(&fb, x, y);
         }
-        ItemScene::Confirm => {
-            let mut w = ConfirmWindow::new(era, Question::File("letter.txt".into()), false);
+        ItemScene::Confirm | ItemScene::KeepSize => {
+            let question =
+                if matches!(scene, ItemScene::KeepSize) { Question::KeepSize } else { Question::File("letter.txt".into()) };
+            let mut w = ConfirmWindow::new(era, question, false);
             w.layout(fonts);
             let (ww, wh) = w.size();
             let mut fb = Framebuffer::new(ww, wh, 0);
@@ -1452,7 +1457,7 @@ fn scenes() -> Vec<Scene> {
         );
         add(
             "bevel95-settings-quarter",
-            "Bevel95 Settings at a size between whole numbers (1.75): how it is drawn can be chosen, and the line says it is not pixel-exact; the keyboard on that list",
+            "Bevel95 Settings at a size between whole numbers (1.75): \"Allow quarter sizes\" ticked by itself, how it is drawn can be chosen; the keyboard on that list",
             quarter_size_scene(theme, era, &fonts, None),
         );
         add(
@@ -1551,6 +1556,11 @@ fn scenes() -> Vec<Scene> {
             desktop_item_scene(theme, era, &fonts, ItemScene::Confirm),
         );
         add(
+            "keep-size-question",
+            "After a size between whole numbers is chosen in the bar's Size menu: the look's question whether to keep it, Yes focused (words provisional)",
+            desktop_item_scene(theme, era, &fonts, ItemScene::KeepSize),
+        );
+        add(
             "desktop-rename-extension",
             "Renaming letter.txt to letter.dat: the look's own Rename warning over the rename box, Yes focused",
             desktop_item_scene(theme, era, &fonts, ItemScene::ExtensionWarning),
@@ -1577,7 +1587,7 @@ fn scenes() -> Vec<Scene> {
         );
         add(
             "size-menu",
-            "Right-click menu, Bevel95, with the Size submenu open; the size in use (2×) has a bullet (bullet shape provisional)",
+            "Right-click menu, Bevel95, with the Size submenu open; the size in use (2×) has a bullet (bullet shape provisional), the whole sizes in bold",
             bar_submenu_scene(theme, era, &fonts, Some(BarEntry::Size)),
         );
         add("run", "Run, with \"notepad\" typed", dialog_scene(theme, &fonts, DialogKind::Run, era));

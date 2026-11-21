@@ -32,6 +32,20 @@ pub fn ask_then(question: bevel_core::delete_confirm::Question, by_keyboard: boo
     }
 }
 
+/// The look's question `question`: Yes carries out `yes`, every other end `no` (the Size
+/// question; `bevel_winkit::confirm::ask_choice`). Not opened: `no` at once.
+pub fn ask_choice(
+    question: bevel_core::delete_confirm::Question,
+    by_keyboard: bool,
+    yes: Box<dyn FnOnce()>,
+    no: Box<dyn FnOnce()>,
+) {
+    match place() {
+        Some(place) => confirm::ask_choice(place, question, by_keyboard, yes, no),
+        None => no(),
+    }
+}
+
 /// Opens the extension warning (posted by the desktop's thread), where USER put a message box on
 /// the main screen. `by_keyboard`: the name was taken with Enter.
 pub fn ask_rename(by_keyboard: bool) {

@@ -109,7 +109,9 @@ const WM_REPAINT: u32 = WM_APP + 2;
 pub static WM_BAR_COMMAND: Private = Private::new("Bevel95.Bar.Command");
 /// A size was chosen in the Size submenu: the new size is wParam / lParam, lParam 0 (a whole
 /// size, as before quarter sizes came: `tools\dev\postbar.ps1 Size 3`) or 4 (wParam in quarters:
-/// 7 is 1.75). `size_of_message` reads it.
+/// 7 is 1.75). `size_of_message` reads it. A size between whole numbers asks first whether to
+/// keep it (`choose_size`); the question's answer comes back as lParam 8 (keep) or 9 (back),
+/// wParam the question's ticket.
 pub static WM_BAR_SIZE: Private = Private::new("Bevel95.Bar.Size");
 /// A Start menu entry without a submenu was chosen (Run, Shut Down, ...): wParam = its index.
 pub static WM_START_ACTION: Private = Private::new("Bevel95.Bar.StartAction");
@@ -221,6 +223,9 @@ pub struct App {
     scale_setting: Option<Scale>,
     /// How a size between whole numbers is drawn (the "scaling" setting).
     scaling: bevel_core::scale::Way,
+    /// A size between whole numbers chosen in the Size menu or Quick Search, on but not saved
+    /// while the look's question asks whether to keep it (`choose_size`).
+    size_asking: bar_menu::SizeAsking,
     /// The size in use (a whole number, or a quarter step between: `bevel_core::scale`).
     pub scale: Scale,
     /// The main screen, in screen pixels.
@@ -589,6 +594,7 @@ pub fn run() -> u32 {
             bold,
             scale_setting: settings.scale,
             scaling: settings.scaling,
+            size_asking: bar_menu::SizeAsking::default(),
             scale: Scale::ONE,
             monitor: RECT::default(),
             placed: RECT::default(),
@@ -2460,9 +2466,75 @@ fn size_of_message(wparam: usize, lparam: isize) -> Option<Scale> {
     (bevel_core::scale::MIN_QUARTERS..=bevel_core::scale::MAX_QUARTERS).contains(&quarters).then(|| Scale::from_quarters(quarters))
 }
 
-/// Size menu: switches to a new scale at once and remembers it in settings.txt.
+/// `WM_BAR_SIZE`'s lParam for the Size question's answers (wParam its ticket): keep the size, or
+/// go back to the one before. Posted by the question's own actions, so that the size changes
+/// only once the question's window has gone.
+const SIZE_KEEP: isize = 8;
+const SIZE_BACK: isize = 9;
+
+/// The Size menu and Quick Search (`WM_BAR_SIZE`): a whole size at once and saved (`set_size`);
+/// a size between whole numbers is put on at once, so the person sees it, but saved only after
+/// Yes to the look's question; No, closing it, or the bar ending or changing its look while it is
+/// open goes back to the size before, and nothing is saved. It asks every time, also from
+/// another such size.
+fn choose_size(bar: HWND, scale: Scale) {
+    if scale.is_whole() {
+        set_size(bar, scale);
+        return;
+    }
+    let chosen = with_app(|app| {
+        let chosen = app.size_asking.choose(app.scale_setting, scale);
+        if let bar_menu::SizeChosen::Ask(scale, _) = chosen {
+            app.scale_setting = Some(scale);
+        }
+        chosen
+    });
+    let Some(bar_menu::SizeChosen::Ask(scale, ticket)) = chosen else {
+        return;
+    };
+    log(&format!("size: {scale}x, on until the question is answered"));
+    size_changed(bar);
+    let bar_id = bar as usize; // the window's id travels in the closures as a number
+    let answer = move |keep: bool| -> Box<dyn FnOnce()> {
+        Box::new(move || {
+            // SAFETY: posting to the bar's own window (gone: the post fails harmlessly).
+            unsafe { PostMessageW(bar_id as HWND, WM_BAR_SIZE.id(), ticket, if keep { SIZE_KEEP } else { SIZE_BACK }) };
+        })
+    };
+    crate::confirm_window::ask_choice(bevel_core::delete_confirm::Question::KeepSize, false, answer(true), answer(false));
+}
+
+/// The Size question's answer (`choose_size`); an answer of an older question does nothing.
+fn size_answered(bar: HWND, ticket: usize, keep: bool) {
+    let answer = with_app(|app| {
+        let answer = app.size_asking.answer(ticket, keep)?;
+        if let bar_menu::SizeAnswer::Back(before) = answer {
+            app.scale_setting = before;
+        }
+        Some(answer)
+    });
+    match answer.flatten() {
+        Some(bar_menu::SizeAnswer::Keep(scale)) => {
+            save_setting("scale", &scale.label());
+            log(&format!("size: {scale}x kept"));
+            // Bevel95's other programs read the size from settings.txt: now it is there.
+            kit::tell_programs_look_changed();
+        }
+        Some(bar_menu::SizeAnswer::Back(_)) => {
+            log("size: back to the size before (the question was not answered Yes); nothing saved");
+            size_changed(bar);
+        }
+        None => {}
+    }
+}
+
+/// Switches to a new scale at once and remembers it in settings.txt (a whole size from the Size
+/// menu, Bevel95 Settings' OK or Apply). A Size question still open is closed: its size is gone.
 fn set_size(bar: HWND, scale: Scale) {
     let scale = Scale::from_quarters(scale.quarters());
+    if with_app(|app| app.size_asking.forget()).unwrap_or(false) {
+        bevel_winkit::confirm::close_asked();
+    }
     with_app(|app| app.scale_setting = Some(scale));
     save_setting("scale", &scale.label());
     log(&format!("size: {scale}x"));
@@ -3003,8 +3075,13 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 0;
         }
         m if m == WM_BAR_SIZE.id() => {
-            if let Some(scale) = size_of_message(wparam, lparam) {
-                set_size(bar, scale);
+            match lparam {
+                SIZE_KEEP | SIZE_BACK => size_answered(bar, wparam, lparam == SIZE_KEEP),
+                _ => {
+                    if let Some(scale) = size_of_message(wparam, lparam) {
+                        choose_size(bar, scale);
+                    }
+                }
             }
             return 0;
         }

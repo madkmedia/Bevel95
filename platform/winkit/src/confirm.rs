@@ -34,6 +34,9 @@ enum Pending {
     UndoCopy(Vec<bevel_core::drag::Made>, Vec<String>, Option<Box<Place>>, crate::undo::Asking),
     /// The asker's own action (`ask_then`), carried out on this thread after Yes.
     Then(Box<dyn FnOnce()>),
+    /// The asker's two actions (`ask_choice`): the first after Yes, the second after any other
+    /// end (No, Esc, the X, closed without an answer).
+    Choice(Box<dyn FnOnce()>, Box<dyn FnOnce()>),
 }
 
 thread_local! {
@@ -55,6 +58,15 @@ impl Hosted for ConfirmHost {
     fn activate(part: Part) {
         let pending = PENDING.with(|p| p.borrow_mut().take());
         kit::close::<ConfirmHost>();
+        if let Some(Pending::Choice(yes, no)) = pending {
+            if part == Part::Yes {
+                yes();
+            } else {
+                log("a question was answered No");
+                no();
+            }
+            return;
+        }
         if part != Part::Yes {
             log("the delete question was answered No");
             return;
@@ -70,7 +82,7 @@ impl Hosted for ConfirmHost {
                 }
             }
             Some(Pending::Then(yes)) => yes(),
-            None => {}
+            Some(Pending::Choice(..)) | None => {}
         }
     }
     fn request_close() {
@@ -81,9 +93,12 @@ impl Hosted for ConfirmHost {
     }
 }
 
-/// A question closed without an answer: its action goes with it.
+/// A question closed without an answer: its action goes with it; a choice's other action
+/// (`ask_choice`) is carried out, as after No.
 fn drop_pending() {
-    PENDING.with(|p| p.borrow_mut().take());
+    if let Some(Pending::Choice(_, no)) = PENDING.with(|p| p.borrow_mut().take()) {
+        no();
+    }
 }
 
 /// A new question's action takes the place of an open one's: the open question is closed first
@@ -128,7 +143,7 @@ fn ask(place: Place, question: Question, pending: Pending, by_keyboard: bool) {
         (work.left + (rect_w(&work) - w) / 2, work.top + (rect_h(&work) - h) / 2)
     });
     if opened.is_none() {
-        PENDING.with(|p| p.borrow_mut().take());
+        drop_pending();
     }
 }
 
@@ -152,12 +167,21 @@ pub fn ask_then(place: Place, question: Question, by_keyboard: bool, yes: Box<dy
     ask(place, question, Pending::Then(yes), by_keyboard);
 }
 
-/// Closes the open question if it is an asker's own (`ask_then`), without an answer: its action is
-/// dropped first, so nothing of it is done. A question of another kind (Delete, Empty Recycle Bin,
-/// Undo Copy) is left open. For the bar at its end and at a change of look or colors (the second
-/// review before 0.1.2, B2: Quick Launch's questions outlived the bar and its look).
+/// The look's question `question`; Yes carries out `yes`, every other end carries out `no`: No,
+/// Esc, the X, and a close without an answer (`close_asked`, a new question in its place). Both
+/// run on this thread, `no` possibly while a window is being closed: it should only post what is
+/// to be done (the bar's Size question, which posts its answer to the bar).
+pub fn ask_choice(place: Place, question: Question, by_keyboard: bool, yes: Box<dyn FnOnce()>, no: Box<dyn FnOnce()>) {
+    ask(place, question, Pending::Choice(yes, no), by_keyboard);
+}
+
+/// Closes the open question if it is an asker's own (`ask_then`, `ask_choice`), without an
+/// answer: its action is dropped first, so nothing of it is done (a choice's `no` is). A question
+/// of another kind (Delete, Empty Recycle Bin, Undo Copy) is left open. For the bar at its end and
+/// at a change of look or colors (the second review before 0.1.2, B2: Quick Launch's questions
+/// outlived the bar and its look).
 pub fn close_asked() {
-    if !PENDING.with(|p| matches!(*p.borrow(), Some(Pending::Then(_)))) {
+    if !PENDING.with(|p| matches!(*p.borrow(), Some(Pending::Then(_) | Pending::Choice(..)))) {
         return;
     }
     drop_pending();
@@ -471,5 +495,39 @@ mod tests {
         PENDING.with(|p| *p.borrow_mut() = Some(Pending::EmptyRecycleBin));
         close_asked();
         assert!(matches!(PENDING.with(|p| p.borrow_mut().take()), Some(Pending::EmptyRecycleBin)), "another kind of question stays");
+    }
+
+    /// A choice (the bar's Size question): Yes runs only its first action; No, the X and every
+    /// close without an answer (its program closing it, a new question in its place) only its
+    /// second, once.
+    #[test]
+    fn a_choice_runs_yes_or_else_no_exactly_once() {
+        use std::rc::Rc;
+        let set = |yes: &Rc<Cell<u32>>, no: &Rc<Cell<u32>>| {
+            let (y, n) = (yes.clone(), no.clone());
+            PENDING.with(|p| {
+                *p.borrow_mut() =
+                    Some(Pending::Choice(Box::new(move || y.set(y.get() + 1)), Box::new(move || n.set(n.get() + 1))))
+            });
+        };
+        let ends: [(&str, fn()); 5] = [
+            ("yes", || ConfirmHost::activate(Part::Yes)),
+            ("no", || ConfirmHost::activate(Part::No)),
+            ("the X", ConfirmHost::request_close),
+            ("closed by its program", close_asked),
+            // (The new question's action does nothing: it is taken away before anything runs.)
+            ("a new question in its place", || take_over(Pending::Then(Box::new(|| {})), drop_pending)),
+        ];
+        for (what, end) in ends {
+            let (yes, no) = (Rc::new(Cell::new(0)), Rc::new(Cell::new(0)));
+            set(&yes, &no);
+            end();
+            PENDING.with(|p| p.borrow_mut().take());
+            // Anything later (a click already queued) finds nothing more to do.
+            ConfirmHost::activate(Part::Yes);
+            drop_pending();
+            let want = if what == "yes" { (1, 0) } else { (0, 1) };
+            assert_eq!((yes.get(), no.get()), want, "{what}");
+        }
     }
 }

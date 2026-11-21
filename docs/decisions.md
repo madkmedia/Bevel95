@@ -5330,13 +5330,40 @@ exact, the default left to us (even, the mock-ups' B1).
   a screen's height); Quick Search ("size", "scale", ...; the sizes in their own order); Bevel95
   Settings, General page, Size group: two drop-down lists, "Size:" with every size and "Drawn as:"
   with the four ways ("Even pixels", "Even pixels, lighter edges", "Sharp, uneven pixels", "Smooth";
-  usable only at a size between whole numbers), and a line under them that says what a size does,
-  or at such a size "A size between whole numbers is not pixel-exact." (all PROVISIONAL). The lists
+  usable only at a size between whole numbers), and a line under them that said what a size does,
+  or at such a size "A size between whole numbers is not pixel-exact." (all PROVISIONAL; the line
+  gave way to a check box on the same day, below). The lists
   are Windows 2000 Shut Down's kind (`Part::SizeList`, `WayList`, `DropRow`): the field, its button,
   the list over what is under it; the keyboard (arrows step the closed list, F4 or Alt+Down opens,
   Enter takes, Esc closes as it was, a first letter or digit) and the mouse. Option buttons did not
   fit: 13 sizes and 4 ways need more than the group's 68 pixels, and the page is full. OK and Apply
   save only what changed: the way alone saves only `scaling`, so an automatic size stays automatic.
+  **After the owner saw them** (2026-11-21: "Even pixels looks best to me so that should be the
+  default. I think we should bold the integer multiples in the right click menu. In the settings
+  we could have a checkbox ... When they select a quarter one in the right click menu it should
+  have a pop up to warn and let them keep it or go back."): even stays the default; the Size
+  menu draws the whole sizes in bold (the menu's own bold, a default entry's; `size_menu`), the
+  quarter sizes plain. A quarter size chosen in the Size menu or Quick Search is put on at once,
+  so the person sees it, and the look's question window (Confirm File Delete's window with the
+  look's warning picture, title "Bevel95": `Question::KeepSize`) asks "A size between whole
+  numbers is not as sharp as a whole size. Do you want to keep this size?" (PROVISIONAL). Yes
+  keeps it and only then saves it (and tells the other programs, which read the size from
+  settings.txt); No, Esc, the X, or the bar ending or changing its look or colors while it is
+  open goes back to the setting before (automatic stays automatic), and nothing is saved. It
+  asks every time, also from another quarter size (then "before" is still the size before the
+  first question); a whole size never asks, and a whole size chosen or a size applied in Bevel95
+  Settings while it is open closes it. The rules are `bar_menu::SizeAsking` (tested); the
+  question is `confirm::ask_choice`, the mechanism Quick Launch's question uses, so the bar
+  closes it with itself (`close_asked`); its actions only post the answer to the bar
+  (`WM_BAR_SIZE` with lParam 8 keep or 9 back, wParam the question's ticket: a late answer of an
+  older question does nothing), so the size never changes while a window is being closed.
+  Bevel95 Settings' Size group has "Allow quarter sizes (not as sharp)" (PROVISIONAL) under the
+  two lists, where the line of text was (the page has no room for both; the box's own words are
+  the warning): unticked, the Size list offers the whole sizes only and "Drawn as" is grayed;
+  ticked, every size. It is the page's own state, not a setting: ticked by itself whenever the
+  size shown is a quarter size (opened, Apply, a size chosen on the bar); unticking it at a
+  quarter size moves the list to the nearest whole size (half up, at most 4x), in effect at OK or
+  Apply. A quarter size applied from this window asks nothing more.
   A key that reaches another control while a list is open (Alt and a letter, or a letter or digit
   no entry begins with) closes the list first, as it was, so Enter and Esc are OK and Cancel again.
   A size the list does not offer (4.25 to 8, written in settings.txt) is shown in the field; the

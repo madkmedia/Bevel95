@@ -272,9 +272,74 @@ pub fn colors_at(index: usize) -> Option<Depth> {
     Depth::ALL.get(index).copied()
 }
 
-/// The Size submenu: "1×" to "4×", with a bullet on the size in use.
+/// The Size submenu: "1×" to "4×", with a bullet on the size in use; the whole sizes in bold
+/// (the menu's own bold, a default entry's), the sizes between them plain.
 pub fn size_menu(current: Scale) -> Menu {
-    choices(MENU_SCALES.iter().map(|&s| (format!("{s}\u{d7}"), s.quarters() == current.quarters())))
+    let mut menu = choices(MENU_SCALES.iter().map(|&s| (format!("{s}\u{d7}"), s.quarters() == current.quarters())));
+    for (entry, s) in menu.entries.iter_mut().zip(MENU_SCALES) {
+        entry.bold = s.is_whole();
+    }
+    menu
+}
+
+/// The Size menu's and Quick Search's sizes between whole numbers: put on at once, saved only
+/// after Yes to the look's question (the owner, 2026-11-21). The bar keeps one of these; its
+/// size setting (None: automatic) goes through it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SizeAsking {
+    /// The open question: its ticket, the size it asks about and the setting before the first
+    /// of these questions.
+    open: Option<(usize, Scale, Option<Scale>)>,
+    tickets: usize,
+}
+
+/// What a size chosen in the Size menu or Quick Search does (`SizeAsking::choose`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeChosen {
+    /// A whole size: on and saved at once, no question (an open one is closed: `forget`).
+    Save(Scale),
+    /// A size between whole numbers: on at once, not saved; the question asks, its answer naming
+    /// this ticket.
+    Ask(Scale, usize),
+}
+
+/// What the question's answer does (`SizeAsking::answer`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeAnswer {
+    /// Yes: this size is saved.
+    Keep(Scale),
+    /// Anything else: back to this setting (None: automatic); nothing saved.
+    Back(Option<Scale>),
+}
+
+impl SizeAsking {
+    /// `scale` chosen while the size setting is `setting`.
+    pub fn choose(&mut self, setting: Option<Scale>, scale: Scale) -> SizeChosen {
+        let scale = Scale::from_quarters(scale.quarters());
+        if scale.is_whole() {
+            self.forget();
+            return SizeChosen::Save(scale);
+        }
+        // A question already open: the setting before is still the one before it.
+        let before = self.open.map_or(setting, |(_, _, before)| before);
+        self.tickets += 1;
+        self.open = Some((self.tickets, scale, before));
+        SizeChosen::Ask(scale, self.tickets)
+    }
+
+    /// The answer of question `ticket`: `keep` for Yes. None for an older question's answer, or
+    /// once forgotten.
+    pub fn answer(&mut self, ticket: usize, keep: bool) -> Option<SizeAnswer> {
+        let (_, asked, before) = self.open.filter(|&(t, _, _)| t == ticket)?;
+        self.open = None;
+        Some(if keep { SizeAnswer::Keep(asked) } else { SizeAnswer::Back(before) })
+    }
+
+    /// A size set and saved another way (Bevel95 Settings): the open question means nothing now.
+    /// True if one was open.
+    pub fn forget(&mut self) -> bool {
+        self.open.take().is_some()
+    }
 }
 
 /// The scale chosen by entry `index` of `size_menu`.
@@ -432,6 +497,45 @@ mod tests {
         // A quarter size in use has its bullet too.
         let m = size_menu(Scale::from_quarters(7));
         assert_eq!((0..m.entries.len()).filter(|&i| m.entries[i].mark.is_some()).collect::<Vec<_>>(), [3]);
+        // The whole sizes in bold, the quarter sizes plain.
+        let bold: Vec<usize> = (0..m.entries.len()).filter(|&i| m.entries[i].bold).collect();
+        assert_eq!(bold, [0, 4, 8, 12]);
+    }
+
+    #[test]
+    fn a_quarter_size_from_the_menu_is_kept_only_after_yes() {
+        let (two, q7, q9) = (Scale::whole(2), Scale::from_quarters(7), Scale::from_quarters(9));
+        // A whole size: saved at once, no question.
+        let mut a = SizeAsking::default();
+        assert_eq!(a.choose(Some(two), Scale::whole(3)), SizeChosen::Save(Scale::whole(3)));
+        // Yes keeps it (and only then is it saved).
+        let SizeChosen::Ask(s, t) = a.choose(Some(two), q7) else { panic!("a quarter size asks") };
+        assert_eq!(s, q7);
+        assert_eq!(a.answer(t, true), Some(SizeAnswer::Keep(q7)));
+        assert_eq!(a.answer(t, false), None, "answered once");
+        // No (or a closed question, which answers the same) goes back; nothing to save.
+        let SizeChosen::Ask(_, t) = a.choose(Some(two), q7) else { panic!() };
+        assert_eq!(a.answer(t, false), Some(SizeAnswer::Back(Some(two))));
+        // From the automatic size: back to automatic.
+        let SizeChosen::Ask(_, t) = a.choose(None, q7) else { panic!() };
+        assert_eq!(a.answer(t, false), Some(SizeAnswer::Back(None)));
+        // Asked again from another quarter size while open: the size before stays the first one,
+        // and the first question's late answer does nothing.
+        let SizeChosen::Ask(_, first) = a.choose(Some(two), q7) else { panic!() };
+        let SizeChosen::Ask(s, second) = a.choose(Some(q7), q9) else { panic!("it asks every time") };
+        assert_eq!(s, q9);
+        assert_eq!(a.answer(first, false), None);
+        assert_eq!(a.answer(second, false), Some(SizeAnswer::Back(Some(two))));
+        // A kept quarter size, then another: asks again, back goes to the kept one.
+        let SizeChosen::Ask(_, t) = a.choose(Some(q7), q9) else { panic!() };
+        assert_eq!(a.answer(t, false), Some(SizeAnswer::Back(Some(q7))));
+        // A size set another way while open (Bevel95 Settings, a whole size): the question is moot.
+        let SizeChosen::Ask(_, t) = a.choose(Some(two), q7) else { panic!() };
+        assert!(a.forget());
+        assert_eq!(a.answer(t, true), None);
+        let SizeChosen::Ask(_, t) = a.choose(Some(two), q7) else { panic!() };
+        assert_eq!(a.choose(Some(q7), Scale::whole(1)), SizeChosen::Save(Scale::ONE));
+        assert_eq!(a.answer(t, false), None);
     }
 
     #[test]

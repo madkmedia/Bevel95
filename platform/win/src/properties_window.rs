@@ -190,6 +190,7 @@ fn refresh_after_apply<const OWN: bool>() {
     kit::update::<SheetHost<OWN>>(|h| {
         let p = &mut h.form.props;
         p.values = values;
+        p.follow_size();
         p.changed = false;
         p.programs.edited = false;
         follow_era(p, era);
@@ -243,6 +244,7 @@ fn follow_bar<const OWN: bool>() {
         }
         if new_size {
             p.values.scale = in_effect.scale;
+            p.follow_size();
         }
         follow_era(p, era);
     });

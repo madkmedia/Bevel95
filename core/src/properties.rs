@@ -82,6 +82,9 @@ pub enum Check {
     BatteryPercent,
     /// Bevel95 Settings, Taskbar page: the Quick Launch band.
     QuickLaunch,
+    /// Bevel95 Settings, General page: the Size list offers the sizes between whole numbers too.
+    /// The page's own state (`Properties::quarters`), not a setting.
+    QuarterSizes,
 }
 
 /// The entries of Windows 2000's Start Menu Settings list (Advanced page).
@@ -285,6 +288,8 @@ fn check_label(check: Check) -> &'static str {
         Check::BatteryPercent => "Show the &battery's percentage beside its icon",
         // Ours (PROVISIONAL), in the Buttons group.
         Check::QuickLaunch => "Show Quick &Launch",
+        // Ours (PROVISIONAL), in the Size group: its own words are the warning.
+        Check::QuarterSizes => "Allow &quarter sizes (not as sharp)",
     }
 }
 
@@ -324,15 +329,17 @@ fn size_text(scale: Scale) -> String {
 const SIZE_LIST_LABEL: &str = "Si&ze:";
 const WAY_LIST_LABEL: &str = "&Drawn as:";
 
-/// The line under them: what the size does, and at a size between whole numbers that it is not
-/// pixel-exact (ours, PROVISIONAL).
-const SIZE_WHOLE_TEXT: &str = "Each pixel of the classic look becomes this many.";
-const SIZE_QUARTER_TEXT: &str = "A size between whole numbers is not pixel-exact.";
+/// The sizes the Size list offers: every size the menus offer with "Allow quarter sizes" ticked
+/// (`quarters`), the whole ones only without.
+fn size_choices(quarters: bool) -> Vec<Scale> {
+    MENU_SCALES.into_iter().filter(|s| quarters || s.is_whole()).collect()
+}
 
-/// The choices of drop-down list `list` (`Part::SizeList` or `Part::WayList`).
-fn list_choices(list: Part) -> Vec<String> {
+/// The choices of drop-down list `list` (`Part::SizeList` or `Part::WayList`); `quarters` as for
+/// `size_choices`.
+fn list_choices(list: Part, quarters: bool) -> Vec<String> {
     match list {
-        Part::SizeList => MENU_SCALES.iter().map(|&s| size_text(s)).collect(),
+        Part::SizeList => size_choices(quarters).into_iter().map(size_text).collect(),
         Part::WayList => Way::ALL.iter().map(|w| w.title().to_string()).collect(),
         _ => Vec::new(),
     }
@@ -434,6 +441,9 @@ pub struct Properties {
     pub screen: (i32, i32),
     /// The open drop-down list (`Part::SizeList` or `Part::WayList`) and its highlighted entry.
     pub drop: Option<(Part, usize)>,
+    /// Bevel95 Settings' "Allow quarter sizes" box: the page's own state, not a setting
+    /// (`follow_size` ticks it at a size between whole numbers).
+    pub quarters: bool,
 }
 
 impl Properties {
@@ -453,14 +463,26 @@ impl Properties {
             programs: ProgramList::default(),
             screen: (0, 0),
             drop: None,
+            quarters: !values.scale.is_whole(),
         }
+    }
+
+    /// The size shown was set from outside (opened, Apply, a size chosen on the bar): "Allow
+    /// quarter sizes" is ticked by itself when it is a size between whole numbers.
+    pub fn follow_size(&mut self) {
+        self.quarters |= !self.values.scale.is_whole();
+    }
+
+    /// The choices of drop-down list `list` as it offers them now.
+    pub fn choices(&self, list: Part) -> Vec<String> {
+        list_choices(list, self.quarters)
     }
 
     /// The entry of drop-down list `list` that is chosen now, if the list has it (a size set in
     /// settings.txt that the list does not offer has none).
     pub fn list_chosen(&self, list: Part) -> Option<usize> {
         match list {
-            Part::SizeList => MENU_SCALES.iter().position(|s| s.quarters() == self.values.scale.quarters()),
+            Part::SizeList => size_choices(self.quarters).iter().position(|s| s.quarters() == self.values.scale.quarters()),
             Part::WayList => Way::ALL.iter().position(|&w| w == self.values.scale.way),
             _ => None,
         }
@@ -471,8 +493,8 @@ impl Properties {
     fn list_near(&self, list: Part) -> usize {
         self.list_chosen(list).unwrap_or_else(|| match list {
             Part::SizeList => {
-                let q = self.values.scale.quarters();
-                (0..MENU_SCALES.len()).min_by_key(|&i| (MENU_SCALES[i].quarters() - q).abs()).unwrap_or(0)
+                let (q, sizes) = (self.values.scale.quarters(), size_choices(self.quarters));
+                (0..sizes.len()).min_by_key(|&i| (sizes[i].quarters() - q).abs()).unwrap_or(0)
             }
             _ => 0,
         })
@@ -489,9 +511,10 @@ impl Properties {
 
     /// Entry `i` of drop-down list `list` is chosen. False if it does not have one.
     pub fn choose_entry(&mut self, list: Part, i: usize) -> bool {
+        let sizes = size_choices(self.quarters);
         let v = &mut self.values;
         match list {
-            Part::SizeList => match MENU_SCALES.get(i) {
+            Part::SizeList => match sizes.get(i) {
                 Some(s) => v.scale = s.with_way(v.scale.way),
                 None => return false,
             },
@@ -518,7 +541,7 @@ impl Properties {
     /// the open list's highlight moves; a closed list's choice moves at once, as Windows' did.
     /// A size the list does not offer goes to the nearest one it offers.
     pub fn step_list(&mut self, list: Part, forward: bool) {
-        let n = list_choices(list).len();
+        let n = self.choices(list).len();
         if n == 0 {
             return;
         }
@@ -639,7 +662,7 @@ impl Properties {
             Part::UsePcTime => self.values.clock_offset != 0,
             Part::Check(Check::PersonalizedMenus) => false,
             // How a size is drawn matters only between whole numbers.
-            Part::WayList => !self.values.scale.is_whole(),
+            Part::WayList => self.quarters && !self.values.scale.is_whole(),
             _ => true,
         }
     }
@@ -665,6 +688,19 @@ impl Properties {
     pub fn choose(&mut self, part: Part) -> bool {
         if !self.enabled(part) {
             return false;
+        }
+        if part == Part::Check(Check::QuarterSizes) {
+            // Unticked while a size between whole numbers is chosen: the list moves to the
+            // nearest whole size it offers (in effect at OK or Apply, as everything here).
+            self.quarters = !self.quarters;
+            self.drop = None;
+            let s = self.values.scale;
+            if !self.quarters && !s.is_whole() {
+                let whole = ((s.quarters() + 2) / 4).clamp(1, 4);
+                self.values.scale = Scale::whole(whole).with_way(s.way);
+                self.changed = true;
+            }
+            return true;
         }
         let v = &mut self.values;
         match part {
@@ -717,6 +753,9 @@ impl Properties {
 
     /// Whether check box `c` is ticked.
     pub fn is_checked(&self, c: Check) -> bool {
+        if c == Check::QuarterSizes {
+            return self.quarters;
+        }
         let mut v = self.values;
         *check_value(&mut v, c)
     }
@@ -856,8 +895,9 @@ fn check_value(v: &mut Values, c: Check) -> &mut bool {
         Check::AutoHide => &mut v.options.auto_hide,
         Check::SmallIcons => &mut v.options.small_icons,
         Check::ShowClock => &mut v.options.show_clock,
-        // Never changes (always grayed out); this just gives it somewhere to point.
-        Check::PersonalizedMenus => &mut v.start_with_windows,
+        // Never changes (always grayed out), or is the page's own (`Properties::quarters`, read
+        // and flipped before this): this just gives it somewhere to point.
+        Check::PersonalizedMenus | Check::QuarterSizes => &mut v.start_with_windows,
         Check::StartWithWindows => &mut v.start_with_windows,
         Check::Desktop => &mut v.desktop,
         Check::Group => &mut v.group,
@@ -887,7 +927,7 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
             .iter()
             .map(|&e| Part::Look(e))
             .chain(Depth::ALL.iter().map(|&d| Part::Colors(d)))
-            .chain([Part::SizeList, Part::WayList])
+            .chain([Part::SizeList, Part::WayList, Part::Check(Check::QuarterSizes)])
             .chain([Part::Check(Check::StartWithWindows), Part::UsePcTime])
             .collect(),
         Page::OwnTaskbar => {
@@ -1058,19 +1098,22 @@ const SIZE_LABEL_X: i32 = 36;
 const SIZE_FIELD: Rect = Rect::new(64, 179, 58, 21);
 const WAY_LABEL_X: i32 = 132;
 const WAY_FIELD: Rect = Rect::new(180, 179, 128, 21);
-const SIZE_LINE_Y: i32 = 206;
+/// Under them, "Allow quarter sizes (not as sharp)" (ours, PROVISIONAL), where a line of text
+/// said what a size does until 2026-11-21: the page had no room for both. The box as Startup's
+/// (its row 3 above the old line's text).
+const QUARTERS_CHECK: (i32, i32) = (36, 207);
 /// An open list's rows (as Shut Down's in Windows 2000).
 const DROP_ROW_H: i32 = 13;
 
 /// Where drop-down list `list` opens: under its field, at least as wide as the field and as
 /// its widest entry, kept inside the window.
-fn drop_frame(font: &Font, list: Part) -> Option<Rect> {
+fn drop_frame(font: &Font, p: &Properties, list: Part) -> Option<Rect> {
     let field = match list {
         Part::SizeList => SIZE_FIELD,
         Part::WayList => WAY_FIELD,
         _ => return None,
     };
-    let choices = list_choices(list);
+    let choices = p.choices(list);
     let widest = choices.iter().map(|c| font.measure(c)).max().unwrap_or(0) + 6;
     let w = field.w.max(widest);
     let x = field.x.min(SIZE.0 - 4 - w);
@@ -1216,15 +1259,16 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
             }
             // An open list lies over everything under it: its rows come first.
             if let Some((list, _)) = p.drop
-                && let Some(frame) = drop_frame(font, list)
+                && let Some(frame) = drop_frame(font, p, list)
             {
-                for i in 0..list_choices(list).len() {
+                for i in 0..p.choices(list).len() {
                     let row = Rect::new(frame.x + 1, frame.y + 1 + i as i32 * DROP_ROW_H, frame.w - 2, DROP_ROW_H);
                     parts.insert(i, (Part::DropRow(i), row));
                 }
             }
             parts.push((Part::SizeList, SIZE_FIELD));
             parts.push((Part::WayList, WAY_FIELD));
+            parts.push(check(Part::Check(Check::QuarterSizes), QUARTERS_CHECK.0, QUARTERS_CHECK.1));
             parts.push(check(Part::Check(Check::StartWithWindows), STARTUP_CHECK.0, STARTUP_CHECK.1));
             parts.push((Part::UsePcTime, clock_button(font, p.era)));
         }
@@ -1594,8 +1638,7 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
                 }
                 paint_list_field(fb, theme, font, p, list, field, enabled, keys);
             }
-            let line = if p.values.scale.is_whole() { SIZE_WHOLE_TEXT } else { SIZE_QUARTER_TEXT };
-            lines(fb, 36, SIZE_LINE_Y, &[line]);
+            check(fb, Part::Check(Check::QuarterSizes), QUARTERS_CHECK.0, QUARTERS_CHECK.1);
             group_box(fb, c, font, STARTUP_GROUP, "Startup", false);
             check(fb, Part::Check(Check::StartWithWindows), STARTUP_CHECK.0, STARTUP_CHECK.1);
             group_box(fb, c, font, CLOCK_GROUP, "Clock", false);
@@ -1637,11 +1680,11 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
     // white rows of 13px, the highlighted one in the menu's highlight).
     if p.current_page() == Page::Bevel95
         && let Some((list, hover)) = p.drop
-        && let Some(frame) = drop_frame(font, list)
+        && let Some(frame) = drop_frame(font, p, list)
     {
         fb.fill(frame, rgb(0xFFFFFF));
         fb.frame(frame, c.text, c.text);
-        for (i, label) in list_choices(list).iter().enumerate() {
+        for (i, label) in p.choices(list).iter().enumerate() {
             let row = Rect::new(frame.x + 1, frame.y + 1 + DROP_ROW_H * i as i32, frame.w - 2, DROP_ROW_H);
             let color = if i == hover {
                 fb.fill(row, c.menu_highlight);
@@ -1879,7 +1922,7 @@ impl kit::Form for PropertiesWindow {
                 }
             }
             Key::Home | Key::End if drop_list.is_some() => {
-                let n = list_choices(p.focus).len();
+                let n = p.choices(p.focus).len();
                 let at = if key == Key::End { n.saturating_sub(1) } else { 0 };
                 match p.drop.as_mut() {
                     Some((_, hover)) => *hover = at,
@@ -1943,7 +1986,7 @@ impl kit::Form for PropertiesWindow {
         // In a drop-down list a letter or a digit goes to the next entry that starts with it.
         if matches!(p.focus, Part::SizeList | Part::WayList) {
             let list = p.focus;
-            let choices = list_choices(list);
+            let choices = p.choices(list);
             let from = p.drop.map(|(_, h)| h).or_else(|| p.list_chosen(list)).unwrap_or(0);
             let starts = |i: usize| choices[i].chars().next().is_some_and(|c| c.eq_ignore_ascii_case(&ch));
             if let Some(i) = (1..=choices.len()).map(|k| (from + k) % choices.len()).find(|&i| starts(i)) {
@@ -2155,7 +2198,7 @@ mod tests {
         let mut p = Properties::new(Sheet::Bevel95, Era::Win95, values());
         assert!(!p.enabled(Part::UsePcTime) && !p.use_pc_time(), "nothing to undo");
         p.values.clock_offset = 3_594;
-        assert_eq!(p.tab_stops()[5], Part::UsePcTime);
+        assert_eq!(p.tab_stops()[6], Part::UsePcTime);
         assert_eq!(p.access_key('u'), Some(Part::UsePcTime));
         assert!(p.use_pc_time() && p.values.clock_offset == 0 && p.enabled(Part::Apply));
         assert!(!p.tab_stops().contains(&Part::UsePcTime), "grayed out once done");
@@ -2187,6 +2230,8 @@ mod tests {
         assert!(p.choose(Part::Check(Check::AutoHide)));
         assert!(!p.values.options.auto_hide && p.enabled(Part::Apply), "Windows keeps Apply on once something changed");
         assert!(!p.choose(Part::Ok));
+        assert!(p.choose_entry(Part::SizeList, 3) && p.values.scale == Scale::whole(4));
+        p.quarters = true;
         assert!(p.choose_entry(Part::SizeList, 12) && p.values.scale == Scale::whole(4));
     }
 
@@ -2209,6 +2254,7 @@ mod tests {
                 Part::Look(Era::Win95),
                 Part::Colors(Depth::TrueColor),
                 Part::SizeList,
+                Part::Check(Check::QuarterSizes),
                 Part::Check(Check::StartWithWindows),
                 Part::Ok,
                 Part::Cancel
@@ -2344,7 +2390,12 @@ mod tests {
         let fonts = Fonts { regular: &font, bold: &font };
         let mut w = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win98, values()), &fonts);
         // Every size the menus offer, 1 to 4 in quarter steps; the size in use chosen.
-        assert_eq!(list_choices(Part::SizeList).len(), MENU_SCALES.len());
+        assert_eq!(list_choices(Part::SizeList, true).len(), MENU_SCALES.len());
+        assert_eq!(list_choices(Part::SizeList, false), ["1\u{d7}", "2\u{d7}", "3\u{d7}", "4\u{d7}"]);
+        // At a whole size the quarter sizes are not allowed until the box is ticked.
+        assert!(!w.props.quarters && !w.props.is_checked(Check::QuarterSizes));
+        assert!(w.props.choose(Part::Check(Check::QuarterSizes)));
+        assert!(w.props.quarters && !w.props.changed, "the box alone changes nothing to apply");
         assert_eq!(w.props.list_chosen(Part::SizeList), MENU_SCALES.iter().position(|s| s.quarters() == 8));
         assert!(!w.props.enabled(Part::WayList), "at a whole size the way does not matter");
         // The keyboard: the arrows step the closed list at once.
@@ -2403,6 +2454,49 @@ mod tests {
         kit::Form::access(&mut w, '9');
         assert_eq!((w.props.drop, w.props.focus, w.props.values.scale), (None, Part::Look(Era::Win95), size));
         assert!(kit::Form::key(&mut w, Key::Escape, Mods::default()).is_none(), "Esc is Cancel again");
+    }
+
+    #[test]
+    fn allow_quarter_sizes_gates_the_list_and_ticks_itself() {
+        let font = one_glyph_font();
+        let fonts = Fonts { regular: &font, bold: &font };
+        // Opened at a size between whole numbers: ticked by itself, every size offered.
+        let mut v = values();
+        v.scale = Scale::from_quarters(7).with_way(Way::Smooth);
+        let mut w = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win2000, v), &fonts);
+        assert!(w.props.is_checked(Check::QuarterSizes) && w.props.enabled(Part::WayList));
+        assert_eq!(w.props.choices(Part::SizeList).len(), MENU_SCALES.len());
+        // Unticked: the list moves to the nearest whole size (1.75 to 2, the way kept), offers the
+        // whole sizes only, and "Drawn as" is grayed. Nothing is in effect before OK or Apply.
+        assert_eq!(w.props.access_key('q'), Some(Part::Check(Check::QuarterSizes)));
+        kit::Form::access(&mut w, 'q');
+        assert!(!w.props.quarters && w.props.changed);
+        assert_eq!(w.props.values.scale, Scale::whole(2).with_way(Way::Smooth));
+        assert_eq!(w.props.choices(Part::SizeList).len(), 4);
+        assert!(!w.props.enabled(Part::WayList));
+        // The arrows step through the whole sizes only.
+        w.props.focus = Part::SizeList;
+        kit::Form::key(&mut w, Key::Down, Mods::default());
+        assert_eq!(w.props.values.scale.quarters(), 12);
+        // Ticked again: every size; a size chosen from outside at a quarter ticks it by itself.
+        assert!(w.props.choose(Part::Check(Check::QuarterSizes)));
+        assert_eq!(w.props.choices(Part::SizeList).len(), MENU_SCALES.len());
+        w.props.quarters = false;
+        w.props.values.scale = Scale::from_quarters(10);
+        w.props.follow_size();
+        assert!(w.props.quarters);
+        // A whole size from outside leaves the box as it is.
+        w.props.values.scale = Scale::whole(3);
+        w.props.follow_size();
+        assert!(w.props.quarters);
+        // 1.5 and 1.25 go to 2 and 1 (half up); a size past the list's (6.5) to 4.
+        for (q, want) in [(6, 2), (5, 1), (26, 4)] {
+            let mut v = values();
+            v.scale = Scale::from_quarters(q);
+            let mut p = Properties::new(Sheet::Bevel95, Era::Win98, v);
+            p.choose(Part::Check(Check::QuarterSizes));
+            assert_eq!(p.values.scale, Scale::whole(want), "{q}");
+        }
     }
 
     #[test]
