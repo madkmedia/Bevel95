@@ -155,7 +155,7 @@ pub struct Look {
     pub era: Era,
     pub theme: &'static Theme,
     pub font: Font,
-    pub scale: i32,
+    pub scale: bevel_core::scale::Scale,
 }
 
 /// The look to use, handed from the bar to the desktop's thread.
@@ -973,8 +973,8 @@ fn repaint(hwnd: HWND, st: &mut State, r: Rect) {
     }
     let fonts = Fonts { regular: &st.look.font, bold: &st.look.font };
     st.view.paint(&mut st.fb, st.look.theme, &fonts, r);
-    let s = st.look.scale;
-    let rc = RECT { left: r.x * s, top: r.y * s, right: r.right() * s, bottom: r.bottom() * s };
+    let d = st.look.scale.dirty(r);
+    let rc = RECT { left: d.x, top: d.y, right: d.right(), bottom: d.bottom() };
     // SAFETY: our own window (InvalidateRect sends nothing).
     unsafe { InvalidateRect(hwnd, &rc, 0) };
 }
@@ -1003,10 +1003,10 @@ fn rebuild(hwnd: HWND, force: bool) {
         return;
     };
     let screen = virtual_screen();
-    let s = look.scale.max(1);
+    let s = look.scale;
     let work = work_area(&screen);
-    let area = Rect::new(work.left / s, work.top / s, rect_w(&work) / s, rect_h(&work) / s);
-    let size = ((rect_w(&screen) + s - 1) / s, (rect_h(&screen) + s - 1) / s);
+    let area = Rect::new(s.old(work.left), s.old(work.top), s.old_fit(rect_w(&work)), s.old_fit(rect_h(&work)));
+    let size = (s.old_cover(rect_w(&screen)), s.old_cover(rect_h(&screen)));
     STATE.with(|c| {
         let mut borrow = c.borrow_mut();
         if let Some(st) = borrow.as_ref() {
@@ -1044,18 +1044,31 @@ fn rebuild(hwnd: HWND, force: bool) {
     });
 }
 
-/// Shows the part `rc` (window pixels) of the desktop: the 1× pixels under it, scaled by whole
-/// numbers, copied 1:1.
+/// Shows the part `rc` (window pixels) of the desktop: the 1× pixels under it, enlarged (at a
+/// whole size scaled by whole numbers), copied 1:1.
 fn present(hdc: windows_sys::Win32::Graphics::Gdi::HDC, st: &State, rc: &RECT) {
-    let s = st.look.scale;
-    let (x0, y0) = (rc.left.max(0) / s, rc.top.max(0) / s);
-    let (x1, y1) = (((rc.right + s - 1) / s).min(st.fb.width), ((rc.bottom + s - 1) / s).min(st.fb.height));
-    if x1 <= x0 || y1 <= y0 {
-        return;
-    }
-    let mut part = Framebuffer::new(x1 - x0, y1 - y0, 0);
-    part.blit(&st.fb, -x0, -y0);
-    let up = bevel_core::scale::upscale(&part, s);
+    let (up, x0, y0) = match st.look.scale.whole_number() {
+        Some(s) => {
+            let (x0, y0) = (rc.left.max(0) / s, rc.top.max(0) / s);
+            let (x1, y1) = (((rc.right + s - 1) / s).min(st.fb.width), ((rc.bottom + s - 1) / s).min(st.fb.height));
+            if x1 <= x0 || y1 <= y0 {
+                return;
+            }
+            let mut part = Framebuffer::new(x1 - x0, y1 - y0, 0);
+            part.blit(&st.fb, -x0, -y0);
+            (bevel_core::scale::upscale(&part, s), x0 * s, y0 * s)
+        }
+        None => {
+            // Only the screen pixels asked for, each exactly what the whole picture has there.
+            let s = st.look.scale;
+            let (x0, y0) = (rc.left.max(0), rc.top.max(0));
+            let (x1, y1) = (rc.right.min(s.len(st.fb.width)), rc.bottom.min(s.len(st.fb.height)));
+            if x1 <= x0 || y1 <= y0 {
+                return;
+            }
+            (s.enlarge_part(&st.fb, Rect::new(x0, y0, x1 - x0, y1 - y0)), x0, y0)
+        }
+    };
     let info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -1072,8 +1085,8 @@ fn present(hdc: windows_sys::Win32::Graphics::Gdi::HDC, st: &State, rc: &RECT) {
     unsafe {
         SetDIBitsToDevice(
             hdc,
-            x0 * s,
-            y0 * s,
+            x0,
+            y0,
             up.width as u32,
             up.height as u32,
             0,
@@ -1226,7 +1239,7 @@ thread_local! {
     /// A drag of the desktop's icons going on: the icons and where the press was.
     static OUT: RefCell<Option<OwnIcons>> = const { RefCell::new(None) };
     /// The look's menu fonts for the right-button drag's menu (made once per look and size).
-    static MENU_LOOK: RefCell<Option<(bevel_core::theme::Era, bevel_core::theme::Depth, i32, bevel_winkit::kit::Look)>> = const { RefCell::new(None) };
+    static MENU_LOOK: RefCell<Option<(bevel_core::theme::Era, bevel_core::theme::Depth, bevel_core::scale::Scale, bevel_winkit::kit::Look)>> = const { RefCell::new(None) };
 }
 
 /// A drag of icons has begun: Windows' drag and drop carries it, so the icons can go into a
@@ -1288,8 +1301,8 @@ fn desktop_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_w
         dragged.extend(o.others.iter().cloned());
     }
     let found = with_state_value(hwnd, |st, font| {
-        let s = st.look.scale.max(1);
-        let (x, y) = (over.x.div_euclid(s), over.y.div_euclid(s));
+        let s = st.look.scale;
+        let (x, y) = (s.old(over.x), s.old(over.y));
         let target = if phase == Phase::Leave { None } else { st.view.drop_target(font, x, y, &dragged) };
         let hover = if phase == Phase::Drop { None } else { target };
         let dirty = st.view.update(font, |v| v.drop_hover = hover).1;
@@ -1368,7 +1381,7 @@ fn desktop_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_w
 fn right_drop_menu(
     hwnd: HWND,
     era: bevel_core::theme::Era,
-    scale: i32,
+    scale: bevel_core::scale::Scale,
     default: bevel_core::drag::Effect,
     offered: &[bevel_core::drag::Effect],
 ) -> Option<bevel_core::drag::Effect> {
@@ -1420,8 +1433,8 @@ fn stop_drag_timer(hwnd: HWND) {
 /// A mouse message's point in desktop pixels at 1×.
 fn point_1x(st: &State, lparam: LPARAM) -> (i32, i32) {
     let (x, y) = crate::util::point(lparam);
-    let s = st.look.scale.max(1);
-    (x.div_euclid(s), y.div_euclid(s))
+    let s = st.look.scale;
+    (s.old(x), s.old(y))
 }
 
 fn bar() -> HWND {
@@ -1458,7 +1471,7 @@ fn keyboard_menu(hwnd: HWND) {
     let at = STATE.with(|c| {
         let borrow = c.borrow();
         let st = borrow.as_ref()?;
-        let s = st.look.scale.max(1);
+        let s = st.look.scale;
         let selected = !st.view.selection().is_empty();
         let point = match st.view.focus.filter(|_| selected) {
             Some(f) => {
@@ -1474,7 +1487,7 @@ fn keyboard_menu(hwnd: HWND) {
         // A New item made from this menu goes to the top left.
         *m = Some((x, y));
     }
-    let mut p = POINT { x: x * s, y: y * s };
+    let mut p = POINT { x: s.at(x), y: s.at(y) };
     // SAFETY: our own window; a valid point.
     unsafe { windows_sys::Win32::Graphics::Gdi::ClientToScreen(hwnd, &mut p) };
     post_menu(selected, p.x, p.y);
@@ -1652,10 +1665,10 @@ fn answer(msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     STATE.with(|c| {
         let borrow = c.borrow();
         let Some(st) = borrow.as_ref() else { return 0 };
-        let s = st.look.scale.max(1);
+        let s = st.look.scale;
         let font = &st.look.font;
         if msg == WM_ICON_AT.id() {
-            let hit = st.view.hit(font, wparam as i32 / s, lparam as i32 / s);
+            let hit = st.view.hit(font, s.old(wparam as i32), s.old(lparam as i32));
             return hit.map_or(0, |i| id_code(&st.view.items[i].id) as LRESULT);
         }
         let Some(i) = st.view.items.iter().position(|item| id_code(&item.id) as usize == wparam) else { return 0 };
@@ -1667,7 +1680,7 @@ fn answer(msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
             _ => {}
         }
         let r = st.view.icon_rect(i);
-        ((r.x * s) as LRESULT & 0xFFFF) | (((r.y * s) as LRESULT) << 16)
+        (s.at(r.x) as LRESULT & 0xFFFF) | ((s.at(r.y) as LRESULT) << 16)
     })
 }
 

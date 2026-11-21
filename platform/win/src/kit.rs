@@ -13,7 +13,7 @@ use crate::bar::with_app;
 fn bar_look() -> Option<Look> {
     with_app(|app| {
         let fonts = app.fonts();
-        Look { theme: app.theme, regular: fonts.regular.clone(), bold: fonts.bold.clone(), scale: app.scale.max(1) }
+        Look { theme: app.theme, regular: fonts.regular.clone(), bold: fonts.bold.clone(), scale: app.scale }
     })
 }
 

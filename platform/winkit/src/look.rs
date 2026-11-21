@@ -5,7 +5,7 @@
 
 
 use bevel_core::config;
-use bevel_core::scale::scale_for_dpi;
+use bevel_core::scale::Scale;
 use bevel_core::theme::{self, Depth, Era};
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint};
@@ -41,7 +41,7 @@ pub fn main_screen() -> (RECT, u32) {
 /// one), with the look's fonts. An error says which font could not be used.
 pub fn load() -> Result<(Era, Look), String> {
     let settings = settings();
-    let scale = settings.scale.unwrap_or_else(|| scale_for_dpi(main_screen().1)).max(1);
+    let scale = settings.scale_at(main_screen().1);
     for_look(settings.era, settings.colors, scale).map(|look| (settings.era, look))
 }
 
@@ -58,12 +58,12 @@ pub fn colors() -> Depth {
 
 /// The same GDI fonts and theme as a caller that supplies its own era and logical scale (in
 /// the colors Bevel95 is set to).
-pub fn for_era(era: Era, scale: i32) -> Result<Look, String> {
+pub fn for_era(era: Era, scale: Scale) -> Result<Look, String> {
     for_look(era, colors(), scale)
 }
 
 /// The GDI fonts and theme of `era` in `depth` colors at `scale`.
-pub fn for_look(era: Era, depth: Depth, scale: i32) -> Result<Look, String> {
+pub fn for_look(era: Era, depth: Depth, scale: Scale) -> Result<Look, String> {
     let theme = theme::theme_in(era, depth);
     let regular = font::render(theme.font_face, theme.font_px, false)?.with_period_glyphs();
     let bold = font::render(theme.font_face, theme.font_px, true)?.with_period_glyphs();

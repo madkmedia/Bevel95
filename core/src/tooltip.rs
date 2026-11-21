@@ -6,6 +6,7 @@
 //! trailing space, as DrawText does.
 
 use crate::fb::{Framebuffer, Rect};
+use crate::scale::Scale;
 use crate::text::Font;
 use crate::theme::{Era, Theme};
 
@@ -49,9 +50,9 @@ pub fn place(pointer: (i32, i32), w: i32, h: i32, tool: Rect, screen: Rect, work
 /// tooltip grows upward). Then kept `margin` inside the screen's right edge. `unit`: the bar's
 /// scale (the platform works in screen pixels).
 #[allow(clippy::too_many_arguments)]
-pub fn place_quick_launch(era: Era, pointer: (i32, i32), w: i32, h: i32, tool: Rect, bar_top: i32, screen: Rect, margin: i32, unit: i32) -> (i32, i32) {
+pub fn place_quick_launch(era: Era, pointer: (i32, i32), w: i32, h: i32, tool: Rect, bar_top: i32, screen: Rect, margin: i32, unit: Scale) -> (i32, i32) {
     let (x, y) = match era {
-        Era::Win2000 => (pointer.0 - unit, bar_top + 17 * unit - h),
+        Era::Win2000 => (pointer.0 - unit.len(1), bar_top + unit.at(17) - h),
         _ => (pointer.0, tool.y - h),
     };
     (x.min(screen.right() - margin - w).max(screen.x), y.max(screen.y))
@@ -94,9 +95,9 @@ mod tests {
         // y 572..588; its two-line Internet Explorer tooltip (302×30) at 105: x 104..405, y 559..588.
         let screen = Rect::new(0, 0, 800, 600);
         let button = Rect::new(115, 576, 23, 22);
-        assert_eq!(place_quick_launch(Era::Win98, (126, 586), 76, 17, button, 572, screen, 1, 1), (126, 559));
-        assert_eq!(place_quick_launch(Era::Win2000, (82, 586), 74, 17, button, 572, screen, 1, 1), (81, 572));
-        assert_eq!(place_quick_launch(Era::Win2000, (105, 586), 302, 30, button, 572, screen, 1, 1), (104, 559));
+        assert_eq!(place_quick_launch(Era::Win98, (126, 586), 76, 17, button, 572, screen, 1, Scale::ONE), (126, 559));
+        assert_eq!(place_quick_launch(Era::Win2000, (82, 586), 74, 17, button, 572, screen, 1, Scale::ONE), (81, 572));
+        assert_eq!(place_quick_launch(Era::Win2000, (105, 586), 302, 30, button, 572, screen, 1, Scale::ONE), (104, 559));
     }
 
     #[test]

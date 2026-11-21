@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 use bevel_core::help::{Catalog, wire};
+use bevel_core::scale::Scale;
 use bevel_core::theme::Era;
 use windows_sys::Win32::Data::HtmlHelp::{HH_DISPLAY_TEXT_POPUP, HH_POPUP, HtmlHelpW};
 use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
@@ -100,18 +101,15 @@ struct Running {
     child: Child,
     book: Catalog,
     era: Era,
-    scale: i32,
+    scale: Scale,
     owner: usize,
 }
 
 impl HelpViewer {
     /// `owner` is the caller's window, or null for an independent Help window.
-    pub fn show(&mut self, owner: HWND, era: Era, scale: i32, book: Catalog, target: Target) -> io::Result<()> {
+    pub fn show(&mut self, owner: HWND, era: Era, scale: Scale, book: Catalog, target: Target) -> io::Result<()> {
         if matches!(target, Target::Topic(i) if i >= book.topics.len() || i >= (u32::MAX - 3) as usize) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "Help topic is outside the book"));
-        }
-        if !(1..=8).contains(&scale) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Help scale must be between 1 and 8"));
         }
         if let Some(running) = self.running.as_mut()
             && running.owner == owner as usize
@@ -139,7 +137,7 @@ impl HelpViewer {
                     Era::Win2000 => "2000",
                 },
             ])
-            .args(["--scale", &scale.to_string(), "--open", &target.argument()])
+            .args(["--scale", &scale.label(), "--scaling", scale.way.setting(), "--open", &target.argument()])
             .args(["--owner", &(owner as usize).to_string(), "--parent", &std::process::id().to_string(), "--pipe"])
             // A portable copy's Help is told where its data is (`log::flag_for`).
             .args(crate::log::flag_for(&exe))

@@ -15,6 +15,7 @@ use bevel_core::help::winhelp::{HelpTab, HelpTopics, Part as ClassicPart};
 use bevel_core::help::{Catalog, wire};
 use bevel_core::html_help::{HtmlHelp, Part, Tab};
 use bevel_core::kit::Form;
+use bevel_core::scale::{Scale, Way};
 use bevel_core::theme::Era;
 use bevel_winkit::help::Target;
 use bevel_winkit::kit::{self, Hosted, Kind, Look};
@@ -36,7 +37,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 #[derive(Clone, Copy)]
 struct Caller {
     era: Era,
-    scale: i32,
+    scale: Scale,
     owner: HWND,
     process: u32,
 }
@@ -46,6 +47,7 @@ impl Caller {
         let mut args = args.into_iter();
         let mut era = None;
         let mut scale = None;
+        let mut way = None;
         let mut target = None;
         let mut owner = None;
         let mut process = None;
@@ -61,7 +63,8 @@ impl Caller {
                         _ => return None,
                     })
                 }
-                "--scale" => scale = args.next()?.parse::<i32>().ok().filter(|s| (1..=8).contains(s)),
+                "--scale" => scale = Scale::parse(&args.next()?).filter(|&(_, exact)| exact).map(|(s, _)| s),
+                "--scaling" => way = Some(Way::from_setting(&args.next()?)?),
                 "--open" => target = Target::parse(&args.next()?),
                 "--owner" => owner = Some(args.next()?.parse::<usize>().ok()? as HWND),
                 "--parent" => process = args.next()?.parse().ok(),
@@ -71,7 +74,9 @@ impl Caller {
         if !pipe {
             return None;
         }
-        Some((Self { era: era?, scale: scale?, owner: owner?, process: process? }, target?))
+        let scale: Scale = scale?;
+        let scale = way.map_or(scale, |way| scale.with_way(way));
+        Some((Self { era: era?, scale, owner: owner?, process: process? }, target?))
     }
 
     fn live(&self) -> bool {
@@ -98,17 +103,17 @@ fn monitor_info(hwnd: HWND) -> MONITORINFO {
 
 // Both games define their WinHelp article window in 1024ths of the screen.
 // Perform WinHelp's integer arithmetic at the logical resolution before upscaling.
-fn article_origin(monitor: &MONITORINFO, scale: i32) -> (i32, i32) {
+fn article_origin(monitor: &MONITORINFO, scale: Scale) -> (i32, i32) {
     let screen = monitor.rcMonitor;
-    let x = screen.left + (rect_w(&screen) / scale * 653 / 1024) * scale;
-    let y = screen.top + (rect_h(&screen) / scale * 102 / 1024) * scale;
+    let x = screen.left + scale.at(scale.old_fit(rect_w(&screen)) * 653 / 1024);
+    let y = screen.top + scale.at(scale.old_fit(rect_h(&screen)) * 102 / 1024);
     (x, y)
 }
 
-fn article_bounds(monitor: &MONITORINFO, top: i32, scale: i32) -> (i32, i32) {
-    let width = (rect_w(&monitor.rcMonitor) / scale * 360 / 1024).min(rect_w(&monitor.rcWork) / scale);
+fn article_bounds(monitor: &MONITORINFO, top: i32, scale: Scale) -> (i32, i32) {
+    let width = (scale.old_fit(rect_w(&monitor.rcMonitor)) * 360 / 1024).min(scale.old_fit(rect_w(&monitor.rcWork)));
     // WinHelp leaves five logical pixels below an overflowing article.
-    (width.max(200), ((monitor.rcWork.bottom - top) / scale - 5).max(100))
+    (width.max(200), (scale.old_fit(monitor.rcWork.bottom - top) - 5).max(100))
 }
 
 fn on_screen(work: RECT, pos: (i32, i32), width: i32, height: i32) -> (i32, i32) {
@@ -162,7 +167,7 @@ impl Classic {
             && was_article
             && kit::with::<Self, _>(|h| {
                 let s = h.caller.scale;
-                let actual = ((rect_w(&bounds) + s - 1) / s, (rect_h(&bounds) + s - 1) / s);
+                let actual = (s.old_cover(rect_w(&bounds)), s.old_cover(rect_h(&bounds)));
                 h.form.is_article() && h.form.size() != actual
             }) == Some(true)
         {
@@ -239,7 +244,7 @@ fn open_classic(mut classic: Classic, look: Look) -> Option<HWND> {
     let maximize = article && classic.form.is_maximized();
     let pos = if article {
         let pos = classic.article_pos.unwrap_or_else(|| article_origin(&monitor, caller.scale));
-        let pos = on_screen(work, pos, 200 * caller.scale, 105 * caller.scale);
+        let pos = on_screen(work, pos, caller.scale.len(200), caller.scale.len(105));
         let (width, limit) = article_bounds(&monitor, pos.1, caller.scale);
         classic.form.set_article_bounds(width, limit);
         // Create the replacement article at its restored size before maximizing it.
@@ -247,7 +252,7 @@ fn open_classic(mut classic: Classic, look: Look) -> Option<HWND> {
         classic.article_pos = Some(pos);
         pos
     } else {
-        (work.left + rect_w(&work) / 4, work.top + 50 * caller.scale)
+        (work.left + rect_w(&work) / 4, work.top + caller.scale.len(50))
     };
     let kind = if article {
         Kind::ResizableProgram { small: Some(HelpTopics::icon()), big: None }
@@ -428,7 +433,7 @@ fn show(caller: Caller, look: &Look, book: &Catalog, target: Target) -> Option<H
     let (x, y) = if caller.era == Era::Win98 { (50, 0) } else { (230, 30) };
     let kind = Kind::ResizableProgram { small: Some(HtmlHelp::icon(caller.era)), big: None };
     kit::open_as(kind, Modern { form, era: caller.era, using_help }, look.clone(), |w, h| {
-        on_screen(work, (work.left + x * caller.scale, work.top + y * caller.scale), w, h)
+        on_screen(work, (work.left + caller.scale.at(x), work.top + caller.scale.at(y)), w, h)
     })
 }
 
@@ -539,19 +544,19 @@ mod tests {
             rcWork: RECT { left: 0, top: 0, right: 800, bottom: 572 },
             ..Default::default()
         };
-        let pos = article_origin(&monitor, 1);
+        let pos = article_origin(&monitor, Scale::ONE);
         assert_eq!(pos, (510, 59));
-        assert_eq!(article_bounds(&monitor, pos.1, 1), (281, 508));
-        assert_eq!(article_bounds(&monitor, pos.1 + 64, 1), (281, 444));
+        assert_eq!(article_bounds(&monitor, pos.1, Scale::ONE), (281, 508));
+        assert_eq!(article_bounds(&monitor, pos.1 + 64, Scale::ONE), (281, 444));
 
         // A monitor left of and above the primary, with an odd number of device
         // pixels left after reserving the desktop taskbar at 2×.
         monitor.rcMonitor = RECT { left: -1600, top: -300, right: 0, bottom: 900 };
         monitor.rcWork = RECT { left: -1600, top: -300, right: 0, bottom: 845 };
-        let pos = article_origin(&monitor, 2);
+        let pos = article_origin(&monitor, Scale::whole(2));
         assert_eq!(pos, (-580, -182));
-        assert_eq!(article_bounds(&monitor, pos.1, 2), (281, 508));
-        let (_, limit) = article_bounds(&monitor, -55, 2);
+        assert_eq!(article_bounds(&monitor, pos.1, Scale::whole(2)), (281, 508));
+        let (_, limit) = article_bounds(&monitor, -55, Scale::whole(2));
         assert_eq!(-55 + (limit + 5) * 2, monitor.rcWork.bottom);
     }
 }

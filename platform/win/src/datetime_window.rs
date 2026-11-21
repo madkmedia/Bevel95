@@ -72,8 +72,8 @@ pub fn open() {
     let place = |w: i32, h: i32| {
         with_app(|app| {
             let s = app.scale;
-            let x = (app.monitor.left + 44 * s).min(app.monitor.right - w).max(app.monitor.left);
-            let y = (app.monitor.top + 44 * s).min(app.bar_top_on_screen() - h).max(app.monitor.top);
+            let x = (app.monitor.left + s.len(44)).min(app.monitor.right - w).max(app.monitor.left);
+            let y = (app.monitor.top + s.len(44)).min(app.bar_top_on_screen() - h).max(app.monitor.top);
             (x, y)
         })
         .unwrap_or((0, 0))

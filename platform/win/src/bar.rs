@@ -19,7 +19,7 @@ use bevel_core::layout::BarLayout;
 use bevel_core::paint::{self, Bar, ScrollArrow, Task, TaskState};
 use bevel_core::programs::{Folder, Shown};
 use bevel_core::properties::Page;
-use bevel_core::scale::{scale_for_dpi, upscale};
+use bevel_core::scale::Scale;
 use bevel_core::start::{self, StartEntry};
 use bevel_core::tasks::{self, ButtonPress, Click, ClickState, Group, Motion, Release, TaskList, WindowInfo};
 use bevel_core::text::{Font, Fonts};
@@ -107,7 +107,9 @@ static WM_APPBAR: Private = Private::new("Bevel95.Bar.AppBar");
 const WM_REPAINT: u32 = WM_APP + 2;
 /// A menu entry was chosen: wParam = its `BarCommand::code`, lParam = 1 if Shift was held.
 pub static WM_BAR_COMMAND: Private = Private::new("Bevel95.Bar.Command");
-/// A size was chosen in the Size submenu: wParam = the new scale.
+/// A size was chosen in the Size submenu: the new size is wParam / lParam, lParam 0 (a whole
+/// size, as before quarter sizes came: `tools\dev\postbar.ps1 Size 3`) or 4 (wParam in quarters:
+/// 7 is 1.75). `size_of_message` reads it.
 pub static WM_BAR_SIZE: Private = Private::new("Bevel95.Bar.Size");
 /// A Start menu entry without a submenu was chosen (Run, Shut Down, ...): wParam = its index.
 pub static WM_START_ACTION: Private = Private::new("Bevel95.Bar.StartAction");
@@ -216,9 +218,9 @@ pub struct App {
     regular: Font,
     bold: Font,
     /// Scale from the settings file; `None` = automatic.
-    scale_setting: Option<i32>,
-    /// The whole-number scale in use.
-    pub scale: i32,
+    scale_setting: Option<Scale>,
+    /// The size in use (a whole number, or a quarter step between: `bevel_core::scale`).
+    pub scale: Scale,
     /// The main screen, in screen pixels.
     pub monitor: RECT,
     /// Where the bar was last placed.
@@ -365,15 +367,15 @@ impl App {
     /// The Start button, in screen pixels.
     pub fn start_button_on_screen(&self) -> Option<Rect> {
         let b = self.layout.as_ref()?.start;
-        let s = self.scale;
-        Some(Rect::new(self.placed.left + b.x * s, self.placed.top + b.y * s, b.w * s, b.h * s))
+        let r = self.scale.rect(b);
+        Some(Rect::new(self.placed.left + r.x, self.placed.top + r.y, r.w, r.h))
     }
 
     /// Screen position of task button `index`'s top-left corner (if it is on the row shown).
     pub fn button_position(&self, index: usize) -> Option<(i32, i32)> {
         let layout = self.layout.as_ref()?;
         let button = layout.tasks.get(index.checked_sub(layout.first_task)?)?;
-        Some((self.placed.left + button.x * self.scale, self.placed.top + button.y * self.scale))
+        Some((self.placed.left + self.scale.at(button.x), self.placed.top + self.scale.at(button.y)))
     }
 
     /// A window's picture: the classic one Bevel95 has for it (Notepad's, Explorer's), else
@@ -584,7 +586,7 @@ pub fn run() -> u32 {
             regular,
             bold,
             scale_setting: settings.scale,
-            scale: 1,
+            scale: Scale::ONE,
             monitor: RECT::default(),
             placed: RECT::default(),
             dpi: 96,
@@ -656,7 +658,8 @@ pub fn run() -> u32 {
             ending: false,
         });
     });
-    log(&format!("started: {} look in {}, scale setting {:?}, {:?}", theme.slug, settings.colors.title(), settings.scale, settings.options));
+    let scale = settings.scale.map_or_else(|| "auto".to_string(), |s| s.label());
+    log(&format!("started: {} look in {}, scale setting {scale}, {:?}", theme.slug, settings.colors.title(), settings.options));
 
     let shell_hook = wide("SHELLHOOK");
     // SAFETY: plain Win32 calls on our own window.
@@ -907,7 +910,7 @@ fn sync_desktop() {
             era: app.era,
             theme: app.theme,
             font: app.regular.clone(),
-            scale: app.scale.max(1),
+            scale: app.scale,
         })
     }) else {
         return;
@@ -1127,7 +1130,7 @@ fn refresh(bar: HWND) {
 fn task_at(x: i32, y: i32) -> Option<usize> {
     with_app(|app| {
         let layout = app.layout.as_ref()?;
-        let i = layout.tasks.iter().position(|r| r.contains(x / app.scale, y / app.scale))?;
+        let i = layout.tasks.iter().position(|r| r.contains(app.scale.old(x), app.scale.old(y)))?;
         Some(layout.first_task + i)
     })
     .flatten()
@@ -1137,7 +1140,7 @@ fn task_at(x: i32, y: i32) -> Option<usize> {
 fn scroll_arrow_at(x: i32, y: i32) -> Option<ScrollArrow> {
     with_app(|app| {
         let s = app.layout.as_ref()?.scroll?;
-        let (x, y) = (x / app.scale, y / app.scale);
+        let (x, y) = (app.scale.old(x), app.scale.old(y));
         if s.up.contains(x, y) {
             Some(ScrollArrow::Up)
         } else if s.down.contains(x, y) {
@@ -1163,14 +1166,14 @@ fn scroll_tasks(bar: HWND, arrow: ScrollArrow) {
 
 /// Whether a point in the bar window (screen pixels from its corner) is on the Start button.
 fn on_start_button(x: i32, y: i32) -> bool {
-    with_app(|app| app.layout.as_ref().is_some_and(|l| l.start.contains(x / app.scale, y / app.scale))).unwrap_or(false)
+    with_app(|app| app.layout.as_ref().is_some_and(|l| l.start.contains(app.scale.old(x), app.scale.old(y)))).unwrap_or(false)
 }
 
 /// The notification icon under a point in the bar window (screen pixels from its corner).
 fn tray_icon_at(x: i32, y: i32) -> Option<tray::Key> {
     with_app(|app| {
         let layout = app.layout.as_ref()?;
-        let i = layout.tray_icon_at(app.theme, x / app.scale, y / app.scale)?;
+        let i = layout.tray_icon_at(app.theme, app.scale.old(x), app.scale.old(y))?;
         app.tray_keys.get(i).copied()
     })
     .flatten()
@@ -1179,7 +1182,7 @@ fn tray_icon_at(x: i32, y: i32) -> Option<tray::Key> {
 /// Whether a point in the bar window is on the clock.
 fn on_clock(x: i32, y: i32) -> bool {
     with_app(|app| {
-        app.layout.as_ref().is_some_and(|l| l.clock.w > 0 && l.clock.contains(x / app.scale, y / app.scale))
+        app.layout.as_ref().is_some_and(|l| l.clock.w > 0 && l.clock.contains(app.scale.old(x), app.scale.old(y)))
     })
     .unwrap_or(false)
 }
@@ -1187,7 +1190,7 @@ fn on_clock(x: i32, y: i32) -> bool {
 /// The Quick Launch icon under a point in the bar window (screen pixels from its corner), as its
 /// place on the band.
 fn quick_at(x: i32, y: i32) -> Option<usize> {
-    with_app(|app| app.layout.as_ref()?.quick.as_ref()?.button_at(x / app.scale, y / app.scale)).flatten()
+    with_app(|app| app.layout.as_ref()?.quick.as_ref()?.button_at(app.scale.old(x), app.scale.old(y))).flatten()
 }
 
 /// Whether a point in the bar window is on the Quick Launch band's own part (its lines, grips and
@@ -1195,7 +1198,7 @@ fn quick_at(x: i32, y: i32) -> Option<usize> {
 fn on_band(x: i32, y: i32) -> bool {
     with_app(|app| {
         let band = app.layout.as_ref()?.quick.as_ref()?;
-        let (x, y) = (x / app.scale, y / app.scale);
+        let (x, y) = (app.scale.old(x), app.scale.old(y));
         Some(band.rect.contains(x, y) && band.button_at(x, y).is_none())
     })
     .flatten()
@@ -1308,7 +1311,7 @@ fn hover_at(x: i32, y: i32) -> Option<Hover> {
     }
     with_app(|app| {
         let layout = app.layout.as_ref()?;
-        (layout.clock.w > 0 && layout.clock.contains(x / app.scale, y / app.scale)).then_some(Hover::Clock)
+        (layout.clock.w > 0 && layout.clock.contains(app.scale.old(x), app.scale.old(y))).then_some(Hover::Clock)
     })
     .flatten()
 }
@@ -1383,8 +1386,8 @@ fn show_tip(bar: HWND) {
             Hover::Clock => Rect::new(layout.clock.x, layout.well.y + 2, layout.clock.w, layout.well.h - 4),
             Hover::Quick(i) => *layout.quick.as_ref()?.buttons.get(i)?,
         };
-        let s = app.scale;
-        Some((target, Rect::new(app.placed.left + r.x * s, app.placed.top + r.y * s, r.w * s, r.h * s)))
+        let r = app.scale.rect(r);
+        Some((target, Rect::new(app.placed.left + r.x, app.placed.top + r.y, r.w, r.h)))
     })
     .flatten() else {
         return;
@@ -1625,10 +1628,10 @@ fn regroup(app: &mut App) {
 
 /// Windows' drag threshold (SM_CXDRAG, 4 at 96 DPI) in the bar's screen pixels: scaled like
 /// everything the bar draws.
-fn drag_threshold(scale: i32) -> i32 {
+fn drag_threshold(scale: Scale) -> i32 {
     // SAFETY: a plain query.
     let at_96 = unsafe { GetSystemMetricsForDpi(SM_CXDRAG, 96) };
-    at_96.max(1) * scale
+    scale.len(at_96.max(1))
 }
 
 /// The pointer moved to `x` (bar pixels) while a task button is held down: past Windows' drag
@@ -1656,7 +1659,7 @@ fn drag_move(bar: HWND, x: i32) {
         let first = layout.first_task;
         let row: Vec<(i32, i32)> = layout.tasks.iter().map(|r| (r.x, r.w)).collect();
         let place = at.checked_sub(first).filter(|&p| p < row.len())?;
-        let (to, _) = tasks::drag_step(&row, place, grab, x.div_euclid(app.scale))?;
+        let (to, _) = tasks::drag_step(&row, place, grab, app.scale.old(x))?;
         if to != place {
             let groups = std::mem::take(&mut app.groups);
             app.task_list.move_button(&groups, at, first + to);
@@ -1726,8 +1729,8 @@ fn invalidate_tasks(bar: HWND) {
     let area = with_app(|app| {
         let layout = app.layout.as_ref()?;
         let (first, last) = (layout.tasks.first()?, layout.tasks.last()?);
-        let s = app.scale;
-        Some(RECT { left: first.x * s, top: 0, right: last.right() * s, bottom: app.theme.bar.height * s })
+        let d = app.scale.dirty(Rect::new(first.x, 0, last.right() - first.x, app.theme.bar.height));
+        Some(RECT { left: d.x, top: 0, right: d.right(), bottom: app.scale.len(app.theme.bar.height) })
     })
     .flatten();
     // SAFETY: our own window; a null rectangle means the whole window.
@@ -1883,9 +1886,9 @@ fn reposition(bar: HWND) {
     let Some((height, conceded, scale, options, shown)) = with_app(|app| {
         app.monitor = monitor;
         app.dpi = dpi;
-        app.scale = app.scale_setting.unwrap_or_else(|| scale_for_dpi(dpi));
-        let height = app.theme.bar.height * app.scale;
-        let hidden = HIDDEN_ROWS * app.scale;
+        app.scale = config::scale_in_force(app.scale_setting, bevel_core::scale::Way::Nearest, dpi);
+        let height = app.scale.len(app.theme.bar.height);
+        let hidden = app.scale.len(HIDDEN_ROWS);
         // A new size or setting: no slide, straight to where the bar should be.
         app.target_px = if app.options.auto_hide && app.target_px <= hidden { hidden } else { height };
         app.shown_px = app.target_px;
@@ -1943,7 +1946,7 @@ fn slide(bar: HWND, show: bool) {
         if !app.options.auto_hide {
             return false;
         }
-        let target = if show { app.theme.bar.height * app.scale } else { HIDDEN_ROWS * app.scale };
+        let target = if show { app.scale.len(app.theme.bar.height) } else { app.scale.len(HIDDEN_ROWS) };
         let start = app.target_px != target;
         app.target_px = target;
         start
@@ -1958,7 +1961,7 @@ fn slide(bar: HWND, show: bool) {
 /// One step of the slide: a sixth of the bar's height (as quick as Windows 95's).
 fn slide_step(bar: HWND) {
     let Some((rc, done)) = with_app(|app| {
-        let height = app.theme.bar.height * app.scale;
+        let height = app.scale.len(app.theme.bar.height);
         let step = (height / 6).max(1);
         let d = app.target_px - app.shown_px;
         app.shown_px += d.signum() * d.abs().min(step);
@@ -1986,12 +1989,12 @@ fn slide_step(bar: HWND) {
 /// Before the Start menu opens from the keyboard: an auto-hidden bar comes up at once, and a
 /// bar that is not always on top comes in front of the other windows.
 fn bring_up(bar: HWND) {
-    let Some((options, hidden)) = with_app(|app| (app.options, app.shown_px < app.theme.bar.height * app.scale)) else {
+    let Some((options, hidden)) = with_app(|app| (app.options, app.shown_px < app.scale.len(app.theme.bar.height))) else {
         return;
     };
     if options.auto_hide && hidden {
         with_app(|app| {
-            app.target_px = app.theme.bar.height * app.scale;
+            app.target_px = app.scale.len(app.theme.bar.height);
             app.away_ticks = 0;
         });
         reposition(bar);
@@ -2225,7 +2228,7 @@ fn paint_bar(bar: HWND) {
             own.push((POWER_KEY, bevel_core::status::power_icon(app.era, &app.power)));
         }
         let width = rect_w(&app.monitor);
-        let width_1x = ((width + app.scale - 1) / app.scale).max(1);
+        let width_1x = app.scale.old_cover(width).max(1);
         let mut fb = Framebuffer::new(width_1x, app.theme.bar.height, 0);
         // A dragged button keeps the look it had before the press (raised, or sunken for the
         // window in front); only a press that is not (yet) a drag looks pushed in.
@@ -2288,7 +2291,7 @@ fn paint_bar(bar: HWND) {
                 .filter(|p| p.dragging)
                 .zip(app.pressed.and_then(|at| at.checked_sub(first)))
                 .and_then(|(p, at)| {
-                    tasks::drag_step(&row, at, p.grab, app.drag_x.div_euclid(app.scale)).map(|(_, left)| (at, left))
+                    tasks::drag_step(&row, at, p.grab, app.scale.old(app.drag_x)).map(|(_, left)| (at, left))
                 });
             let keys: Vec<&str> = app.groups.iter().skip(first).take(row.len()).map(|g| g.key.as_str()).collect();
             let now = app.epoch.elapsed().as_millis() as u64;
@@ -2297,12 +2300,12 @@ fn paint_bar(bar: HWND) {
         }
         let layout = paint::paint_bar(&mut fb, app.theme, &app.fonts(), &state);
         app.task_row = layout.scroll.map_or(0, |s| s.row); // within the rows there are now
-        blit(hdc, &upscale(&fb, app.scale), width);
+        blit(hdc, &app.scale.enlarge(&fb), width);
         // Where the icons and the well are on the screen: for programs that ask where their
         // icon is, and for the stand-in windows (only moved when that changed).
         app.tray_keys = own.iter().map(|(key, _)| *key).chain(icons.iter().map(tray::TrayIcon::key)).collect();
         let (s, x0, y0) = (app.scale, app.placed.left, app.placed.top);
-        let on_screen = |r: Rect| RECT { left: x0 + r.x * s, top: y0 + r.y * s, right: x0 + r.right() * s, bottom: y0 + r.bottom() * s };
+        let on_screen = |r: Rect| RECT { left: x0 + s.at(r.x), top: y0 + s.at(r.y), right: x0 + s.at(r.right()), bottom: y0 + s.at(r.bottom()) };
         let rects: Vec<(tray::Key, RECT)> = app.tray_keys.iter().zip(&layout.tray).map(|(k, r)| (*k, on_screen(*r))).collect();
         let well = on_screen(layout.well);
         let moved = app.stand_in.is_none_or(|(b, w)| !same_rect(&b, &app.placed) || !same_rect(&w, &well));
@@ -2435,13 +2438,27 @@ fn save_setting(key: &str, value: &str) {
     }
 }
 
+/// The wParam and lParam of `WM_BAR_SIZE` for `scale`: in quarters.
+pub fn size_message(scale: Scale) -> (usize, isize) {
+    (scale.quarters() as usize, 4)
+}
+
+/// The size a `WM_BAR_SIZE` asks for: wParam a whole size (lParam 0) or quarters (lParam 4),
+/// from 1 to 8; anything else is no size.
+fn size_of_message(wparam: usize, lparam: isize) -> Option<Scale> {
+    let quarters = match lparam {
+        0 => i32::try_from(wparam).ok()?.checked_mul(4)?,
+        4 => i32::try_from(wparam).ok()?,
+        _ => return None,
+    };
+    (bevel_core::scale::MIN_QUARTERS..=bevel_core::scale::MAX_QUARTERS).contains(&quarters).then(|| Scale::from_quarters(quarters))
+}
+
 /// Size menu: switches to a new scale at once and remembers it in settings.txt.
-fn set_size(bar: HWND, scale: i32) {
-    if !(1..=8).contains(&scale) {
-        return;
-    }
+fn set_size(bar: HWND, scale: Scale) {
+    let scale = Scale::from_quarters(scale.quarters());
     with_app(|app| app.scale_setting = Some(scale));
-    save_setting("scale", &scale.to_string());
+    save_setting("scale", &scale.label());
     log(&format!("size: {scale}x"));
     reposition(bar);
     refresh(bar);
@@ -2783,7 +2800,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                     // Where on the button it was pressed: that point stays under the pointer
                     // if it is dragged.
                     let left = app.layout.as_ref().and_then(|l| l.tasks.get(index.checked_sub(l.first_task)?)).map_or(0, |r| r.x);
-                    let grab = x.div_euclid(app.scale) - left;
+                    let grab = app.scale.old(x) - left;
                     app.press = Some(ButtonPress::new(windows, x, app.task_list.order().to_vec(), grab));
                 });
                 // SAFETY: our own window; capture lets us see the release even off the bar.
@@ -2965,7 +2982,9 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 0;
         }
         m if m == WM_BAR_SIZE.id() => {
-            set_size(bar, wparam as i32);
+            if let Some(scale) = size_of_message(wparam, lparam) {
+                set_size(bar, scale);
+            }
             return 0;
         }
         m if m == WM_BAR_THEME.id() => {

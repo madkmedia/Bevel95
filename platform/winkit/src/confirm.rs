@@ -229,14 +229,14 @@ impl Hosted for RenameWarningHost {
 /// screen's whole rectangle), at the size `look.scale`. `by_keyboard`: the name was taken with
 /// Enter. `answered` hears Yes or No (No also when the warning could not open).
 pub fn ask_rename(look: Look, era: Era, kind: Kind, screen: RECT, by_keyboard: bool, answered: fn(bool)) {
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     // (An open one would be closed by `open_as`: it must not answer for this one.)
     WARNING_ANSWERED.with(|a| a.set(true));
     let form = RenameWarning::new(era, by_keyboard);
     let opened = kit::open_as(kind, RenameWarningHost { form }, look, |w, h| {
         let (x, y) = rename_warning::place((rect_w(&screen), rect_h(&screen)), (w, h));
         // The rule's fixed parts (7 and 17 pixels at 1x) grow with the size.
-        (screen.left + x + (7 * scale - 7) / 2, screen.top + y + (17 * scale - 17) / 2)
+        (screen.left + x + (scale.len(7) - 7) / 2, screen.top + y + (scale.len(17) - 17) / 2)
     });
     WARNING_ANSWERED.with(|a| a.set(false));
     WARNING_ANSWER.with(|a| a.set(Some(answered)));
@@ -430,7 +430,7 @@ pub fn bad_name(place: Place, then: fn()) {
 
 /// Shows the look's message box `title` / `text` in the middle of the work area.
 pub fn show_message(place: Place, title: &str, text: &str) {
-    let screen_w = rect_w(&place.work) / place.look.scale.max(1);
+    let screen_w = place.look.scale.old_fit(rect_w(&place.work));
     let form = bevel_core::disk_box::DiskBox::message(place.era, title, text, screen_w, &place.look.regular);
     let work = place.work;
     if kit::open_as(place.kind, MessageHost { form }, place.look, |w, h| (work.left + (rect_w(&work) - w) / 2, work.top + (rect_h(&work) - h) / 2))

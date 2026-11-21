@@ -1,6 +1,7 @@
 //! The settings file: a few `name = value` lines that a person can edit in Notepad.
 
 use crate::programs::Shown;
+use crate::scale::{Scale, Way, scale_for_dpi};
 use crate::theme::{Depth, Era};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,9 +10,10 @@ pub struct Config {
     /// True Color or 16 Colors (Bevel95 Settings, General page; the bar menu's Bevel95 >
     /// Colors). A file without the line: True Color, as everything was drawn before.
     pub colors: Depth,
-    /// A whole-number scale, or `None` for automatic: the nearest whole number to the
-    /// Windows display scale (150% -> 2).
-    pub scale: Option<i32>,
+    /// The size: a whole number or a quarter step between (1.25, 1.5, 1.75, ...; `scale::Scale`),
+    /// or `None` for automatic: the nearest whole number to the Windows display scale (150% -> 2).
+    /// A quarter size is only ever the person's own choice. Use `scale_at` for the size in force.
+    pub scale: Option<Scale>,
     pub options: TaskbarOptions,
     pub start: StartOptions,
     /// How many seconds Bevel95's own clock runs ahead of the PC's (behind if negative): what
@@ -44,11 +46,23 @@ pub struct Config {
 }
 
 impl Config {
+    /// The size in force on a main screen of `dpi` (the automatic size, a whole number, from
+    /// it), with the way a quarter size is drawn.
+    pub fn scale_at(&self, dpi: u32) -> Scale {
+        scale_in_force(self.scale, Way::Nearest, dpi)
+    }
+
     /// Whether Quick Launch shows in `era` (the look in use, which may differ from `self.era`
     /// once the Theme menu changed it).
     pub fn quick_launch_in(&self, era: Era) -> bool {
         self.quick_launch.unwrap_or_else(|| crate::quick_launch::on_by_default(era))
     }
+}
+
+/// The size in force: the one set (`None`: the automatic size, the whole number nearest the
+/// main screen's `dpi`), drawn `way` when it lies between whole numbers.
+pub fn scale_in_force(set: Option<Scale>, way: Way, dpi: u32) -> Scale {
+    set.unwrap_or_else(|| Scale::whole(scale_for_dpi(dpi))).with_way(way)
 }
 
 /// What Quick Search lists of the Programs menu's entries (`quick_search` in settings.txt; the
@@ -166,11 +180,11 @@ impl Default for Config {
 }
 
 /// The size used unless the settings say otherwise: double, crisp on most screens.
-pub const DEFAULT_SCALE: i32 = 2;
+pub const DEFAULT_SCALE: Scale = Scale::whole(2);
 
 /// The sizes offered in the bar's right-click menu and the Properties window (the file
-/// accepts 1 to 8, or auto).
-pub const MENU_SCALES: [i32; 4] = [1, 2, 3, 4];
+/// accepts 1 to 8 in quarter steps, or auto).
+pub const MENU_SCALES: [Scale; 4] = [Scale::whole(1), Scale::whole(2), Scale::whole(3), Scale::whole(4)];
 
 /// What a new settings file contains.
 pub const DEFAULT_FILE: &str = "\
@@ -338,9 +352,14 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             },
             "scale" => match value.as_str() {
                 "auto" => config.scale = None,
-                number => match number.parse::<i32>() {
-                    Ok(s) if (1..=8).contains(&s) => config.scale = Some(s),
-                    _ => warn("scale must be auto or a whole number from 1 to 8"),
+                number => match Scale::parse(number) {
+                    Some((s, exact)) => {
+                        config.scale = Some(s);
+                        if !exact {
+                            warn(&format!("scale {number} is not a quarter step: using {}", s.label()));
+                        }
+                    }
+                    None => warn("scale must be auto or a number from 1 to 8 in quarter steps (1, 1.25, 1.5, ...)"),
                 },
             },
             _ => warn(&format!("unknown setting `{key}`")),
@@ -380,7 +399,7 @@ mod tests {
     fn default_file_gives_default_config() {
         assert_eq!(parse(DEFAULT_FILE), (Config::default(), vec![]));
         assert_eq!(Config::default().era, Era::Win95);
-        assert_eq!(Config::default().scale, Some(2));
+        assert_eq!(Config::default().scale, Some(Scale::whole(2)));
         let o = Config::default().options;
         assert!(o.always_on_top && o.show_clock && !o.auto_hide && !o.small_icons);
         assert!(Config::default().desktop, "the desktop is shown unless switched off");
@@ -507,15 +526,34 @@ mod tests {
     }
 
     #[test]
+    fn reads_sizes_in_quarter_steps() {
+        let (c, w) = parse("scale = 1.75\n");
+        assert_eq!((c.scale, w.len()), (Some(Scale::from_quarters(7)), 0));
+        // Another number goes to the nearest quarter, and the warning (which the log keeps) says so.
+        let (c, w) = parse("scale = 2.2\n");
+        assert_eq!(c.scale, Some(Scale::from_quarters(9)));
+        assert_eq!(w, ["line 1: scale 2.2 is not a quarter step: using 2.25"]);
+        for bad in ["0.75", "8.5", "big"] {
+            let (c, w) = parse(&format!("scale = {bad}\n"));
+            assert_eq!((c.scale, w.len()), (Config::default().scale, 1), "{bad}");
+        }
+        // The automatic size is a whole number.
+        let auto = parse("scale = auto\n").0;
+        assert_eq!(auto.scale_at(144).quarters(), 8);
+        assert_eq!(auto.scale_at(120).quarters(), 4);
+        assert_eq!(parse("scale = 2.5\n").0.scale_at(96).quarters(), 10);
+    }
+
+    #[test]
     fn a_byte_order_mark_is_not_part_of_the_first_setting() {
         let (c, w) = parse("\u{feff}era = 98\nscale = 3\n");
-        assert_eq!((c.era, c.scale), (Era::Win98, Some(3)));
+        assert_eq!((c.era, c.scale), (Era::Win98, Some(Scale::whole(3))));
         assert!(w.is_empty(), "{w:?}");
     }
 
     #[test]
     fn bad_lines_warn_and_keep_defaults() {
-        let (c, w) = parse("era = winxp\nscale = 1.5\ncolor = teal\njust words\nsmall_icons = maybe\n");
+        let (c, w) = parse("era = winxp\nscale = 9\ncolor = teal\njust words\nsmall_icons = maybe\n");
         assert_eq!(c, Config::default());
         assert_eq!(w.len(), 5, "{w:?}");
         assert!(w[0].starts_with("line 1:") && w[4].starts_with("line 5:"));
@@ -539,9 +577,9 @@ mod tests {
         let text = "# Size: scale = something in a comment\nera = win2000\nscale = auto  # mine\n";
         let changed = with_setting(text, "scale", "3");
         assert_eq!(changed, "# Size: scale = something in a comment\nera = win2000\nscale = 3\n");
-        assert_eq!((parse(&changed).0.era, parse(&changed).0.scale), (Era::Win2000, Some(3)));
+        assert_eq!((parse(&changed).0.era, parse(&changed).0.scale), (Era::Win2000, Some(Scale::whole(3))));
         assert_eq!(with_setting("era = win95\n", "scale", "1"), "era = win95\nscale = 1\n");
-        assert_eq!(parse(&with_setting(DEFAULT_FILE, "scale", "4")).0.scale, Some(4));
+        assert_eq!(parse(&with_setting(DEFAULT_FILE, "scale", "4")).0.scale, Some(Scale::whole(4)));
         for era in Era::ALL {
             assert_eq!(parse(&with_setting(DEFAULT_FILE, "era", era.setting())).0.era, era);
         }

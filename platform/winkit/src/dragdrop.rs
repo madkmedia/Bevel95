@@ -26,6 +26,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevel_core::drag::{self, Effect, Keys, Offered};
 use bevel_core::fb::Framebuffer;
+use bevel_core::scale::Scale;
 use bevel_core::theme::Era;
 use windows_sys::Win32::Foundation::{
     DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DV_E_FORMATETC, E_NOINTERFACE, E_POINTER, HANDLE, HWND, POINT, POINTL, S_OK, SIZE, WAIT_OBJECT_0,
@@ -789,7 +790,7 @@ pub struct Out {
     /// The look's dragged picture (0xAARRGGBB at 1×) and where its top left corner is from the
     /// pointer, in 1× pixels; and the size it is shown at.
     pub picture: Option<(Framebuffer, i32, i32)>,
-    pub scale: i32,
+    pub scale: Scale,
 }
 
 /// Runs a drag until it is dropped or cancelled (Windows' own loop: the program's windows keep
@@ -989,9 +990,18 @@ struct Ghost {
 }
 
 impl Ghost {
-    fn new(pic: &Framebuffer, dx: i32, dy: i32, scale: i32) -> Option<Ghost> {
-        let s = scale.max(1);
-        let (w, h) = (pic.width * s, pic.height * s);
+    fn new(pic: &Framebuffer, dx: i32, dy: i32, scale: Scale) -> Option<Ghost> {
+        let s = scale;
+        // Premultiplied, as UpdateLayeredWindow wants it, before it is enlarged: a size between
+        // whole numbers then mixes the edges' colors by how much of each shows.
+        let mut pre = pic.clone();
+        for p in &mut pre.pixels {
+            let a = *p >> 24;
+            let ch = |sh: u32| (((*p >> sh) & 0xFF) * a / 255) << sh;
+            *p = (a << 24) | ch(16) | ch(8) | ch(0);
+        }
+        let big = s.enlarge(&pre);
+        let (w, h) = (big.width, big.height);
         if w <= 0 || h <= 0 {
             return None;
         }
@@ -1012,18 +1022,10 @@ impl Ghost {
                 DestroyWindow(hwnd);
                 return None;
             }
-            for y in 0..h {
-                for x in 0..w {
-                    let p = pic.get(x / s, y / s);
-                    let a = p >> 24;
-                    // Premultiplied, as UpdateLayeredWindow wants it.
-                    let ch = |sh: u32| (((p >> sh) & 0xFF) * a / 255) << sh;
-                    *bits.add((y * w + x) as usize) = (a << 24) | ch(16) | ch(8) | ch(0);
-                }
-            }
+            std::ptr::copy_nonoverlapping(big.pixels.as_ptr(), bits, big.pixels.len());
             let dc = CreateCompatibleDC(null_mut());
             let old = SelectObject(dc, bitmap as HGDIOBJ);
-            let ghost = Ghost { hwnd, dc, bitmap, old, offset: (dx * s, dy * s), size: (w, h), shown: Cell::new(false) };
+            let ghost = Ghost { hwnd, dc, bitmap, old, offset: (s.at(dx), s.at(dy)), size: (w, h), shown: Cell::new(false) };
             ghost.follow();
             Some(ghost)
         }

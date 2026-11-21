@@ -298,7 +298,7 @@ pub fn open() {
         return;
     }
     let Some((era, monitor_left, bar_top, scale)) =
-        with_app(|app| (app.era, app.monitor.left, app.bar_top_on_screen(), app.scale.max(1)))
+        with_app(|app| (app.era, app.monitor.left, app.bar_top_on_screen(), app.scale))
     else {
         return;
     };
@@ -319,7 +319,7 @@ pub fn open() {
     }
     fetch_icons(&mut form);
     // Where Run opens: in the lower left, above the Start button.
-    let opened = kit::open(FindHost { form, held: 0 }, |_, h| (monitor_left + 12 * scale, bar_top - h - 12 * scale));
+    let opened = kit::open(FindHost { form, held: 0 }, |_, h| (monitor_left + scale.len(12), bar_top - h - scale.len(12)));
     if let Some(hwnd) = opened {
         // Not above every window, as the bar's other windows are: another program brought
         // forward covers it, and the Windows key brings it back.
@@ -350,14 +350,17 @@ pub fn look_changed() {
 fn run_command(action: Action) {
     let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
     log(&format!("Quick Search: {action:?}"));
-    let (msg, wparam) = match action {
-        Action::Bar(command) => (WM_BAR_COMMAND.id(), command.code()),
-        Action::Look(era) => (WM_BAR_THEME.id(), Era::ALL.iter().position(|&e| e == era).unwrap_or(0)),
-        Action::Size(scale) => (WM_BAR_SIZE.id(), scale as usize),
-        Action::Colors(depth) => (WM_BAR_COLORS.id(), Depth::ALL.iter().position(|&d| d == depth).unwrap_or(Depth::ALL.len() - 1)),
+    let (msg, wparam, lparam) = match action {
+        Action::Bar(command) => (WM_BAR_COMMAND.id(), command.code(), 0),
+        Action::Look(era) => (WM_BAR_THEME.id(), Era::ALL.iter().position(|&e| e == era).unwrap_or(0), 0),
+        Action::Size(scale) => {
+            let (wparam, lparam) = crate::bar::size_message(scale);
+            (WM_BAR_SIZE.id(), wparam, lparam)
+        }
+        Action::Colors(depth) => (WM_BAR_COLORS.id(), Depth::ALL.iter().position(|&d| d == depth).unwrap_or(Depth::ALL.len() - 1), 0),
     };
     // SAFETY: posting to our own bar window.
-    unsafe { PostMessageW(bar, msg, wparam, 0) };
+    unsafe { PostMessageW(bar, msg, wparam, lparam) };
 }
 
 /// The file that keeps Quick Search's Name column width between runs (`find::state_text`).

@@ -22,8 +22,8 @@ pub enum Action {
     Bar(BarCommand),
     /// The Theme menu's choice.
     Look(Era),
-    /// The Size menu's choice.
-    Size(i32),
+    /// The Size menu's choice (its way of drawing is the bar's own, not this one's).
+    Size(crate::scale::Scale),
     /// The Colors menu's choice: True Color or 16 Colors.
     Colors(Depth),
 }

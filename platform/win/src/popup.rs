@@ -17,7 +17,7 @@ use bevel_core::icons;
 use bevel_core::layout::{place_popup, place_start_menu, place_submenu};
 use bevel_core::paint::{self, EntryKind, Menu, MenuEntry, MenuLayout, MenuStyle};
 use bevel_core::programs::{Entry, Folder, Item};
-use bevel_core::scale::upscale;
+use bevel_core::scale::Scale;
 use bevel_core::start::{self, DocumentsEntry, StartEntry};
 use bevel_core::text::{escape_access_keys, split_access_key};
 use bevel_core::theme::{Era, SubmenuPlacement};
@@ -333,7 +333,7 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
     let Some((layout, scale, screen)) = measure(&menu, style) else {
         return;
     };
-    let (w, h) = (layout.width * scale, layout.height * scale);
+    let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (left, top) = match at {
         At::Point(x, y) => place_popup(x, y, w, h, screen),
         At::Speaker(era, x, y) => volume::place_menu(era, x, y, w, h, screen),
@@ -457,13 +457,14 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
         let parent = app.menus.get(level)?;
         let e = *parent.layout.rects.get(index)?;
         let s = app.scale;
-        let entry = Rect::new(parent.rect.x + e.x * s, parent.rect.y + e.y * s, e.w * s, e.h * s);
+        let r = s.rect(e);
+        let entry = Rect::new(parent.rect.x + r.x, parent.rect.y + r.y, r.w, r.h);
         let (rule, frame) = match style {
             MenuStyle::Popup => (app.theme.popup.submenu, app.theme.popup.frame),
             _ => (app.theme.start_menu.submenu, app.theme.start_menu.frame),
         };
-        let rule = SubmenuPlacement { overlap: rule.overlap * s, margin_bottom: rule.margin_bottom * s, ..rule };
-        Some((parent.rect, entry, rule, frame * s, BAR_HWND.load(Ordering::SeqCst) as HWND))
+        let rule = SubmenuPlacement { overlap: s.len(rule.overlap), margin_bottom: s.len(rule.margin_bottom), ..rule };
+        Some((parent.rect, entry, rule, s.len(frame), BAR_HWND.load(Ordering::SeqCst) as HWND))
     })
     .flatten() else {
         return;
@@ -474,7 +475,7 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
     let Some((layout, scale, screen)) = measure(&menu, style) else {
         return;
     };
-    let (w, h) = (layout.width * scale, layout.height * scale);
+    let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (left, top) = place_submenu(parent_rect, entry_rect, w, h, frame, rule, screen);
     let rect = Rect::new(left, top, w, h);
     let Some(hwnd) = create(bar, rect, true) else {
@@ -497,11 +498,11 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
 }
 
 /// A menu's layout at 1×, the scale, and the main screen.
-fn measure(menu: &Menu, style: MenuStyle) -> Option<(MenuLayout, i32, Rect)> {
+fn measure(menu: &Menu, style: MenuStyle) -> Option<(MenuLayout, Scale, Rect)> {
     with_app(|app| {
         let m = app.monitor;
         let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
-        let layout = paint::layout_menu(app.theme, &app.fonts(), menu, style, screen.h / app.scale);
+        let layout = paint::layout_menu(app.theme, &app.fonts(), menu, style, app.scale.old_fit(screen.h));
         (layout, app.scale, screen)
     })
 }
@@ -609,7 +610,7 @@ enum Action {
     BarCommand(BarCommand, bool),
     Theme(Era),
     Colors(usize),
-    Size(i32),
+    Size(Scale),
     Window(u64),
     WindowCommand(u64, WindowCommand),
     GroupCommand(Vec<u64>, GroupCommand),
@@ -782,8 +783,9 @@ fn choose(level: usize, index: usize) {
         }
         Action::Size(scale) => {
             close(true);
+            let (wparam, lparam) = crate::bar::size_message(scale);
             // SAFETY: posting to our own bar window.
-            unsafe { PostMessageW(bar, WM_BAR_SIZE.id(), scale as usize, 0) };
+            unsafe { PostMessageW(bar, WM_BAR_SIZE.id(), wparam, lparam) };
         }
         // A window from an app's list: close, and bring that window to the front.
         Action::Window(id) => {
@@ -858,7 +860,7 @@ fn first_entry(menu: &Menu, style: MenuStyle, from_top: bool) -> Option<usize> {
 fn entry_at(hwnd: HWND, x: i32, y: i32) -> Option<usize> {
     with_app(|app| {
         let popup = app.menus.iter().find(|p| p.hwnd == hwnd)?;
-        popup.layout.hit(&popup.menu, popup.style, x / app.scale, y / app.scale)
+        popup.layout.hit(&popup.menu, popup.style, app.scale.old(x), app.scale.old(y))
     })
     .flatten()
 }
@@ -1045,7 +1047,7 @@ fn paint_menu(hwnd: HWND) {
         };
         let mut fb = Framebuffer::new(popup.layout.width, popup.layout.height, 0);
         paint::paint_menu(&mut fb, app.theme, &app.fonts(), &popup.menu, popup.style, &popup.layout);
-        let big = upscale(&fb, app.scale);
+        let big = app.scale.enlarge(&fb);
         blit(hdc, &big, big.width);
     });
     // SAFETY: see above.

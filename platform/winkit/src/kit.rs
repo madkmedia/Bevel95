@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bevel_core::fb::{Framebuffer, Icon};
 use bevel_core::kit::{Button, Controller, Effect, Form, Key, Mods};
-use bevel_core::scale::upscale;
+use bevel_core::scale::Scale;
 use bevel_core::text::{Font, Fonts};
 use bevel_core::theme::Theme;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -118,8 +118,9 @@ pub struct Look {
     pub theme: &'static Theme,
     pub regular: Font,
     pub bold: Font,
-    /// The whole-number size (1 = original pixels).
-    pub scale: i32,
+    /// The size (1 = original pixels; a quarter step between whole numbers is drawn as its way
+    /// says: `bevel_core::scale`), through which all of the window's geometry goes.
+    pub scale: Scale,
 }
 
 impl Look {
@@ -218,18 +219,18 @@ impl<H: Hosted> Host<H> {
             }
             fb = whole;
         }
-        let big = upscale(&fb, self.look.scale);
+        let big = self.look.scale.enlarge(&fb);
         blit(hdc, &big, big.width);
     }
 
     /// Handles one message; returns its answer (`None`: Windows' default) and what to do after.
     fn message(&mut self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> (Option<LRESULT>, Todo<H>) {
-        let s = self.look.scale.max(1);
+        let s = self.look.scale;
         let (ox, oy) = self.origin;
         // The pointer in the form's 1× coordinates.
         let at = |lparam: LPARAM| {
             let (x, y) = point(lparam);
-            (x.div_euclid(s) - ox, y.div_euclid(s) - oy)
+            (s.old(x) - ox, s.old(y) - oy)
         };
         let form = self.hosted.form_mut();
         let (answer, effects, changed) = match msg {
@@ -238,7 +239,7 @@ impl<H: Hosted> Host<H> {
                 // SAFETY: the window receiving the hit test and a valid rectangle.
                 let hit = unsafe {
                     if IsZoomed(self.hwnd) == 0 && GetWindowRect(self.hwnd, &mut r) != 0 {
-                        resize_hit(&r, point(lparam), 4 * s)
+                        resize_hit(&r, point(lparam), s.len(4))
                     } else {
                         HTCLIENT
                     }
@@ -251,8 +252,8 @@ impl<H: Hosted> Host<H> {
                 // native frame bounds because this form draws to the very edge of the window.
                 unsafe {
                     let limits = &mut *(lparam as *mut MINMAXINFO);
-                    limits.ptMinTrackSize.x = min_w.max(1) * s;
-                    limits.ptMinTrackSize.y = min_h.max(1) * s;
+                    limits.ptMinTrackSize.x = s.len(min_w.max(1));
+                    limits.ptMinTrackSize.y = s.len(min_h.max(1));
                     let monitor = MonitorFromWindow(self.hwnd, MONITOR_DEFAULTTONEAREST);
                     let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
                     if GetMonitorInfoW(monitor, &mut info) != 0 {
@@ -277,7 +278,7 @@ impl<H: Hosted> Host<H> {
                     windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) != 0
                         && windows_sys::Win32::Graphics::Gdi::ScreenToClient(self.hwnd, &mut p) != 0
                 };
-                if ok && crate::pointer::show(form.pointer(p.x.div_euclid(s) - ox, p.y.div_euclid(s) - oy)) {
+                if ok && crate::pointer::show(form.pointer(s.old(p.x) - ox, s.old(p.y) - oy)) {
                     return (Some(1), Vec::new());
                 }
                 return (None, Vec::new());
@@ -383,13 +384,13 @@ impl<H: Hosted> Host<H> {
                     let w = i32::from(lparam as u16);
                     let h = i32::from((lparam >> 16) as u16);
                     // Round up: a non-integral last row or column is clipped by the client DC.
-                    self.hosted.resized(((w + s - 1) / s, (h + s - 1) / s), wparam as u32 == SIZE_MAXIMIZED);
+                    self.hosted.resized((s.old_cover(w), s.old_cover(h)), wparam as u32 == SIZE_MAXIMIZED);
                 }
                 (None, Vec::new(), self.resizable && !minimized)
             }
             WM_MOVE if self.resizable => {
                 let (x, y) = point(lparam);
-                form.set_screen(x.div_euclid(s) + ox, y.div_euclid(s) + oy);
+                form.set_screen(s.old(x) + ox, s.old(y) + oy);
                 (None, Vec::new(), true)
             }
             WM_CLOSE => (Some(0), vec![Effect::Close], false),
@@ -535,7 +536,7 @@ fn reshape<H: Hosted>(hwnd: HWND) {
         let new = bounds(host.hosted.form());
         host.origin = (-new.x, -new.y);
         host.extent = (new.w, new.h);
-        (old, new, host.look.scale.max(1))
+        (old, new, host.look.scale)
     }) else {
         return;
     };
@@ -549,13 +550,14 @@ fn reshape<H: Hosted>(hwnd: HWND) {
     // them) or deleted.
     unsafe {
         GetWindowRect(hwnd, &mut r);
-        let (x, y) = (r.left + (new.x - old.x) * s, r.top + (new.y - old.y) * s);
-        SetWindowPos(hwnd, null_mut(), x, y, new.w * s, new.h * s, SWP_NOZORDER | SWP_NOACTIVATE | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOREDRAW);
+        // The form's corner stays on the same screen pixel.
+        let (x, y) = (r.left + s.at(-old.x) - s.at(-new.x), r.top + s.at(-old.y) - s.at(-new.y));
+        SetWindowPos(hwnd, null_mut(), x, y, s.len(new.w), s.len(new.h), SWP_NOZORDER | SWP_NOACTIVATE | windows_sys::Win32::UI::WindowsAndMessaging::SWP_NOREDRAW);
         let (ox, oy) = (-new.x, -new.y);
         let region = match drop {
             Some(d) if new != bevel_core::fb::Rect::new(0, 0, w, h) => {
-                let own = CreateRectRgn(ox * s, oy * s, (ox + w) * s, (oy + h) * s);
-                let list = CreateRectRgn((d.x + ox) * s, (d.y + oy) * s, (d.right() + ox) * s, (d.bottom() + oy) * s);
+                let own = CreateRectRgn(s.at(ox), s.at(oy), s.at(ox + w), s.at(oy + h));
+                let list = CreateRectRgn(s.at(d.x + ox), s.at(d.y + oy), s.at(d.right() + ox), s.at(d.bottom() + oy));
                 CombineRgn(own, own, list, RGN_OR);
                 DeleteObject(list);
                 own
@@ -638,7 +640,7 @@ pub fn open_with<H: Hosted>(
     theme: &'static Theme,
     regular: Font,
     bold: Font,
-    scale: i32,
+    scale: Scale,
     place: impl FnOnce(i32, i32) -> (i32, i32),
 ) -> Option<HWND> {
     open_as(Kind::Tool, hosted, Look { theme, regular, bold, scale }, place)
@@ -662,18 +664,17 @@ pub fn open_as<H: Hosted>(
 pub fn open_another<H: Hosted>(
     kind: Kind,
     mut hosted: H,
-    mut look: Look,
+    look: Look,
     place: impl FnOnce(i32, i32) -> (i32, i32),
 ) -> Option<HWND> {
     ensure_class();
     register::<H>();
-    look.scale = look.scale.max(1);
     let scale = look.scale;
     hosted.form_mut().layout(&look.fonts());
     let (w, h) = hosted.form().size();
-    let (w, h) = (w * scale, h * scale);
+    let (w, h) = (scale.len(w), scale.len(h));
     let (x, y) = place(w, h);
-    hosted.form_mut().set_screen(x.div_euclid(scale), y.div_euclid(scale));
+    hosted.form_mut().set_screen(scale.old(x), scale.old(y));
     let class = wide(KIT_CLASS);
     let title = wide(hosted.form().title());
     let (ex_style, style, owner) = match &kind {
@@ -777,19 +778,19 @@ pub fn close<H: Hosted>() {
 /// on, laid out again; `place` says where it goes now (given its size in screen pixels and
 /// where it is).
 pub fn retheme_with<H: Hosted>(look: Look, place: impl FnOnce(i32, i32, RECT) -> (i32, i32)) {
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let Some((hwnd, w, h)) = lift::<H, (HWND, i32, i32)>(|host| {
         host.look = Look { scale, ..look };
         host.relayout();
         let (w, h) = host.hosted.form().size();
         (host.origin, host.extent) = ((0, 0), (w, h));
-        (host.hwnd, w * scale, h * scale)
+        (host.hwnd, scale.len(w), scale.len(h))
     }) else {
         return;
     };
     let now = window_rect(hwnd);
     let (x, y) = place(w, h, now);
-    lift::<H, ()>(|host| host.hosted.form_mut().set_screen(x.div_euclid(scale), y.div_euclid(scale)));
+    lift::<H, ()>(|host| host.hosted.form_mut().set_screen(scale.old(x), scale.old(y)));
     move_window(hwnd, x, y, w, h);
     reshape::<H>(hwnd);
 }
@@ -803,7 +804,7 @@ pub fn resize<H: Hosted>() {
         let s = host.look.scale;
         let (ox, oy) = std::mem::take(&mut host.origin);
         host.extent = (w, h);
-        (host.hwnd, w * s, h * s, ox * s, oy * s)
+        (host.hwnd, s.len(w), s.len(h), s.at(ox), s.at(oy))
     }) else {
         return;
     };
@@ -1052,8 +1053,8 @@ fn carry_out<H: Hosted>(hwnd: HWND, later: Todo<H>) {
                     SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
                     GetWindowRect(hwnd, &mut r);
                 }
-                let (scale, (ox, oy)) = lift::<H, _>(|host| (host.look.scale.max(1), host.origin)).unwrap_or((1, (0, 0)));
-                update::<H>(|h| h.form_mut().set_screen(r.left.div_euclid(scale) + ox, r.top.div_euclid(scale) + oy));
+                let (scale, (ox, oy)) = lift::<H, _>(|host| (host.look.scale, host.origin)).unwrap_or((Scale::ONE, (0, 0)));
+                update::<H>(|h| h.form_mut().set_screen(scale.old(r.left) + ox, scale.old(r.top) + oy));
             }
             Later::Effect(Effect::Paste) => {
                 if let Some(text) = clipboard_text() {

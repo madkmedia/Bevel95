@@ -593,7 +593,7 @@ mod tests {
         fs::write(&path, bevel_core::config::DEFAULT_FILE).unwrap();
         change_settings(&path, |t| bevel_core::config::with_setting(t, "scale", "3")).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        assert!(crate::log::has_settings_mark(&text) && bevel_core::config::parse(&text).0.scale == Some(3));
+        assert!(crate::log::has_settings_mark(&text) && bevel_core::config::parse(&text).0.scale == Some(bevel_core::scale::Scale::whole(3)));
         // Missing: the defaults with the change.
         fs::remove_file(&path).unwrap();
         change_settings(&path, |t| bevel_core::config::with_setting(t, "era", "win98")).unwrap();
@@ -620,7 +620,7 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with(crate::log::SETTINGS_MARK), "the mark is the first line again: {text:?}");
         let (config, _) = bevel_core::config::parse(&text);
-        assert_eq!((config.scale, config.era), (Some(3), bevel_core::theme::Era::Win98), "the change saved, the rest kept");
+        assert_eq!((config.scale, config.era), (Some(bevel_core::scale::Scale::whole(3)), bevel_core::theme::Era::Win98), "the change saved, the rest kept");
         // Another folder (a portable copy's): refused, the file kept, and told apart.
         let portable = scratch("settings-portable");
         let other = portable.join("settings.txt");

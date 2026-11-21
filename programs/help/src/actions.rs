@@ -89,7 +89,7 @@ pub fn copy(owner: HWND, text: &str) {
 }
 
 pub fn window_menu(owner: HWND, look: &Look, era: Era) {
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let mut bounds = RECT::default();
     // SAFETY: the caller's own viewer window, a valid rectangle, and message-time queries.
     let (opened, state) = unsafe {
@@ -113,7 +113,7 @@ pub fn window_menu(owner: HWND, look: &Look, era: Era) {
     let mut popup = window_menu::program_menu(era, state);
     popup.show_keys = era != Era::Win2000;
     // The viewer's 4px sizing frame surrounds its 18px caption.
-    let at = (bounds.left + 4 * scale, bounds.top + 22 * scale);
+    let at = (bounds.left + scale.at(4), bounds.top + scale.at(22));
     let ended =
         menu::track(look, Request { owner, menu: popup, style: MenuStyle::Popup, at, above: None, titles: &[] });
     let command = match ended.outcome {
@@ -122,8 +122,8 @@ pub fn window_menu(owner: HWND, look: &Look, era: Era) {
             let (x, y) = point(msg.lParam);
             let icon = msg.hwnd == owner
                 && matches!(msg.message, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK)
-                && (6 * scale..22 * scale).contains(&x)
-                && (5 * scale..21 * scale).contains(&y);
+                && (6..22).contains(&scale.old(x))
+                && (5..21).contains(&scale.old(y));
             if icon {
                 // SAFETY: read the system's double-click interval.
                 (msg.time.wrapping_sub(opened) <= unsafe { GetDoubleClickTime() }).then_some(WindowCommand::Close)

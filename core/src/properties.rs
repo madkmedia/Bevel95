@@ -22,6 +22,7 @@ use crate::fb::{Framebuffer, Rect};
 use crate::kit::{self, Effect, Key, Mods, Press};
 use crate::paint::CHECK_ART;
 use crate::programs::{self, Row, RowKind, Shown, Tick};
+use crate::scale::Scale;
 use crate::scroll::ScrollBar;
 use crate::text::{Font, Fonts, split_access_key};
 use crate::theme::{Colors, Depth, Era, Theme, rgb};
@@ -35,7 +36,8 @@ pub struct Values {
     pub era: Era,
     /// True Color or 16 Colors (Bevel95 Settings, General page).
     pub colors: Depth,
-    pub scale: i32,
+    /// The size, with the way a size between whole numbers is drawn.
+    pub scale: Scale,
     pub start_with_windows: bool,
     /// Seconds Bevel95's clock runs ahead of the PC's (Date/Time Properties sets it; "Use the
     /// PC's Time" puts it back to 0).
@@ -183,7 +185,8 @@ pub enum Part {
     Look(Era),
     /// Bevel95 Settings: the option buttons of the colors.
     Colors(Depth),
-    Size(i32),
+    /// The size's option buttons (a size drawn the default way: size_part).
+    Size(Scale),
     /// Bevel95 Settings: the option buttons of what the Windows key opens.
     WinKey(WindowsKey),
     /// Start Menu Programs page (Advanced in Windows 2000).
@@ -307,7 +310,12 @@ fn colors_label(depth: Depth) -> &'static str {
     }
 }
 
-fn size_label(scale: i32) -> String {
+/// The option button of size s.
+fn size_part(s: Scale) -> Part {
+    Part::Size(Scale::from_quarters(s.quarters()))
+}
+
+fn size_label(scale: Scale) -> String {
     format!("&{scale}\u{d7}")
 }
 
@@ -565,7 +573,7 @@ impl Properties {
             Part::Look(era) => v.era = era,
             Part::Colors(depth) => v.colors = depth,
             Part::WinKey(key) => v.windows_key = key,
-            Part::Size(s) => v.scale = s,
+            Part::Size(s) => v.scale = Scale::from_quarters(s.quarters()).with_way(v.scale.way),
             Part::Shown(shown) => {
                 v.programs = shown;
                 // The list shows what the choice is about: the classic programs' folders open
@@ -627,7 +635,7 @@ impl Properties {
                 Part::Look(_) => Part::Look(self.values.era),
                 Part::Colors(_) => Part::Colors(self.values.colors),
                 Part::WinKey(_) => Part::WinKey(self.values.windows_key),
-                Part::Size(_) => Part::Size(self.values.scale),
+                Part::Size(_) => size_part(self.values.scale),
                 Part::Shown(_) => Part::Shown(self.values.programs),
                 p => p,
             };
@@ -1446,7 +1454,7 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             }
             group_box(fb, c, font, SIZE_GROUP, "Size", false);
             for (&s, &x) in MENU_SCALES.iter().zip(&SIZE_ROW_X) {
-                option(fb, Part::Size(s), p.values.scale == s, x, SIZE_ROW_Y);
+                option(fb, Part::Size(s), p.values.scale.quarters() == s.quarters(), x, SIZE_ROW_Y);
             }
             lines(fb, 36, SIZE_ROW_Y + 22, &["Each pixel of the classic look becomes this many."]);
             group_box(fb, c, font, STARTUP_GROUP, "Startup", false);
@@ -1851,7 +1859,7 @@ mod tests {
             start: StartOptions::default(),
             era: Era::Win95,
             colors: Depth::TrueColor,
-            scale: 2,
+            scale: Scale::whole(2),
             start_with_windows: false,
             clock_offset: 0,
             desktop: true,
@@ -1901,7 +1909,7 @@ mod tests {
         assert!(p.choose(Part::Check(Check::AutoHide)));
         assert!(!p.values.options.auto_hide && p.enabled(Part::Apply), "Windows keeps Apply on once something changed");
         assert!(!p.choose(Part::Ok));
-        assert!(p.choose(Part::Size(4)) && p.values.scale == 4);
+        assert!(p.choose(Part::Size(Scale::whole(4))) && p.values.scale == Scale::whole(4));
     }
 
     #[test]
@@ -1922,7 +1930,7 @@ mod tests {
             [
                 Part::Look(Era::Win95),
                 Part::Colors(Depth::TrueColor),
-                Part::Size(2),
+                Part::Size(Scale::whole(2)),
                 Part::Check(Check::StartWithWindows),
                 Part::Ok,
                 Part::Cancel
@@ -2062,8 +2070,8 @@ mod tests {
         assert_eq!(p.access_key('d'), Some(Part::Advanced));
         let p = Properties::new(Sheet::Bevel95, Era::Win95, values());
         assert_eq!(p.access_key('8'), Some(Part::Look(Era::Win98)));
-        assert_eq!(p.access_key('4'), Some(Part::Size(4)));
-        assert_eq!(p.arrow(Part::Size(2), true), Some(Part::Size(3)));
+        assert_eq!(p.access_key('4'), Some(Part::Size(Scale::whole(4))));
+        assert_eq!(p.arrow(Part::Size(Scale::whole(2)), true), Some(Part::Size(Scale::whole(3))));
         assert_eq!(p.arrow(Part::Look(Era::Win95), false), Some(Part::Look(Era::Win95)));
         // The colors: C, 6 and T, the arrows between the three.
         assert_eq!(p.access_key('c'), Some(Part::Colors(Depth::Sixteen)));
@@ -2086,12 +2094,12 @@ mod tests {
         // Windows' window was opened first; meanwhile Bevel95 Settings changed the look, the
         // size, starting with Windows and the clock. Its Apply must not put the old ones back.
         let opened = values();
-        let now = Values { era: Era::Win2000, scale: 3, start_with_windows: true, clock_offset: 60, ..opened };
+        let now = Values { era: Era::Win2000, scale: Scale::whole(3), start_with_windows: true, clock_offset: 60, ..opened };
         let mut taskbar = Properties::new(Sheet::Taskbar, Era::Win95, opened);
         assert!(taskbar.choose(Part::Check(Check::AutoHide)));
         let applied = Sheet::Taskbar.merge(taskbar.values, now);
         assert!(applied.options.auto_hide, "its own choice");
-        assert_eq!((applied.era, applied.scale), (Era::Win2000, 3));
+        assert_eq!((applied.era, applied.scale), (Era::Win2000, Scale::whole(3)));
         assert_eq!((applied.start_with_windows, applied.clock_offset), (true, 60));
         // The other way round: Bevel95 Settings leaves the taskbar's options as they are now.
         let now = Values { options: TaskbarOptions { show_clock: false, ..opened.options }, ..opened };

@@ -78,7 +78,7 @@ pub fn open(kind: DialogKind) {
     let Some((era, monitor, bar_top)) = with_app(|app| (app.era, app.monitor, app.bar_top_on_screen())) else {
         return;
     };
-    let scale = with_app(|app| app.scale.max(1)).unwrap_or(1);
+    let scale = with_app(|app| app.scale).unwrap_or_default();
     let screen = Rect::new(monitor.left, monitor.top, rect_w(&monitor), rect_h(&monitor));
     if kind == DialogKind::ShutDown
         && let Some(dim) = dim_screen(screen, scale)
@@ -89,10 +89,10 @@ pub fn open(kind: DialogKind) {
     let mut form = DialogWindow::new(Dialog::new(kind, era), history);
     // Run's list opens above the field where it would reach past the screen's bottom edge
     // (Windows' rule, measured on the reference PCs: the screen's edge, not the taskbar's top).
-    form.screen_bottom = monitor.bottom.div_euclid(scale);
+    form.screen_bottom = scale.old(monitor.bottom);
     let opened = kit::open(DialogHost { form }, |w, h| match kind {
         // PROVISIONAL: Run opens in the lower left, above the Start button.
-        DialogKind::Run => (screen.x + 12 * scale, bar_top - h - 12 * scale),
+        DialogKind::Run => (screen.x + scale.len(12), bar_top - h - scale.len(12)),
         // Shut Down and Log Off: in the middle of the screen (Toasty Tech's screenshot).
         _ => (screen.x + (screen.w - w) / 2, screen.y + (screen.h - h) / 2),
     });
@@ -111,12 +111,12 @@ pub fn close() {
 
 /// A copy of the screen with every other pixel (counted in 1× pixels) black, shown over
 /// everything, as Windows dimmed the screen behind Shut Down.
-fn dim_screen(screen: Rect, scale: i32) -> Option<(HWND, Framebuffer)> {
+fn dim_screen(screen: Rect, scale: bevel_core::scale::Scale) -> Option<(HWND, Framebuffer)> {
     let mut shot = capture(screen)?;
-    let s = scale.max(1);
+    let s = scale;
     for y in 0..shot.height {
         for x in 0..shot.width {
-            if ((x / s) + (y / s)) % 2 == 1 {
+            if (s.old(x) + s.old(y)) % 2 == 1 {
                 shot.pixels[(y * shot.width + x) as usize] = 0xFF00_0000;
             }
         }

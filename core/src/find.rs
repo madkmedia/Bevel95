@@ -1102,9 +1102,9 @@ mod tests {
     #[test]
     fn a_new_reading_keeps_the_commands_and_the_selection() {
         let mut w = typed(Era::Win98, "size 3");
-        assert_eq!(w.selected().unwrap().command, Some(Action::Size(3)));
+        assert_eq!(w.selected().unwrap().command, Some(Action::Size(crate::scale::Scale::whole(3))));
         w.set_programs(programs(&menu()));
-        assert_eq!(w.selected().unwrap().command, Some(Action::Size(3)));
+        assert_eq!(w.selected().unwrap().command, Some(Action::Size(crate::scale::Scale::whole(3))));
         assert_eq!(w.programs.len(), 8 + quick::commands().len());
         assert!(w.wanted_icons().is_empty(), "the command's picture stays");
     }

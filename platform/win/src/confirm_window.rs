@@ -13,7 +13,7 @@ use crate::kit::{Kind, Look};
 fn place() -> Option<Place> {
     with_app(|app| {
         let fonts = app.fonts();
-        let look = Look { theme: app.theme, regular: fonts.regular.clone(), bold: fonts.bold.clone(), scale: app.scale.max(1) };
+        let look = Look { theme: app.theme, regular: fonts.regular.clone(), bold: fonts.bold.clone(), scale: app.scale };
         Place { look, era: app.era, kind: Kind::Tool, work: app.monitor }
     })
 }

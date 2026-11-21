@@ -165,9 +165,9 @@ fn open_sheet<const OWN: bool>() {
 fn place<const OWN: bool>(w: i32, h: i32) -> (i32, i32) {
     with_app(|app| {
         let s = app.scale;
-        let step = if OWN { 22 * s } else { 0 };
-        let x = app.monitor.left + 2 * s + step;
-        let y = (app.bar_top_on_screen() - 4 * s - step - h).max(app.monitor.top);
+        let step = if OWN { s.len(22) } else { 0 };
+        let x = app.monitor.left + s.len(2) + step;
+        let y = (app.bar_top_on_screen() - s.len(4) - step - h).max(app.monitor.top);
         (x.min(app.monitor.right - w).max(app.monitor.left), y)
     })
     .unwrap_or((0, 0))

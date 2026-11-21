@@ -307,14 +307,13 @@ fn fit_window() {
 }
 
 /// The largest field the game's screen can show at the size things are drawn in.
-fn most_squares(era: Era, hwnd: Option<HWND>, scale: i32) -> (usize, usize) {
+fn most_squares(era: Era, hwnd: Option<HWND>, scale: bevel_core::scale::Scale) -> (usize, usize) {
     let work = match hwnd {
         // SAFETY: our own window.
         Some(hwnd) => work_area(unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }),
         None => look::main_screen().0,
     };
-    let scale = scale.max(1);
-    Board::most_squares(era, (rect_w(&work) / scale, rect_h(&work) / scale))
+    Board::most_squares(era, (scale.old_fit(rect_w(&work)), scale.old_fit(rect_h(&work))))
 }
 
 /// Carries out a command of the menus (or F1).
@@ -341,7 +340,7 @@ fn run(command: Command, keyboard: bool) {
     };
     match command {
         Command::Custom => {
-            let scale = kit::look_of::<Game>().map_or(1, |look| look.scale);
+            let scale = kit::look_of::<Game>().map_or(bevel_core::scale::Scale::ONE, |look| look.scale);
             open_box(Sheet::custom(era, field, most_squares(era, kit::hwnd::<Game>(), scale)), keyboard);
         }
         Command::BestTimes => open_box(Sheet::best_times(era, &settings), keyboard),
@@ -371,7 +370,7 @@ fn open_box(mut sheet: Sheet, keyboard: bool) {
     };
     let scale = look.scale;
     let place = |w: i32, h: i32| {
-        on_screen((around.left + dx * scale, around.top + dy * scale), w, h)
+        on_screen((around.left + scale.at(dx), around.top + scale.at(dy)), w, h)
     };
     if kit::open_as(Kind::Dialog { owner }, GameBox { form: sheet }, look, place).is_none() {
         log("Minefield: a box could not be shown");
@@ -490,7 +489,7 @@ fn main() {
     let place = |w: i32, h: i32| {
         let (work, _) = look::main_screen();
         let (x, y) = if era == Era::Win2000 { (80, 80) } else { (76, 36) };
-        let fresh = (work.left + x * scale, work.top + y * scale);
+        let fresh = (work.left + scale.at(x), work.top + scale.at(y));
         on_screen(saved.unwrap_or(fresh), w, h)
     };
     if kit::open_as(kind, Game { form, settings, clock: Clock::default(), help: HelpViewer::default() }, paints, place).is_none() {

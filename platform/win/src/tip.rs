@@ -7,7 +7,7 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bevel_core::fb::{Framebuffer, Rect};
-use bevel_core::scale::upscale;
+use bevel_core::scale::Scale;
 use bevel_core::tooltip;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
@@ -37,18 +37,18 @@ thread_local! {
 /// Shows `text` for the pointer at `pointer` over `tool` (both in screen pixels).
 pub fn show(owner: HWND, text: &str, pointer: POINT, tool: Rect) {
     show_placed(owner, text, &|w, h, screen, work, _, _, scale| {
-        tooltip::place((pointer.x, pointer.y), w, h, tool, screen, work, BELOW_POINTER * scale, scale)
+        tooltip::place((pointer.x, pointer.y), w, h, tool, screen, work, scale.len(BELOW_POINTER), scale.len(1))
     });
 }
 
 /// Shows a Quick Launch icon's tooltip: where each look put it (`tooltip::place_quick_launch`).
 pub fn show_quick_launch(owner: HWND, text: &str, pointer: POINT, tool: Rect) {
     show_placed(owner, text, &|w, h, screen, _, era, bar_top, scale| {
-        tooltip::place_quick_launch(era, (pointer.x, pointer.y), w, h, tool, bar_top, screen, scale, scale)
+        tooltip::place_quick_launch(era, (pointer.x, pointer.y), w, h, tool, bar_top, screen, scale.len(1), scale)
     });
 }
 
-type Placer<'a> = dyn Fn(i32, i32, Rect, Rect, bevel_core::theme::Era, i32, i32) -> (i32, i32) + 'a;
+type Placer<'a> = dyn Fn(i32, i32, Rect, Rect, bevel_core::theme::Era, i32, Scale) -> (i32, i32) + 'a;
 
 fn show_placed(owner: HWND, text: &str, place: &Placer) {
     let Some((w, h, screen, work, era, bar_top, scale)) = with_app(|app| {
@@ -56,7 +56,7 @@ fn show_placed(owner: HWND, text: &str, place: &Placer) {
         let m = app.monitor;
         let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
         let work = Rect::new(m.left, m.top, rect_w(&m), app.bar_top_on_screen() - m.top);
-        (w * app.scale, h * app.scale, screen, work, app.era, app.bar_top_on_screen(), app.scale)
+        (app.scale.len(w), app.scale.len(h), screen, work, app.era, app.bar_top_on_screen(), app.scale)
     }) else {
         return;
     };
@@ -123,7 +123,7 @@ fn paint(hwnd: HWND) {
         let (w, h) = tooltip::size(font, &text);
         let mut fb = Framebuffer::new(w, h, 0);
         tooltip::paint(&mut fb, app.theme, font, &text);
-        let big = upscale(&fb, app.scale);
+        let big = app.scale.enlarge(&fb);
         blit(hdc, &big, big.width);
     });
     // SAFETY: see above.

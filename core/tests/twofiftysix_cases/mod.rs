@@ -343,7 +343,7 @@ fn dialog_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             start: StartOptions { favorites: false, log_off: era != Era::Win2000 },
             era,
             colors: Depth::TwoFiftySix,
-            scale: 2,
+            scale: bevel_core::scale::Scale::whole(2),
             start_with_windows: false,
             clock_offset: 0,
             desktop: true,

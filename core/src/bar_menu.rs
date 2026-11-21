@@ -6,6 +6,7 @@
 
 use crate::config::MENU_SCALES;
 use crate::paint::{Mark, Menu, MenuEntry};
+use crate::scale::Scale;
 use crate::theme::{Depth, Era};
 
 /// What a bar menu entry does. The platform layer carries it out.
@@ -272,12 +273,12 @@ pub fn colors_at(index: usize) -> Option<Depth> {
 }
 
 /// The Size submenu: "1×" to "4×", with a bullet on the size in use.
-pub fn size_menu(current: i32) -> Menu {
-    choices(MENU_SCALES.iter().map(|&s| (format!("{s}\u{d7}"), s == current)))
+pub fn size_menu(current: Scale) -> Menu {
+    choices(MENU_SCALES.iter().map(|&s| (format!("{s}\u{d7}"), s.quarters() == current.quarters())))
 }
 
 /// The scale chosen by entry `index` of `size_menu`.
-pub fn size_at(index: usize) -> Option<i32> {
+pub fn size_at(index: usize) -> Option<Scale> {
     MENU_SCALES.get(index).copied()
 }
 
@@ -417,12 +418,12 @@ mod tests {
 
     #[test]
     fn size_menu_marks_the_current_size() {
-        let m = size_menu(2);
+        let m = size_menu(Scale::whole(2).with_way(crate::scale::Way::Nearest));
         let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
         assert_eq!(labels, ["1\u{d7}", "2\u{d7}", "3\u{d7}", "4\u{d7}"]);
         let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
         assert_eq!(marked, [false, true, false, false]);
-        assert_eq!(size_at(3), Some(4));
+        assert_eq!(size_at(3), Some(Scale::whole(4)));
         assert_eq!(size_at(4), None);
     }
 

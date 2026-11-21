@@ -148,10 +148,10 @@ fn present<H: Hosted>(mut dialog: H, keyboard: bool, origin: Option<(i32, i32)>)
     let scale = look.scale;
     if kit::open_as(Kind::Dialog { owner }, dialog, look, |w, h| {
         let (x, y) = if let Some((dx, dy)) = origin {
-            (bounds.left + dx * scale, bounds.top + dy * scale)
+            (bounds.left + scale.at(dx), bounds.top + scale.at(dy))
         } else {
             let screen = work_area(&bounds).rcMonitor;
-            ((screen.left + screen.right - w) / 2 + 4 * scale, (screen.top + screen.bottom - h) / 2 + 9 * scale)
+            ((screen.left + screen.right - w) / 2 + scale.at(4), (screen.top + screen.bottom - h) / 2 + scale.at(9))
         };
         on_screen(x, y, w, h)
     })

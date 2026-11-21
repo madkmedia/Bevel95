@@ -17,7 +17,7 @@ use std::ptr::{null, null_mut};
 use bevel_core::fb::{Framebuffer, Rect};
 use bevel_core::kit::Form;
 use bevel_core::paint::{self, EntryKind, Menu, MenuLayout, MenuStyle};
-use bevel_core::scale::upscale;
+use bevel_core::scale::Scale;
 use bevel_core::text::split_access_key;
 use bevel_core::theme::Era;
 use bevel_core::window_menu::{self, WindowCommand, WindowState};
@@ -167,10 +167,10 @@ pub fn track_with_selection(look: &Look, request: Request, mut selected: impl Fn
         return nothing; // one at a time
     }
     ensure_class();
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let screen = screen_of(request.owner);
-    let layout = paint::layout_menu(look.theme, &look.fonts(), &request.menu, request.style, rect_h(&screen) / scale);
-    let (w, h) = (layout.width * scale, layout.height * scale);
+    let layout = paint::layout_menu(look.theme, &look.fonts(), &request.menu, request.style, scale.old_fit(rect_h(&screen)));
+    let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (mut x, mut y) = request.at;
     if y + h > screen.bottom
         && let Some(above) = request.above
@@ -391,7 +391,7 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             tracking(hwnd, |t| {
                 let mut fb = Framebuffer::new(t.layout.width, t.layout.height, 0);
                 paint::paint_menu(&mut fb, t.look.theme, &t.look.fonts(), &t.menu, t.style, &t.layout);
-                let big = upscale(&fb, t.look.scale);
+                let big = t.look.scale.enlarge(&fb);
                 blit(hdc, &big, big.width);
             });
             // SAFETY: see above.
@@ -401,8 +401,8 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         WM_MOUSEMOVE => {
             let (x, y) = point(lparam);
             let arm = tracking(hwnd, |t| {
-                let s = t.look.scale.max(1);
-                let entry = t.layout.hit(&t.menu, t.style, x.div_euclid(s), y.div_euclid(s));
+                let s = t.look.scale;
+                let entry = t.layout.hit(&t.menu, t.style, s.old(x), s.old(y));
                 let changed = entry != t.menu.hover;
                 t.menu.hover = entry;
                 (changed, !std::mem::replace(&mut t.leave_armed, true))
@@ -449,8 +449,8 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
         WM_LBUTTONUP | WM_RBUTTONUP => {
             let (x, y) = point(lparam);
             tracking(hwnd, |t| {
-                let s = t.look.scale.max(1);
-                if let Some(i) = t.layout.hit(&t.menu, t.style, x.div_euclid(s), y.div_euclid(s))
+                let s = t.look.scale;
+                if let Some(i) = t.layout.hit(&t.menu, t.style, s.old(x), s.old(y))
                     && t.menu.entries[i].choosable()
                 {
                     t.outcome = Some(Outcome::Chosen(i));
@@ -531,12 +531,12 @@ pub struct Selection {
     pub keyboard: bool,
 }
 
-fn screen_rect(window: &RECT, rect: Rect, scale: i32) -> RECT {
+fn screen_rect(window: &RECT, rect: Rect, scale: Scale) -> RECT {
     RECT {
-        left: window.left + rect.x * scale,
-        top: window.top + rect.y * scale,
-        right: window.left + rect.right() * scale,
-        bottom: window.top + rect.bottom() * scale,
+        left: window.left + scale.at(rect.x),
+        top: window.top + scale.at(rect.y),
+        right: window.left + scale.at(rect.right()),
+        bottom: window.top + scale.at(rect.bottom()),
     }
 }
 
@@ -544,7 +544,7 @@ fn screen_rect(window: &RECT, rect: Rect, scale: i32) -> RECT {
 pub fn track_bar<H: Hosted>(first: usize, bar: MenuBar<H::F>) -> Option<Selection> {
     let hwnd = kit::hwnd::<H>()?;
     let look = kit::look_of::<H>()?;
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let mut title = first;
     loop {
         let (era, menu, rects) = kit::with::<H, _>(|host| {
@@ -609,7 +609,7 @@ pub fn track_bar<H: Hosted>(first: usize, bar: MenuBar<H::F>) -> Option<Selectio
                         kit::with::<H, _>(|host| {
                             (0..bar.count).find(|&i| {
                                 (bar.title_rect)(host.form(), i)
-                                    .is_some_and(|r| r.contains(x.div_euclid(scale), y.div_euclid(scale)))
+                                    .is_some_and(|r| r.contains(scale.old(x), scale.old(y)))
                             })
                         })
                         .flatten()
@@ -645,7 +645,7 @@ pub fn track_window<H: Hosted>(icon: <H::F as Form>::Part, era: fn(&H::F) -> Era
     let Some((era, Some(icon_rect))) = kit::with::<H, _>(|host| (era(host.form()), host.form().rect(icon))) else {
         return;
     };
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let mut window = RECT::default();
     let mut pointer = POINT::default();
     // SAFETY: querying the hosted window and releasing any existing mouse capture.
@@ -673,7 +673,7 @@ pub fn track_window<H: Hosted>(icon: <H::F as Form>::Part, era: fn(&H::F) -> Era
     } else {
         // A program icon starts two pixels after the caption's left end and ends
         // one pixel before its bottom, both for fixed and for resizable frames.
-        (window.left + (icon_rect.x - 2) * scale, window.top + (icon_rect.bottom() + 1) * scale)
+        (window.left + scale.at(icon_rect.x - 2), window.top + scale.at(icon_rect.bottom() + 1))
     };
     let ended =
         track(&look, Request { owner: hwnd, menu, style: MenuStyle::Popup, at: anchor, above: None, titles: &[] });
@@ -685,7 +685,7 @@ pub fn track_window<H: Hosted>(icon: <H::F as Form>::Part, era: fn(&H::F) -> Era
                 && msg.hwnd == hwnd
                 && matches!(msg.message, WM_LBUTTONDOWN | WM_LBUTTONDBLCLK)
                 && kit::with::<H, _>(|host| {
-                    host.form().rect(icon).is_some_and(|r| r.contains(x.div_euclid(scale), y.div_euclid(scale)))
+                    host.form().rect(icon).is_some_and(|r| r.contains(scale.old(x), scale.old(y)))
                 }) == Some(true);
             if on_icon {
                 // SAFETY: the system double-click interval is a process-independent query.
@@ -760,10 +760,10 @@ fn show_still(look: &Look, owner: HWND, menu: &Menu, style: MenuStyle, rect: REC
             log_win32("RegisterClassExW(menu picture)");
         }
     }
-    let layout = paint::layout_menu(look.theme, &look.fonts(), menu, style, rect_h(&rect) / look.scale.max(1) + 1);
+    let layout = paint::layout_menu(look.theme, &look.fonts(), menu, style, look.scale.old_fit(rect_h(&rect)) + 1);
     let mut fb = Framebuffer::new(layout.width, layout.height, 0);
     paint::paint_menu(&mut fb, look.theme, &look.fonts(), menu, style, &layout);
-    let big = upscale(&fb, look.scale.max(1));
+    let big = look.scale.enlarge(&fb);
     let class = wide(STILL_CLASS);
     // SAFETY: a registered class; owned by the program's window, so it stays above it.
     let hwnd = unsafe {
@@ -879,10 +879,10 @@ fn parent_switch(msg: &MSG, menu_hwnd: HWND) -> Option<usize> {
 
 /// Draws a still menu picture again (another entry lit).
 fn restill(look: &Look, hwnd: HWND, menu: &Menu, style: MenuStyle, rect: RECT) {
-    let layout = paint::layout_menu(look.theme, &look.fonts(), menu, style, rect_h(&rect) / look.scale.max(1) + 1);
+    let layout = paint::layout_menu(look.theme, &look.fonts(), menu, style, look.scale.old_fit(rect_h(&rect)) + 1);
     let mut fb = Framebuffer::new(layout.width, layout.height, 0);
     paint::paint_menu(&mut fb, look.theme, &look.fonts(), menu, style, &layout);
-    let big = upscale(&fb, look.scale.max(1));
+    let big = look.scale.enlarge(&fb);
     STILLS.with(|s| {
         if let Some(entry) = s.borrow_mut().iter_mut().find(|(h, _)| *h == hwnd) {
             entry.1 = big;
@@ -908,7 +908,7 @@ pub fn track_cascade(
     submenu: &dyn Fn(usize) -> Option<Menu>,
     mut selected: impl FnMut(usize, Option<usize>),
 ) -> CascadeEnd {
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     loop {
         let parent_menu = request.menu.clone();
         let ended = track_with_selection(look, Request { menu: parent_menu.clone(), titles: request.titles, ..request }, |row| {
@@ -925,18 +925,19 @@ pub fn track_cascade(
         let still = show_still(look, request.owner, &shown, request.style, rect);
         let e = layout.rects[i];
         let parent = Rect::new(rect.left, rect.top, rect_w(&rect), rect_h(&rect));
-        let entry = Rect::new(rect.left + e.x * scale, rect.top + e.y * scale, e.w * scale, e.h * scale);
+        let r = screen_rect(&rect, e, scale);
+        let entry = Rect::new(r.left, r.top, rect_w(&r), rect_h(&r));
         let (rule, frame) = (look.theme.popup.submenu, look.theme.popup.frame);
-        let rule = bevel_core::theme::SubmenuPlacement { overlap: rule.overlap * scale, margin_bottom: rule.margin_bottom * scale, ..rule };
+        let rule = bevel_core::theme::SubmenuPlacement { overlap: scale.len(rule.overlap), margin_bottom: scale.len(rule.margin_bottom), ..rule };
         let screen = screen_of(request.owner);
         let screen = Rect::new(screen.left, screen.top, rect_w(&screen), rect_h(&screen));
-        let child_layout = paint::layout_menu(look.theme, &look.fonts(), &child, request.style, screen.h / scale);
+        let child_layout = paint::layout_menu(look.theme, &look.fonts(), &child, request.style, scale.old_fit(screen.h));
         let (cx, cy) = bevel_core::layout::place_submenu(
             parent,
             entry,
-            child_layout.width * scale,
-            child_layout.height * scale,
-            frame * scale,
+            scale.len(child_layout.width),
+            scale.len(child_layout.height),
+            scale.len(frame),
             rule,
             screen,
         );
@@ -946,10 +947,7 @@ pub fn track_cascade(
         let entries: Vec<(usize, RECT)> = (0..parent_menu.entries.len())
             .filter(|&k| parent_menu.selectable(k, request.style))
             .filter_map(|k| layout.rects.get(k).map(|e| (k, e)))
-            .map(|(k, e)| {
-                let (x, y) = (rect.left + e.x * scale, rect.top + e.y * scale);
-                (k, RECT { left: x, top: y, right: x + e.w * scale, bottom: y + e.h * scale })
-            })
+            .map(|(k, e)| (k, screen_rect(&rect, *e, scale)))
             .collect();
         PARENT.with(|p| {
             *p.borrow_mut() = Some(Parent {

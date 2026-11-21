@@ -40,7 +40,7 @@ struct Game {
     fixed_seed: Option<u64>,
     clock_ticks: u8,
     minimized: bool,
-    scale: i32,
+    scale: bevel_core::scale::Scale,
 }
 
 impl Game {
@@ -135,9 +135,9 @@ impl Hosted for Game {
             game.form.set_era(era);
             game.scale = paints.scale;
             if let Some(rect) = maximized {
-                let scale = game.scale.max(1);
+                let scale = game.scale;
                 game.form.set_size(
-                    ((rect.right - rect.left + scale - 1) / scale, (rect.bottom - rect.top + scale - 1) / scale),
+                    (scale.old_cover(rect.right - rect.left), scale.old_cover(rect.bottom - rect.top)),
                     true,
                 );
             }
@@ -159,7 +159,7 @@ impl Hosted for Game {
 
 fn move_pointer(x: i32, y: i32) {
     let (Some(owner), Some(scale)) = (kit::hwnd::<Game>(), kit::with::<Game, _>(|game| game.scale)) else { return };
-    let mut at = POINT { x: x * scale, y: y * scale };
+    let mut at = POINT { x: scale.at(x), y: scale.at(y) };
     let mut client = RECT::default();
     // The original arrow keys point at the next pile. Only move within the visible part
     // of the focused table; the player can also have a menu or a dialog in front.
@@ -311,13 +311,13 @@ fn main() {
     let settings = settings::load(game::first_rand(fixed_seed.unwrap_or_else(|| deal_clock(era))));
     let cards = Cards::new(fixed_seed.unwrap_or_else(|| deal_clock(era)), settings.rules);
     let mut form = SolitaireWindow::new(era, cards, usize::from(settings.deck), settings.status_bar, settings.outline);
-    let scale = paints.scale.max(1);
+    let scale = paints.scale;
     let work = look::main_screen().0;
     let (w, h) = form::default_size(era);
     form.set_size(
         (
-            w.min(((work.right - work.left) / scale).max(form::MIN_SIZE.0)),
-            h.min(((work.bottom - work.top) / scale).max(form::MIN_SIZE.1)),
+            w.min(scale.old_fit(work.right - work.left).max(form::MIN_SIZE.0)),
+            h.min(scale.old_fit(work.bottom - work.top).max(form::MIN_SIZE.1)),
         ),
         false,
     );

@@ -1411,15 +1411,15 @@ fn wait_for_asked() {
 fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
     let key = window_key(&shows, exploring);
     let (era, look) = the_look()?;
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let (title, small) = title_from(era, &shows, &facts);
     // How many items, for the first size (only counted; the reader reads them).
     let count = facts.count(era);
     let remembered = SAVED.with(|s| if exploring { s.borrow().explorer.clone() } else { s.borrow().windows.get(&key).cloned() });
     let work = work_area(None);
-    let (ww, wh) = ((rect_w(&work) / scale).max(1), (rect_h(&work) / scale).max(1));
+    let (ww, wh) = (scale.old_fit(rect_w(&work)).max(1), scale.old_fit(rect_h(&work)).max(1));
     let size = match &remembered {
-        Some(w) => ((w.w / scale).max(120), (w.h / scale).max(60)),
+        Some(w) => (scale.old_fit(w.w).max(120), scale.old_fit(w.h).max(60)),
         None if exploring => status::explorer_size(era, (ww, wh)),
         // 98 opened a folder with its web view at its largest first size (web-v1-none: 512 x 461).
         None if era == Era::Win98 && web_on(era, &key) => status::first_size_in(era, 10_000, (ww, wh)),
@@ -1484,7 +1484,7 @@ fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
                 next
             });
             // 2000's windows were cut to the work area where they opened (`mydocs-new`).
-            on_screen((work.left + at * scale, work.top + at * scale), w.min(rect_w(&work)), h.min(rect_h(&work)))
+            on_screen((work.left + scale.at(at), work.top + scale.at(at)), w.min(rect_w(&work)), h.min(rect_h(&work)))
         }
     };
     let kind = Kind::ResizableProgram { small: Some(host.form.icon.clone()), big: None };
@@ -1853,8 +1853,8 @@ fn folder_options(owner: HWND, by_keyboard: bool) {
     let mut r = RECT::default();
     // SAFETY: our own window and a valid out-pointer.
     unsafe { GetWindowRect(owner, &mut r) };
-    let scale = look.scale.max(1);
-    let opened = kit::open_as(Kind::Owned { owner }, FolderOptionsHost { form }, look, |w, h| on_screen((r.left + 12 * scale, r.top + 12 * scale), w, h));
+    let scale = look.scale;
+    let opened = kit::open_as(Kind::Owned { owner }, FolderOptionsHost { form }, look, |w, h| on_screen((r.left + scale.at(12), r.top + scale.at(12)), w, h));
     if opened.is_none() {
         log("folders: the Folder Options window could not open");
     }
@@ -1976,8 +1976,8 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
         return None;
     }
     kit::scope::<FolderHost, _>(hwnd, || {
-        let scale = kit::look_of::<FolderHost>().map_or(1, |l| l.scale.max(1));
-        let (x, y) = (over.x.div_euclid(scale), over.y.div_euclid(scale));
+        let scale = kit::look_of::<FolderHost>().map_or(bevel_core::scale::Scale::ONE, |l| l.scale);
+        let (x, y) = (scale.old(over.x), scale.old(over.y));
         if phase == Phase::Leave {
             HOVER.with(|h| h.borrow_mut().remove(&(hwnd as isize)));
             kit::update::<FolderHost>(|h| {
@@ -2187,10 +2187,10 @@ fn ask_drive(owner: HWND, letter: char, node: Option<String>) {
     let picture = art::drive(era, kind.unwrap_or(DriveKind::Floppy));
     let form = DiskBox::new(era, &title, letter, picture, true, |l| look.regular.measure(l));
     let screen = work_area(Some(owner));
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let opened = kit::open_as(Kind::Owned { owner }, DiskBoxHost { form, owner, node }, look, |w, h| {
         let (x, y) = bevel_core::rename_warning::place((rect_w(&screen), rect_h(&screen)), (w, h));
-        (screen.left + x + (7 * scale - 7) / 2, screen.top + y + (17 * scale - 17) / 2)
+        (screen.left + x + (scale.len(7) - 7) / 2, screen.top + y + (scale.len(17) - 17) / 2)
     });
     if opened.is_none() {
         log("folders: the message for a drive without a disk could not open");
@@ -2267,12 +2267,12 @@ fn address_failed() {
             continue;
         }
         let Some((era, look)) = the_look() else { return };
-        let scale = look.scale.max(1);
+        let scale = look.scale;
         let screen = work_area(Some(owner));
-        let form = DiskBox::address(era, &typed, rect_w(&screen) / scale, &look.regular);
+        let form = DiskBox::address(era, &typed, scale.old_fit(rect_w(&screen)), &look.regular);
         let opened = kit::open_as(Kind::Owned { owner }, DiskBoxHost { form, owner, node: None }, look, |w, h| {
             let (x, y) = bevel_core::rename_warning::place((rect_w(&screen), rect_h(&screen)), (w, h));
-            (screen.left + x + (7 * scale - 7) / 2, screen.top + y + (17 * scale - 17) / 2)
+            (screen.left + x + (scale.len(7) - 7) / 2, screen.top + y + (scale.len(17) - 17) / 2)
         });
         if opened.is_none() {
             log("folders: the message for an address that cannot be opened could not open");
@@ -2466,7 +2466,7 @@ fn tree_command(hwnd: HWND, c: D, by_keyboard: bool) {
 
 /// The menu on a tree row (`menu_row`), at `menu_at`.
 fn tree_menu(hwnd: HWND) {
-    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale.max(1)) else { return };
+    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
     let Some((kind, at, era)) = kit::with::<FolderHost, _>(|h| h.form.menu_node().map(|n| (n.kind, h.form.menu_at, h.form.era))).flatten()
     else {
         kit::with::<FolderHost, _>(|h| h.form.menu_row = None);
@@ -3089,7 +3089,7 @@ fn tool(hwnd: HWND, t: Tool) {
 /// dot, under the button's left edge.
 fn views_menu(hwnd: HWND) {
     let Some((_, look)) = the_look() else { return };
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let Some((rows, button)) = kit::with::<FolderHost, _>(|h| (menus::view_choices(&h.form.menu_state(false)), h.form.rect(Part::Tool(Tool::Views)))) else { return };
     let Some(button) = button else { return };
     kit::update::<FolderHost>(|h| h.form.bar.open_list = Some(Tool::Views));
@@ -3117,7 +3117,7 @@ fn places_menu(hwnd: HWND, t: Tool) {
         return views_menu(hwnd);
     }
     let Some((era, look)) = the_look() else { return };
-    let scale = look.scale.max(1);
+    let scale = look.scale;
     let Some((places, button)) = kit::with::<FolderHost, _>(|h| {
         let list = if t == Tool::Back { h.history.back_list() } else { h.history.forward_list() };
         (list, h.form.rect(Part::Tool(t)))
@@ -3461,11 +3461,11 @@ fn pending_work() {
 // Menus.
 
 /// Screen pixels of a point in the window (1×).
-fn to_screen(hwnd: HWND, (x, y): (i32, i32), scale: i32) -> (i32, i32) {
+fn to_screen(hwnd: HWND, (x, y): (i32, i32), scale: bevel_core::scale::Scale) -> (i32, i32) {
     let mut r = RECT::default();
     // SAFETY: our own window; a valid out-pointer.
     unsafe { GetWindowRect(hwnd, &mut r) };
-    (r.left + x * scale, r.top + y * scale)
+    (r.left + scale.at(x), r.top + scale.at(y))
 }
 
 /// Shows a menu of rows (with their submenus) and carries out what is chosen. `at`: where it
@@ -3520,7 +3520,7 @@ fn track_rows(hwnd: HWND, rows: Vec<menus::Row>, at: (i32, i32), above: Option<i
 
 /// The menu bar: title `first`'s menu, then the others as the arrows or the pointer go to them.
 fn menu_bar(hwnd: HWND, first: usize) {
-    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale.max(1)) else { return };
+    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
     let mut title = first;
     // Opened by a click, a menu shows no entry highlighted until the pointer is on one; by a key
     // (Alt+letter, F10, the arrows) its first entry is (Windows' menus; found with real clicks).
@@ -3540,7 +3540,8 @@ fn menu_bar(hwnd: HWND, first: usize) {
         });
         let screen = |r: bevel_core::fb::Rect| {
             let (x, y) = to_screen(hwnd, (r.x, r.y), scale);
-            RECT { left: x, top: y, right: x + r.w * scale, bottom: y + r.h * scale }
+            let (x1, y1) = to_screen(hwnd, (r.right(), r.bottom()), scale);
+            RECT { left: x, top: y, right: x1, bottom: y1 }
         };
         let Some(&(_, anchor)) = rects.iter().find(|(i, _)| *i == title) else { return };
         let others: Vec<(usize, RECT)> = rects.iter().filter(|(i, _)| *i != title).map(|&(i, r)| (i, screen(r))).collect();
@@ -3566,7 +3567,7 @@ fn menu_bar(hwnd: HWND, first: usize) {
                     // A click on another title opens its menu; any other click does what it does.
                     if msg.hwnd == hwnd && msg.message == windows_sys::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN {
                         let (x, y) = point(msg.lParam);
-                        let other = rects.iter().find(|(_, r)| r.contains(x.div_euclid(scale), y.div_euclid(scale))).map(|&(i, _)| i);
+                        let other = rects.iter().find(|(_, r)| r.contains(scale.old(x), scale.old(y))).map(|&(i, _)| i);
                         match other {
                             Some(o) if o != title => {
                                 title = o;
@@ -3610,7 +3611,7 @@ fn reselect(held: &[String]) -> bool {
 
 /// The menu on the selected icons (the desktop's), at `menu_at`.
 fn item_menu(hwnd: HWND) {
-    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale.max(1)) else { return };
+    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
     let Some((kinds, at, era)) = kit::with::<FolderHost, _>(|h| {
         let kinds: Vec<ItemKind> = h.form.view.selection().into_iter().map(|i| ItemKind::of(&h.form.view.items[i])).collect();
         (kinds, h.form.menu_at, h.form.era)
@@ -3650,7 +3651,7 @@ fn item_menu(hwnd: HWND) {
 
 /// The menu of the window's empty area, at `menu_at`.
 fn background_menu(hwnd: HWND) {
-    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale.max(1)) else { return };
+    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
     let Some((rows, at)) = kit::with::<FolderHost, _>(|h| (menus::background_rows(&h.form.menu_state(file_ops::clipboard_has_files())), h.form.menu_at))
     else {
         return;
@@ -3738,17 +3739,17 @@ unsafe extern "system" fn hub_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
                 return 0;
             }
             let Some(look) = kit::scope::<FolderHost, _>(window, kit::look_of::<FolderHost>) else { return 0 };
-            let scale = look.scale.max(1);
+            let scale = look.scale;
             let answer = kit::scope::<FolderHost, _>(window, || {
                 kit::with::<FolderHost, _>(|h| {
                     let v = &h.form.view;
                     if msg == WM_ICON_AT.id() {
-                        let (x, y) = ((lparam & 0xFFFF) as i32 / scale, ((lparam >> 16) & 0xFFFF) as i32 / scale);
+                        let (x, y) = (scale.old((lparam & 0xFFFF) as i32), scale.old(((lparam >> 16) & 0xFFFF) as i32));
                         return v.hit(&look.regular, x, y).map(|i| id_code(&v.items[i].id) as LRESULT);
                     }
                     let i = v.items.iter().position(|it| id_code(&it.id) as LPARAM == lparam)?;
                     let r = v.icon_rect(i);
-                    Some(((r.x + r.w / 2) * scale) as LRESULT | ((((r.y + r.h / 2) * scale) as LRESULT) << 16))
+                    Some(scale.at(r.x + r.w / 2) as LRESULT | ((scale.at(r.y + r.h / 2) as LRESULT) << 16))
                 })
                 .flatten()
             });

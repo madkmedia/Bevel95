@@ -93,8 +93,8 @@ fn place(owner: HWND, w: i32, h: i32) -> (i32, i32) {
     }
     with_app(|app| {
         let (s, m) = (app.scale, app.monitor);
-        let x = (at.left + 33 * s).min(m.right - w).max(m.left);
-        let y = (at.top + 50 * s).min(m.bottom - h).max(m.top);
+        let x = (at.left + s.len(33)).min(m.right - w).max(m.left);
+        let y = (at.top + s.len(50)).min(m.bottom - h).max(m.top);
         (x, y)
     })
     .unwrap_or((at.left, at.top))

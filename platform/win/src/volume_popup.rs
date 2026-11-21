@@ -9,7 +9,7 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 
 use bevel_core::fb::{Framebuffer, Rect};
-use bevel_core::scale::upscale;
+use bevel_core::scale::Scale;
 use bevel_core::volume::{self, Focus, Part, VolumeControl};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{BeginPaint, EndPaint, InvalidateRect, PAINTSTRUCT};
@@ -77,7 +77,7 @@ pub fn open(owner: HWND, at: POINT) {
         return;
     };
     let show_keys = era.always_shows_keys();
-    let (w, h) = (volume::SIZE.0 * scale, volume::SIZE.1 * scale);
+    let (w, h) = (scale.len(volume::SIZE.0), scale.len(volume::SIZE.1));
     let (x, y) = volume::place(era, at.x, at.y, w, h, screen);
     let class = wide(VOLUME_CLASS);
     // SAFETY: a registered class; owned by the bar so it stays above it; the previous
@@ -175,11 +175,11 @@ fn toggle_mute(hwnd: HWND) {
 /// The part of the window under a point (screen pixels from its corner).
 fn part_at(x: i32, y: i32) -> Option<Part> {
     let v = with_open(|o| o.v)?;
-    with_app(|app| volume::part_at(&v, &app.shell_font, x / app.scale, y / app.scale)).flatten()
+    with_app(|app| volume::part_at(&v, &app.shell_font, app.scale.old(x), app.scale.old(y))).flatten()
 }
 
-fn scale() -> i32 {
-    with_app(|app| app.scale).unwrap_or(1)
+fn scale() -> Scale {
+    with_app(|app| app.scale).unwrap_or_default()
 }
 
 fn mouse_down(hwnd: HWND, x: i32, y: i32) {
@@ -189,7 +189,7 @@ fn mouse_down(hwnd: HWND, x: i32, y: i32) {
     let s = scale();
     with_open(|o| match part {
         Part::Thumb => {
-            o.grab = Some(y / s - volume::thumb(o.v.level).y);
+            o.grab = Some(s.old(y) - volume::thumb(o.v.level).y);
             o.v.focus = Focus::Slider;
         }
         Part::Mute => {
@@ -222,7 +222,7 @@ fn mouse_move(hwnd: HWND, x: i32, y: i32) {
         return;
     };
     if let Some(grab) = grab {
-        set_level(hwnd, volume::level_at(y / s - grab));
+        set_level(hwnd, volume::level_at(s.old(y) - grab));
     } else if held == Some(Part::Mute) {
         let inside = part_at(x, y) == Some(Part::Mute);
         if with_open(|o| std::mem::replace(&mut o.v.mute_pressed, inside) != inside) == Some(true) {
@@ -303,7 +303,7 @@ fn paint(hwnd: HWND) {
         with_app(|app| {
             let mut fb = Framebuffer::new(volume::SIZE.0, volume::SIZE.1, 0);
             volume::paint(&mut fb, app.theme, &app.shell_font, &v);
-            let big = upscale(&fb, app.scale);
+            let big = app.scale.enlarge(&fb);
             blit(hdc, &big, big.width);
         });
     }

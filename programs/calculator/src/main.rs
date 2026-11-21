@@ -207,7 +207,7 @@ fn open_stats() {
     kit::update::<Calc>(|calc| calc.form.engine.open_stats());
     let scale = look.scale;
     let work = look::main_screen().0;
-    let place = |w: i32, h: i32| on_screen((work.left + stats::PLACE.0 * scale, work.top + stats::PLACE.1 * scale), w, h);
+    let place = |w: i32, h: i32| on_screen((work.left + scale.at(stats::PLACE.0), work.top + scale.at(stats::PLACE.1)), w, h);
     let kind = Kind::Program { small: Some(stats::icon(era)), big: None };
     if kit::open_as(kind, StatsBox { form: StatsForm::new(era) }, look, place).is_none() {
         log("Calculator: the Statistics Box could not be shown");
@@ -401,7 +401,7 @@ fn open_about(keyboard: bool) {
     // SAFETY: our own window.
     unsafe { GetWindowRect(owner, &mut around) };
     let scale = look.scale;
-    let place = |w: i32, h: i32| on_screen((around.left + 33 * scale, around.top + 74 * scale), w, h);
+    let place = |w: i32, h: i32| on_screen((around.left + scale.at(33), around.top + scale.at(74)), w, h);
     if kit::open_as(Kind::Dialog { owner }, AboutBox { form: about }, look, place).is_none() {
         log("Calculator: About could not be shown");
     }

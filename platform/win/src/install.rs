@@ -329,7 +329,7 @@ fn is_newer(bundle: &Bundle, exe: &Path, installed_bytes: &[u8], installed: &Pat
 fn ask(kind: SetupKind, era: Era, depth: Depth) -> Option<Option<(SetupChoice, Answers)>> {
     bevel_winkit::look::dpi_aware();
     let (screen, dpi) = bevel_winkit::look::main_screen();
-    let look = bevel_winkit::look::for_look(era, depth, scale_for_dpi(dpi)).ok()?;
+    let look = bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi))).ok()?;
     DEPTH.with(|d| d.set(depth));
     let form = SetupWindow::new(Setup::in_look(kind, era), &look.regular);
     ANSWER.with(|a| a.set(None));
@@ -1188,7 +1188,7 @@ fn say_in_look(era: Era, depth: Depth, text: &str) {
     use bevel_winkit::confirm::{self, MessageHost, Place};
     bevel_winkit::look::dpi_aware();
     let (screen, dpi) = bevel_winkit::look::main_screen();
-    let look = match bevel_winkit::look::for_look(era, depth, scale_for_dpi(dpi)) {
+    let look = match bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi))) {
         Ok(look) => look,
         Err(e) => {
             log(&format!("setup: cannot use the look's font ({e}); Windows' message box instead"));

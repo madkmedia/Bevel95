@@ -354,7 +354,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         start: StartOptions::default(),
         era,
         colors: theme.depth,
-        scale: 2,
+        scale: bevel_core::scale::Scale::whole(2),
         start_with_windows: true,
         clock_offset: 300,
         desktop: true,
@@ -460,7 +460,7 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         start: StartOptions::default(),
         era,
         colors: theme.depth,
-        scale: 2,
+        scale: bevel_core::scale::Scale::whole(2),
         start_with_windows: true,
         clock_offset: 300,
         desktop: true,
@@ -975,7 +975,7 @@ fn bar_submenu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: Option<BarEn
     let submenu = match which {
         BarEntry::Theme => bar_menu::theme_menu(era),
         BarEntry::Colors => bar_menu::colors_menu(theme.depth),
-        _ => bar_menu::size_menu(2),
+        _ => bar_menu::size_menu(bevel_core::scale::Scale::whole(2)),
     };
     let (sub, _) = menu_image(theme, fonts, &submenu, MenuStyle::Popup);
     let parent = Rect::new(ox, oy, own_fb.width, own_fb.height);

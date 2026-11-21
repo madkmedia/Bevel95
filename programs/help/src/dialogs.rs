@@ -142,8 +142,8 @@ fn show_finished() {
         on_screen(
             monitor.rcWork,
             (
-                viewer.left + (viewer.right - viewer.left - w) / 2 + dx * scale,
-                viewer.top + (viewer.bottom - viewer.top - h) / 2 + 9 * scale,
+                viewer.left + (viewer.right - viewer.left - w) / 2 + scale.at(dx),
+                viewer.top + (viewer.bottom - viewer.top - h) / 2 + scale.at(9),
             ),
             w,
             h,
@@ -184,8 +184,9 @@ pub(super) fn topics_found(owner: HWND) {
         chooser.show_keys();
     }
     if kit::open_as(Kind::Dialog { owner }, TopicWindow(chooser), look, |w, h| {
-        let x = viewer.left + anchor.x * scale + (anchor.w * scale - w) / 2;
-        let y = viewer.top + anchor.y * scale + (anchor.h * scale - h) / 2;
+        let a = scale.rect(anchor);
+        let x = viewer.left + a.x + (a.w - w) / 2;
+        let y = viewer.top + a.y + (a.h - h) / 2;
         on_screen(monitor.rcWork, (x, y), w, h)
     })
     .is_none()
