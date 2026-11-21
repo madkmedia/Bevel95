@@ -219,6 +219,8 @@ pub struct App {
     bold: Font,
     /// Scale from the settings file; `None` = automatic.
     scale_setting: Option<Scale>,
+    /// How a size between whole numbers is drawn (the "scaling" setting).
+    scaling: bevel_core::scale::Way,
     /// The size in use (a whole number, or a quarter step between: `bevel_core::scale`).
     pub scale: Scale,
     /// The main screen, in screen pixels.
@@ -586,6 +588,7 @@ pub fn run() -> u32 {
             regular,
             bold,
             scale_setting: settings.scale,
+            scaling: settings.scaling,
             scale: Scale::ONE,
             monitor: RECT::default(),
             placed: RECT::default(),
@@ -1886,7 +1889,7 @@ fn reposition(bar: HWND) {
     let Some((height, conceded, scale, options, shown)) = with_app(|app| {
         app.monitor = monitor;
         app.dpi = dpi;
-        app.scale = config::scale_in_force(app.scale_setting, bevel_core::scale::Way::Nearest, dpi);
+        app.scale = config::scale_in_force(app.scale_setting, app.scaling, dpi);
         let height = app.scale.len(app.theme.bar.height);
         let hidden = app.scale.len(HIDDEN_ROWS);
         // A new size or setting: no slide, straight to where the bar should be.
@@ -2107,7 +2110,10 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     if with_app(|app| app.clock_offset != values.clock_offset).unwrap_or(false) {
         set_clock_offset(values.clock_offset);
     }
-    if with_app(|app| app.scale != values.scale).unwrap_or(false) {
+    if with_app(|app| app.scaling != values.scale.way).unwrap_or(false) {
+        set_scaling(bar, values.scale.way);
+    }
+    if with_app(|app| app.scale.quarters() != values.scale.quarters()).unwrap_or(false) {
         set_size(bar, values.scale);
     }
     if with_app(|app| app.era != values.era).unwrap_or(false) {
@@ -2460,6 +2466,21 @@ fn set_size(bar: HWND, scale: Scale) {
     with_app(|app| app.scale_setting = Some(scale));
     save_setting("scale", &scale.label());
     log(&format!("size: {scale}x"));
+    size_changed(bar);
+}
+
+/// Bevel95 Settings: a size between whole numbers is drawn another way from now on, remembered
+/// in settings.txt (at a whole size nothing shows of it).
+fn set_scaling(bar: HWND, way: bevel_core::scale::Way) {
+    with_app(|app| app.scaling = way);
+    save_setting("scaling", way.setting());
+    log(&format!("a size between whole numbers is drawn {} now", way.setting()));
+    size_changed(bar);
+}
+
+/// After a change of the size or of its way of drawing: the bar, its desktop and every program
+/// of Bevel95's take it.
+fn size_changed(bar: HWND) {
     reposition(bar);
     refresh(bar);
     // Bevel95's other programs take the new size too: they read settings.txt again.

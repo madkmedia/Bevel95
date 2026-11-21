@@ -95,6 +95,55 @@ fn the_last_part_pixel_goes_on_from_the_edge() {
     }
 }
 
+/// How long enlarging takes for a window as big as a 2560×1440 screen (a maximized folder
+/// window, the work area 2560×1392) and for the bar (2560 wide), at 1.75 in each way beside
+/// today's 2. The 1× pictures are a golden folder window repeated, so that edges are as many
+/// as in a real window. Run: cargo test -p bevel-core --release --test scaling -- --ignored --nocapture
+#[test]
+#[ignore]
+fn how_long_enlarging_takes() {
+    let golden = read(&Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("golden").join("win98-folder-explorer.png"));
+    let tiled = |w: i32, h: i32| {
+        let mut fb = Framebuffer::new(w, h, 0);
+        for y in 0..h {
+            for x in 0..w {
+                fb.set(x, y, golden.get(x % golden.width, y % golden.height));
+            }
+        }
+        fb
+    };
+    let time = |label: &str, src: &Framebuffer, s: Scale| {
+        let runs = 20;
+        let mut best = f64::MAX;
+        let mut total = 0.0;
+        let mut size = (0, 0);
+        for _ in 0..runs {
+            let t = std::time::Instant::now();
+            let big = s.enlarge(src);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            size = (big.width, big.height);
+            best = best.min(ms);
+            total += ms;
+        }
+        println!("{label:<34} {:>4}x{:<4} -> {:>4}x{:<4}  mean {:>6.2} ms  best {:>6.2} ms", src.width, src.height, size.0, size.1, total / f64::from(runs), best);
+    };
+    let s175 = Scale::from_quarters(7);
+    let window_175 = tiled(s175.old_cover(2560), s175.old_cover(1392));
+    let window_2 = tiled(1280, 696);
+    let bar_175 = tiled(s175.old_cover(2560), 28);
+    let bar_2 = tiled(1280, 28);
+    println!("Maximized folder window (work area 2560x1392):");
+    time("  2 (today, whole pixels)", &window_2, Scale::whole(2));
+    for way in Way::ALL {
+        time(&format!("  1.75 {}", way.setting()), &window_175, s175.with_way(way));
+    }
+    println!("The bar (2560 wide):");
+    time("  2 (today, whole pixels)", &bar_2, Scale::whole(2));
+    for way in Way::ALL {
+        time(&format!("  1.75 {}", way.setting()), &bar_175, s175.with_way(way));
+    }
+}
+
 #[test]
 fn whole_sizes_are_byte_for_byte_as_today() {
     for name in ["dots", "menu"] {

@@ -14,6 +14,9 @@ pub struct Config {
     /// or `None` for automatic: the nearest whole number to the Windows display scale (150% -> 2).
     /// A quarter size is only ever the person's own choice. Use `scale_at` for the size in force.
     pub scale: Option<Scale>,
+    /// How a size between whole numbers is drawn (scaling in settings.txt; Bevel95 Settings,
+    /// General page). A file without the line: even, the default.
+    pub scaling: Way,
     pub options: TaskbarOptions,
     pub start: StartOptions,
     /// How many seconds Bevel95's own clock runs ahead of the PC's (behind if negative): what
@@ -49,7 +52,7 @@ impl Config {
     /// The size in force on a main screen of `dpi` (the automatic size, a whole number, from
     /// it), with the way a quarter size is drawn.
     pub fn scale_at(&self, dpi: u32) -> Scale {
-        scale_in_force(self.scale, Way::Nearest, dpi)
+        scale_in_force(self.scale, self.scaling, dpi)
     }
 
     /// Whether Quick Launch shows in `era` (the look in use, which may differ from `self.era`
@@ -163,6 +166,7 @@ impl Default for Config {
             era: Era::Win95,
             colors: Depth::TrueColor,
             scale: Some(DEFAULT_SCALE),
+            scaling: Way::Even,
             options: TaskbarOptions::default(),
             start: StartOptions::default(),
             clock_offset: 0,
@@ -199,9 +203,15 @@ era = win95
 # screen) or 16 (16 Colors: as on a 16-color screen, a PC without its display driver).
 colors = true
 
-# Size: a whole number (1 = original pixel size, 2 = double, ...), or auto
-# (the whole number nearest your Windows display scale, e.g. 150% -> 2).
+# Size: a number from 1 to 8 in quarter steps (1 = original pixel size, 2 = double, 1.75, 2.25,
+# ...), or auto (the whole number nearest your Windows display scale, e.g. 150% -> 2). Only a whole
+# number is pixel-exact.
 scale = 2
+
+# How a size between whole numbers is drawn: even (every pixel the same size, edges mixed),
+# even-light (the same, edges mixed by light), nearest (sharp, but pixels of uneven sizes) or
+# smooth (ordinary smoothing). A whole size is always drawn exactly.
+scaling = even
 
 # The Taskbar Options of Windows 95: yes or no.
 always_on_top = yes
@@ -349,6 +359,10 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             "quick_search" => match QuickSearch::from_setting(&value) {
                 Some(q) => config.quick_search = q,
                 None => warn("quick_search must be programs or everything"),
+            },
+            "scaling" => match Way::from_setting(&value) {
+                Some(way) => config.scaling = way,
+                None => warn("scaling must be even, even-light, nearest or smooth"),
             },
             "scale" => match value.as_str() {
                 "auto" => config.scale = None,
@@ -542,6 +556,21 @@ mod tests {
         assert_eq!(auto.scale_at(144).quarters(), 8);
         assert_eq!(auto.scale_at(120).quarters(), 4);
         assert_eq!(parse("scale = 2.5\n").0.scale_at(96).quarters(), 10);
+    }
+
+    #[test]
+    fn reads_how_a_quarter_size_is_drawn() {
+        // A file from before the setting: even, the default.
+        assert_eq!(parse("scale = 1.75\n").0.scale_at(96).way, Way::Even);
+        for way in Way::ALL {
+            let c = parse(&with_setting(DEFAULT_FILE, "scaling", way.setting())).0;
+            assert_eq!((c.scaling, c.scale_at(96).way), (way, way));
+        }
+        assert_eq!(parse("scaling = Even-Light\n").0.scaling, Way::EvenLight);
+        let (c, w) = parse("scaling = blurry\n");
+        assert_eq!((c.scaling, w.len()), (Way::Even, 1));
+        // The automatic size carries the way too (it only matters between whole numbers).
+        assert_eq!(parse("scale = auto\nscaling = smooth\n").0.scale_at(144), Scale::whole(2).with_way(Way::Smooth));
     }
 
     #[test]
