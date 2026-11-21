@@ -445,8 +445,14 @@ pub enum RenameEnd {
     Unchanged,
 }
 
-/// What `update` compares: an item's look and place (selected, focus, cell, cut).
-type Look = (bool, bool, (i32, i32), bool);
+/// A number for an item's id (FNV-1a), for `update` to see another item at the same index.
+fn id_code(id: &str) -> u64 {
+    id.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// What `update` compares: an item's look and place (selected, focus, cell, cut) and which item
+/// it is (`id_code`).
+type Look = (bool, bool, (i32, i32), bool, u64);
 /// Every item's `Look`, the selection rectangle, the dragged icons with the pointer's way, and
 /// the label being renamed.
 type Snapshot = (Vec<Look>, Option<Rect>, Option<((i32, i32), Vec<usize>)>, Option<Rename>);
@@ -1628,8 +1634,10 @@ impl Desktop {
 
     /// Each item's look and cell, the band and the dragged pictures, for `update`.
     fn snapshot(&self) -> Snapshot {
+        // Which item stands at each index belongs to its look: Arrange Icons puts other items into
+        // the same cells (the user's report of 2026-11-21: nothing was painted).
         let looks = (0..self.items.len())
-            .map(|i| (self.shows_selected(i, self.active), self.active && self.focus == Some(i), self.cells[i], self.is_cut(i)))
+            .map(|i| (self.shows_selected(i, self.active), self.active && self.focus == Some(i), self.cells[i], self.is_cut(i), id_code(&self.items[i].id)))
             .collect();
         let band = match &self.gesture {
             Some(Gesture::Band { from, to, .. }) => Some(band_rect(*from, *to)),
@@ -2501,6 +2509,203 @@ mod tests {
         assert_eq!(cell_of(&d, "My Computer"), (0, 0));
         assert_eq!(cell_of(&d, "a"), (0, 225));
         assert_eq!(cell_of(&d, "b"), (0, 300));
+    }
+
+    /// A file with Arrange Icons' facts.
+    fn typed(name: &str, type_name: &str, size: u64, modified: u64) -> Item {
+        Item { type_name: type_name.into(), size, modified, ..file(name, false) }
+    }
+
+    /// Four files whose four orders all differ: by name a b c d, by type d c b a (Alpha < Beta <
+    /// Gamma < Omega), by size b d a c, by date (newest first) c a d b.
+    fn four() -> Vec<Item> {
+        vec![typed("a", "Omega", 30, 20), typed("b", "Gamma", 10, 5), typed("c", "Beta", 40, 30), typed("d", "Alpha", 20, 10)]
+    }
+
+    /// The owner's items' names in the order they stand (column by column, from the top).
+    fn standing(d: &Desktop) -> Vec<String> {
+        let mut v: Vec<(i32, i32, String)> =
+            d.files().iter().map(|f| (cell_of(d, &f.name).0, cell_of(d, &f.name).1, f.name.clone())).collect();
+        v.sort();
+        v.into_iter().map(|(.., n)| n).collect()
+    }
+
+    /// Every icon whose cell now shows another item (or the same item elsewhere) is in `dirty`:
+    /// its picture's middle is painted again.
+    fn repainted(before: &[(String, (i32, i32))], d: &Desktop, dirty: &[Rect]) -> bool {
+        (0..d.items.len()).all(|i| {
+            let c = d.cell(i);
+            let was = before.iter().find(|(_, cell)| *cell == (c.x, c.y)).map(|(n, _)| n.as_str());
+            let unchanged = was == Some(d.items[i].name.as_str());
+            unchanged || dirty.iter().any(|r| r.contains(c.x + ICON_X + ICON / 2, c.y + ICON_Y + ICON / 2))
+        })
+    }
+
+    fn cells_now(d: &Desktop) -> Vec<(String, (i32, i32))> {
+        (0..d.items.len()).map(|i| (d.items[i].name.clone(), (d.cell(i).x, d.cell(i).y))).collect()
+    }
+
+    /// The user's report (2026-11-21, "arrange by name, etc." did nothing): with the icons still in
+    /// their first columns, Arrange Icons put the items in the new order, but each column cell
+    /// kept its place, so `update` found every icon's look unchanged and painted nothing. The
+    /// desktop showed the old order until something else painted it (a restart showed the new).
+    #[test]
+    fn arranging_paints_every_icon_that_moved() {
+        let f = font();
+        for frozen in [false, true] {
+            for by in [Arrange::Type, Arrange::Size, Arrange::Date, Arrange::Name] {
+                let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+                d.set_files(four());
+                if frozen {
+                    // A drag of the Recycle Bin a little way down its own column: every other icon
+                    // keeps its cell, and the places are kept from now on.
+                    drag(&mut d, 30, 165, 0, 8);
+                    if by == Arrange::Name {
+                        d.set_arrange(Arrange::Date);
+                    }
+                } else if by == Arrange::Name {
+                    d.set_arrange(Arrange::Size);
+                }
+                let before = cells_now(&d);
+                let (_, dirty) = d.update(&f, |v| v.set_arrange(by));
+                assert_ne!(cells_now(&d), before, "{by:?} frozen {frozen}: something changed");
+                assert!(repainted(&before, &d, &dirty), "{by:?} frozen {frozen}: every changed icon painted, {dirty:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn each_arrangement_puts_the_icons_in_its_order() {
+        let order = |by: Arrange, frozen: bool| {
+            let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+            d.set_files(four());
+            if frozen {
+                drag(&mut d, 30, 240, 400, 100);
+            }
+            d.set_arrange(by);
+            assert_eq!(d.arrangement(), by);
+            assert_eq!(&names(&d)[..3], ["My Computer", "My Documents", "Recycle Bin"], "the look's own icons first");
+            assert_eq!(cell_of(&d, "My Computer"), (0, 0));
+            standing(&d)
+        };
+        for frozen in [false, true] {
+            assert_eq!(order(Arrange::Name, frozen), ["a", "b", "c", "d"]);
+            assert_eq!(order(Arrange::Type, frozen), ["d", "c", "b", "a"]);
+            assert_eq!(order(Arrange::Size, frozen), ["b", "d", "a", "c"]);
+            assert_eq!(order(Arrange::Date, frozen), ["c", "a", "d", "b"]);
+        }
+    }
+
+    #[test]
+    fn arranging_more_icons_than_a_column_holds_fills_the_next_column() {
+        // Seven icons a column: the three of the look, then 4 of 11 files; the rest in the next
+        // columns, by size (the smallest first).
+        let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+        d.set_files((0..11).map(|n| typed(&format!("f{n:02}"), "Text Document", 100 - n, 0)).collect());
+        d.set_arrange(Arrange::Size);
+        assert_eq!(cell_of(&d, "f10"), (0, 225));
+        assert_eq!(cell_of(&d, "f07"), (0, 450));
+        assert_eq!(cell_of(&d, "f06"), (75, 0));
+        assert_eq!(cell_of(&d, "f00"), (75, 450));
+        // After a drag the same: every icon into the columns again.
+        drag(&mut d, 105, 15, 300, 200);
+        d.set_arrange(Arrange::Name);
+        assert_eq!(cell_of(&d, "f00"), (0, 225));
+        assert_eq!(cell_of(&d, "f04"), (75, 0));
+        assert_eq!(cell_of(&d, "f10"), (75, 450));
+    }
+
+    #[test]
+    fn auto_arrange_kept_on_keeps_the_icons_packed() {
+        let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+        d.set_files(four());
+        d.active = true;
+        d.set_auto_arrange(true);
+        assert!(d.auto_arrange());
+        // On before anything moved: the columns as they were.
+        assert_eq!(standing(&d), ["a", "b", "c", "d"]);
+        // A drop far away goes in where it lands, the rest close up: nothing stands apart.
+        drag(&mut d, 30, 240, 400, 100);
+        let packed = |d: &Desktop| (0..d.items.len()).all(|i| d.cell(i).x % CELL == 0 && d.cell(i).y % CELL == 0 && d.cell(i).y < 7 * CELL);
+        assert!(packed(&d));
+        // Arrange Icons with it on: the new order, still packed, and it stays on.
+        d.set_arrange(Arrange::Type);
+        assert!(d.auto_arrange(), "Arrange Icons leaves Auto Arrange on");
+        assert_eq!(standing(&d), ["d", "c", "b", "a"]);
+        assert!(packed(&d));
+        // An item that goes leaves no gap; a new one joins at the end.
+        let mut files = four();
+        files.retain(|f| f.name != "c");
+        d.set_files(files.clone());
+        assert_eq!(standing(&d), ["d", "b", "a"]);
+        assert!(packed(&d));
+        files.push(typed("e", "Alpha", 1, 1));
+        d.set_files(files);
+        assert!(packed(&d));
+        assert_eq!(standing(&d).len(), 4);
+        // Line up Icons has nothing to do: every icon stands on the grid.
+        let before = cells_now(&d);
+        d.line_up();
+        assert_eq!(cells_now(&d), before);
+        // The next run: on, and packed, as left.
+        let text = d.places_text();
+        assert!(text.contains("arrange = type") && text.contains("auto_arrange = yes"), "{text}");
+        let mut e = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+        e.load_places(&text);
+        e.set_files(d.files());
+        assert!(e.auto_arrange());
+        assert_eq!(standing(&e), standing(&d));
+        assert!(packed(&e));
+        // Off again: the icons stay where they stand.
+        let before = cells_now(&e);
+        e.set_auto_arrange(false);
+        assert_eq!(cells_now(&e), before);
+    }
+
+    #[test]
+    fn the_arrangement_is_kept_across_runs_before_anything_moved() {
+        let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+        d.set_files(four());
+        d.set_arrange(Arrange::Date);
+        assert!(d.take_changed(), "saved");
+        let text = d.places_text();
+        assert!(text.contains("arrange = date"));
+        let mut e = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+        e.load_places(&text);
+        e.set_files(four());
+        assert_eq!(standing(&e), ["c", "a", "d", "b"]);
+        // New items join in that order while nothing has moved.
+        let mut files = four();
+        files.push(typed("e", "Alpha", 1, 25));
+        e.set_files(files);
+        assert_eq!(standing(&e), ["c", "e", "a", "d", "b"]);
+    }
+
+    /// What a person sees nothing of (as on Windows): Arrange Icons in the order the icons already
+    /// stand in columns, Line up Icons with every icon on the grid, Auto Arrange switched on while
+    /// they stand packed. Nothing moves, so nothing is painted; only the tick and the saved choice
+    /// change.
+    #[test]
+    fn what_changes_nothing_on_the_screen() {
+        let f = font();
+        let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, 800, 572));
+        d.set_files(four());
+        let before = cells_now(&d);
+        let (_, dirty) = d.update(&f, |v| v.set_arrange(Arrange::Name));
+        assert_eq!(cells_now(&d), before);
+        assert!(dirty.is_empty(), "{dirty:?}");
+        let (_, dirty) = d.update(&f, |v| v.line_up());
+        assert!(dirty.is_empty(), "{dirty:?}");
+        let (_, dirty) = d.update(&f, |v| v.set_auto_arrange(true));
+        assert!(dirty.is_empty(), "{dirty:?}");
+        assert!(d.auto_arrange() && d.take_changed());
+        // The look's own icons alone: Arrange Icons by anything leaves them as they are.
+        let mut d = Desktop::new(Era::Win2000, Rect::new(0, 0, 800, 572));
+        let before = cells_now(&d);
+        for by in Arrange::ALL {
+            d.set_arrange(by);
+            assert_eq!(cells_now(&d), before);
+        }
     }
 
     #[test]

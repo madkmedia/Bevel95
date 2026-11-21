@@ -2748,6 +2748,34 @@ it, but write nothing).
     three places), `lineup` (each test icon onto the nearest grid cell), `auto` on and off again,
     `clean`. desktop.txt did not exist before; it was removed after and the bar restarted, so the
     owner's icons stand in columns as before.
+  - **Arrange Icons painted nothing** (2026-11-21, a user's report: "Auto arrange etc doesn't
+    work on desktop, arrange by name, etc."). The order was right, the screen was not:
+    `Desktop::update` repaints the icons whose look changed, and an icon's look was its
+    selection, focus, cell and cut state, not which item it is. While the icons still stand in
+    their first columns, Arrange Icons by Type, Size or Date puts other items into the same
+    cells, so every look was unchanged and nothing was painted; the desktop showed the old order
+    until something else painted it (a restart showed the new order, as desktop.txt had kept it).
+    After a drag (places kept) the cells that changed were painted and the ones that kept their
+    cell under another item were not, so icons showed twice or not at all. Now the look also
+    holds a number made from the item's id (`id_code`, FNV-1a), so another item at the same index
+    counts as a change. Nothing else was wrong: the four orders, Auto Arrange, Line up Icons and
+    what desktop.txt keeps did what this section says (tests below). The folder windows were
+    never affected: their Arrange Icons repaints the whole window.
+  - **When Arrange Icons shows nothing, as on Windows**: by Name (the first order) while the icons
+    still stand in their first columns; any order when the desktop has only the look's own icons
+    (they keep their own order) or when the person's items already stand in that order (by Type
+    when they are all shortcuts is by name); Line up Icons when every icon is on the grid (always
+    before anything was dragged); Auto Arrange switched on while the icons stand packed (always
+    before anything was dragged: only the tick and desktop.txt change). The three Windows showed
+    nothing either (no sound, no message), so Bevel95 shows nothing (each look stays pure).
+  - Tests: `arranging_paints_every_icon_that_moved` (failed before the repair: "Type frozen false:
+    every changed icon painted, []"), `each_arrangement_puts_the_icons_in_its_order` (four orders,
+    before and after a drag), `arranging_more_icons_than_a_column_holds_fills_the_next_column`,
+    `auto_arrange_kept_on_keeps_the_icons_packed` (a drop, Arrange Icons, items going and coming,
+    Line up, the next run, switched off), `the_arrangement_is_kept_across_runs_before_anything_moved`,
+    `what_changes_nothing_on_the_screen`. Not tried live: Arrange Icons moves every icon of the
+    desktop, the person's own too, and the desktop's test command refuses it for that reason; no
+    second classic desktop can run beside the person's.
 - **Step 2, the menu on an icon (2026-11-12, the owner: "Step 2 on desktop with icon editing is
   fine. I assume the original systems had a verification window?")**. Measured first on all three
   Reference PCs (`private/probes/desktop-menu/k.ps1`, captures `private/reference/refs/vm/<era>-truecolor-item-*`,
