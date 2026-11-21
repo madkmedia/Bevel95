@@ -104,6 +104,9 @@ pub enum Kind {
     /// The menu on a Quick Launch icon, by what the icon is (and whether it is the person's
     /// shortcut): entry i is `quick_launch::icon_entry(shortcut, i)`.
     QuickItem(crate::quick_launch::Target, bool),
+    /// Windows 2000's list of the Quick Launch icons left out (its "»"): entry i starts the icon
+    /// `targets[i]`, by what it is, and only while it is still on the band.
+    QuickList(Vec<crate::quick_launch::Target>),
 }
 
 /// The folder trees that cascade from the Start menu (`App::start_tree`).
@@ -136,6 +139,17 @@ impl Popup {
     pub fn is_start(&self) -> bool {
         matches!(self.kind, Kind::Start)
     }
+
+    /// Windows 2000's Quick Launch list (its "»" is drawn pushed in while it is open).
+    pub fn is_quick_list(&self) -> bool {
+        matches!(self.kind, Kind::QuickList(_))
+    }
+
+    /// A menu whose opening changes how the bar looks (the Start button, the "»"): the bar is
+    /// painted again when it closes.
+    fn shows_on_bar(&self) -> bool {
+        self.is_start() || self.is_quick_list()
+    }
 }
 
 /// Where a root menu opens.
@@ -148,6 +162,8 @@ enum At {
     StartButton(Rect),
     /// Upward from a point (Bevel95's icon on Windows' taskbar: `tray_icon::place_menu`).
     Above(i32, i32),
+    /// Windows 2000's Quick Launch list, above its "»" (screen pixels: `quick_launch::place_list`).
+    Chevron(Rect),
 }
 
 /// Opens the bar's right-click menu for a click at screen point (x, y); `clock`: the click was
@@ -178,6 +194,36 @@ pub fn open_quick_item_menu(bar: HWND, index: usize, x: i32, y: i32) {
     let shortcut = matches!(target, crate::quick_launch::Target::File(_));
     let menu = Menu { show_keys: era.always_shows_keys(), ..bevel_core::quick_launch::icon_menu(shortcut) };
     open_root(bar, Kind::QuickItem(target, shortcut), menu, MenuStyle::Popup, At::Point(x, y));
+}
+
+/// Opens Windows 2000's list of the Quick Launch icons left out, above the band's "»" (a press on
+/// it; brief 70). `all`: every icon of the band instead (only for the leak check of
+/// `bar::WM_QUICK_LAUNCH`, which opens the list also where nothing is left out; it starts nothing).
+pub fn open_quick_list(bar: HWND, all: bool) {
+    let Some((targets, menu, at)) = with_app(|app| {
+        let band = app.quick_band()?;
+        let rows: Vec<usize> = if all { (0..app.ql.items.len()).collect() } else { band.hidden.clone() };
+        if rows.is_empty() {
+            return None;
+        }
+        // Where the list opens: above the "»" (or, for the leak check without one, the band's end).
+        let at = app.on_screen(band.chevron.unwrap_or(Rect::new(band.end_line, band.rect.y, 1, band.rect.h)));
+        let pictures = app.ql.band(app.era, false).icons;
+        let name = |i: usize| app.ql.tooltip(app.era, i).map(|t| t.lines().next().unwrap_or_default().to_string()).unwrap_or_default();
+        let targets: Vec<_> = rows.iter().filter_map(|&i| app.ql.target(i)).collect();
+        let entries = rows.iter().map(|&i| (name(i), pictures.get(i).cloned().flatten())).collect();
+        let all_names: Vec<String> = (0..app.ql.items.len()).map(name).collect();
+        Some((targets, bevel_core::quick_launch::list_menu(entries, &all_names), at))
+    })
+    .flatten() else {
+        return;
+    };
+    open_root(bar, Kind::QuickList(targets), menu, MenuStyle::Cascade, At::Chevron(at));
+}
+
+/// Whether Windows 2000's Quick Launch list is open.
+pub fn quick_list_open() -> bool {
+    with_app(|app| app.menus.first().is_some_and(Popup::is_quick_list)).unwrap_or(false)
 }
 
 /// Opens the list of windows of task button `index`, above the button.
@@ -339,12 +385,13 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
         At::Speaker(era, x, y) => volume::place_menu(era, x, y, w, h, screen),
         At::StartButton(button) => place_start_menu(button, w, h, screen),
         At::Above(x, y) => bevel_core::tray_icon::place_menu(x, y, w, h, screen),
+        At::Chevron(chevron) => bevel_core::quick_launch::place_list(chevron, w, h, screen),
     };
     let rect = Rect::new(left, top, w, h);
     let Some(hwnd) = create(bar, rect, false) else {
         return;
     };
-    let start = matches!(kind, Kind::Start);
+    let start = matches!(kind, Kind::Start | Kind::QuickList(_));
     let popup = Popup { hwnd, kind, menu, style, layout, rect, parent_entry: None, previous, tracking: false };
     with_app(|app| app.menus.push(popup));
     // SAFETY: our own windows.
@@ -352,7 +399,7 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
         ShowWindow(hwnd, SW_SHOW);
         take_focus(hwnd);
         if start {
-            InvalidateRect(bar, null(), 0); // the Start button is drawn pressed now
+            InvalidateRect(bar, null(), 0); // the Start button (or the "»") is drawn pressed now
         }
     }
 }
@@ -550,8 +597,8 @@ pub fn close(give_back_focus: bool) {
         for popup in menus.iter().rev() {
             DestroyWindow(popup.hwnd);
         }
-        if root.is_start() {
-            InvalidateRect(BAR_HWND.load(Ordering::SeqCst) as HWND, null(), 0); // Start pops back up
+        if root.shows_on_bar() {
+            InvalidateRect(BAR_HWND.load(Ordering::SeqCst) as HWND, null(), 0); // Start (or the "»") pops back up
         }
     }
 }
@@ -566,7 +613,7 @@ fn vanish() -> Vec<Popup> {
         // SAFETY: our own windows; the system owns the region from here on.
         unsafe { SetWindowRgn(popup.hwnd, CreateRectRgn(0, 0, 0, 0), 1) };
     }
-    if menus.first().is_some_and(Popup::is_start) {
+    if menus.first().is_some_and(Popup::shows_on_bar) {
         let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
         // SAFETY: our own window, painted now (the program may take a moment to start).
         unsafe {
@@ -753,6 +800,12 @@ fn choose(level: usize, index: usize) {
         }
         Kind::QuickItem(target, shortcut) => match bevel_core::quick_launch::icon_entry(shortcut, index) {
             Some(entry) => Action::QuickItem(target, entry),
+            None => return,
+        },
+        // A row of the list starts the icon it was made for, as the icon's Open does (only while
+        // that icon is still on the band: `bar::quick_item_command`).
+        Kind::QuickList(targets) => match bevel_core::quick_launch::list_choice(&targets, index, |_| true) {
+            Some(target) => Action::QuickItem(target, bevel_core::quick_launch::IconEntry::Open),
             None => return,
         },
     };

@@ -48,7 +48,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::Shell::{ABN_FULLSCREENAPP, ABN_POSCHANGED};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DeregisterShellHookWindow, DestroyWindow, DispatchMessageW,
-    GetCursorPos, GetMessageW, HSHELL_HIGHBIT, HSHELL_REDRAW,
+    GetCursorPos, GetMessageW, HSHELL_HIGHBIT, HSHELL_REDRAW, HTCLIENT, WM_SETCURSOR,
     HSHELL_WINDOWACTIVATED, HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOP,
     HWND_TOPMOST, IDC_ARROW,
     KillTimer, LoadCursorW, MA_NOACTIVATE, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
@@ -145,7 +145,9 @@ pub const WM_TASK_AT: u32 = WM_APP + 16;
 /// True Color).
 pub static WM_BAR_COLORS: Private = Private::new("Bevel95.Bar.Colors");
 /// Quick Launch, for live tests (`tools\dev\postbar.ps1 QuickLaunch 100`): wParam 100 has the
-/// folder read again (the band's Refresh); any other wParam does nothing. It never clicks an icon:
+/// folder read again (the band's Refresh); 101 opens Windows 2000's list of the icons left out
+/// (where none is left out, a list of every icon of the band: the list window's leak check) and
+/// 102 closes it; any other wParam does nothing. It never clicks an icon or a row:
 /// those start the person's real programs and act on their windows, and a test command acts on
 /// test items only (the review before 0.1.2, A1).
 pub static WM_QUICK_LAUNCH: Private = Private::new("Bevel95.Bar.QuickLaunch");
@@ -376,6 +378,17 @@ impl App {
         let b = self.layout.as_ref()?.start;
         let r = self.scale.rect(b);
         Some(Rect::new(self.placed.left + r.x, self.placed.top + r.y, r.w, r.h))
+    }
+
+    /// The Quick Launch band as last laid out (1x), while it shows.
+    pub fn quick_band(&self) -> Option<&bevel_core::quick_launch::Layout> {
+        self.layout.as_ref()?.quick.as_ref()
+    }
+
+    /// A rectangle of the bar (1x) on the screen.
+    pub fn on_screen(&self, r: Rect) -> Rect {
+        let r = self.scale.rect(r);
+        Rect::new(self.placed.left + r.x, self.placed.top + r.y, r.w, r.h)
     }
 
     /// Screen position of task button `index`'s top-left corner (if it is on the row shown).
@@ -1223,6 +1236,118 @@ fn set_quick_hot(bar: HWND, hot: Option<usize>) {
     }
 }
 
+/// What part of the Quick Launch band is under a point in the bar window (screen pixels from its
+/// corner): an icon, an overflow control (98's arrows, 2000's "»"), the grip before the task buttons.
+fn quick_part_at(x: i32, y: i32) -> Option<bevel_core::quick_launch::Part> {
+    with_app(|app| app.layout.as_ref()?.quick.as_ref()?.part_at(app.scale.old(x), app.scale.old(y))).flatten()
+}
+
+/// The overflow control under the pointer is drawn with its ring (`None`: none); repainted when
+/// that changes.
+fn set_quick_hot_control(bar: HWND, hot: Option<bevel_core::quick_launch::Control>) {
+    if with_app(|app| std::mem::replace(&mut app.ql.hot_control, hot) != hot).unwrap_or(false) {
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(bar, null(), 0) };
+    }
+}
+
+/// A press on the Quick Launch band's grip, its arrows or its "»" (brief 70): the grip starts a
+/// drag of the band's width (the bar keeps the mouse until the release); an arrow of Windows 98
+/// scrolls the icons by one at once and stays pushed in until the release; Windows 2000's "»"
+/// opens the list of the icons left out (`list_was_open`: the press closed it, so it only closes).
+/// True when the press was the band's.
+fn press_quick_part(bar: HWND, x: i32, y: i32, list_was_open: bool) -> bool {
+    use bevel_core::quick_launch::{self as ql, Control, Part};
+    match quick_part_at(x, y) {
+        Some(Part::Grip) => {
+            with_app(|app| {
+                let shown = app.layout.as_ref().and_then(|l| l.quick.as_ref()).map_or(0, |b| b.width);
+                app.ql.sizing.press(app.scale.old(x), shown);
+            });
+            // SAFETY: our own window; capture lets us follow the pointer off the bar.
+            unsafe { SetCapture(bar) };
+            // A window holding the mouse gets no WM_SETCURSOR: the drag's pointer is set here.
+            bevel_winkit::pointer::show(bevel_core::kit::Pointer::HeaderDivider);
+            true
+        }
+        Some(Part::Control(c @ (Control::Left | Control::Right))) => {
+            with_app(|app| {
+                let Some(band) = app.layout.as_ref().and_then(|l| l.quick.as_ref()) else {
+                    return;
+                };
+                app.ql.scroll = if c == Control::Left { ql::scroll_left(band.scroll) } else { ql::scroll_right(band.scroll, band.max_scroll) };
+                app.ql.pressed_control = Some(c);
+            });
+            // SAFETY: our own window; capture lets us see the release even off the bar.
+            unsafe {
+                SetCapture(bar);
+                InvalidateRect(bar, null(), 0);
+            }
+            true
+        }
+        Some(Part::Control(Control::Chevron)) => {
+            if !list_was_open {
+                popup::open_quick_list(bar, false);
+            }
+            // SAFETY: our own window.
+            unsafe { InvalidateRect(bar, null(), 0) };
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The pointer moved to `x` while the band's grip is held: the band's end follows it. True while
+/// such a drag lasts.
+fn drag_quick_width(bar: HWND, x: i32) -> bool {
+    let Some(changed) = with_app(|app| {
+        if !app.ql.sizing.dragging() {
+            return None;
+        }
+        let band = app.layout.as_ref().and_then(|l| l.quick.as_ref())?;
+        let (min, max) = (band.min_width, band.max_width);
+        Some(app.ql.sizing.move_to(app.era, app.scale.old(x), min, max))
+    })
+    .flatten() else {
+        return false;
+    };
+    bevel_winkit::pointer::show(bevel_core::kit::Pointer::HeaderDivider);
+    if changed {
+        hide_tip(bar);
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(bar, null(), 0) };
+    }
+    true
+}
+
+/// A drag of the band's grip ends (the release, or the bar lost the mouse): the band keeps the
+/// width reached, and it is remembered (quick-launch.txt) when the drag moved it. True when a
+/// drag was going on.
+fn end_quick_drag(bar: HWND, why: &str) -> bool {
+    let Some(width) = with_app(|app| app.ql.sizing.dragging().then(|| app.ql.sizing.end())).flatten() else {
+        return false;
+    };
+    if let Some(w) = width {
+        let saved = quick_launch::save_width(w);
+        log(&format!("quick launch: the band's grip was dragged ({why}); its width is now {w}{}", if saved { "" } else { " (not saved)" }));
+    }
+    // SAFETY: our own window.
+    unsafe { InvalidateRect(bar, null(), 0) };
+    true
+}
+
+/// The pointer for a point in the bar window (screen pixels from its corner): Windows' two-sided
+/// arrow over the band's grip, its divider pointer while the grip is dragged (resize.md, 1: the
+/// plain left-right arrow while hovering, the split-bar arrow while dragging). `None`: the bar's
+/// own arrow.
+fn quick_pointer(x: i32, y: i32) -> Option<bevel_core::kit::Pointer> {
+    use bevel_core::kit::Pointer;
+    if with_app(|app| app.ql.sizing.dragging()).unwrap_or(false) {
+        return Some(Pointer::HeaderDivider);
+    }
+    (quick_part_at(x, y) == Some(bevel_core::quick_launch::Part::Grip)).then_some(Pointer::SizeWE)
+}
+
 /// A click on the Quick Launch icon `target` (the one pressed, still under the pointer at the
 /// release): what it stands for starts (`quick_launch::start_item`).
 fn click_quick(target: &quick_launch::Target) {
@@ -1394,7 +1519,8 @@ fn show_tip(bar: HWND) {
             Hover::Tray(key) => layout.tray[app.tray_keys.iter().position(|k| *k == key)?],
             // Windows 98's clock tooltip sits 2 rows below the well's top (the reference PC).
             Hover::Clock => Rect::new(layout.clock.x, layout.well.y + 2, layout.clock.w, layout.well.h - 4),
-            Hover::Quick(i) => *layout.quick.as_ref()?.buttons.get(i)?,
+            // An icon cut at the band's edge (98): the part that shows.
+            Hover::Quick(i) => layout.quick.as_ref()?.visible_button(i)?,
         };
         let r = app.scale.rect(r);
         Some((target, Rect::new(app.placed.left + r.x, app.placed.top + r.y, r.w, r.h)))
@@ -2286,7 +2412,7 @@ fn paint_bar(bar: HWND) {
             scroll_pressed: app.scroll_pressed,
             quick_launch: if app.quick_launch_on() {
                 app.ql.refresh(app.era);
-                Some(app.ql.band(app.era))
+                Some(app.ql.band(app.era, app.menus.first().is_some_and(popup::Popup::is_quick_list)))
             } else {
                 None
             },
@@ -2325,9 +2451,10 @@ fn paint_bar(bar: HWND) {
         if moved {
             app.stand_in = Some((app.placed, well));
         }
-        // How many of the band's icons the bar had room for (the others are left out; only the
-        // shortcuts shown get their pictures read).
-        app.ql.shown(layout.quick.as_ref().map(|band| band.buttons.len()));
+        // The band as it was laid out: the pictures wanted, 98's scroll position kept within it,
+        // 2000's band grown by icons arriving (`quick_launch::State::shown`).
+        let era = app.era;
+        app.ql.shown(era, layout.quick.as_ref());
         app.layout = Some(layout);
         (rects, well, moved.then_some(app.placed))
     });
@@ -2822,6 +2949,8 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             // A button's list closes at this press, as a click outside it would; remember
             // whose it was, so that a click on that same button does not open it again.
             let list_open = popup::window_list_open();
+            // The same for Windows 2000's Quick Launch list: a press on its "»" only closes it.
+            let quick_list_was_open = popup::quick_list_open();
             popup::close(false);
             // The bar never takes the focus, so a click on it does not reach the volume
             // control as a click elsewhere would (Windows' own taskbar did take it): it closes
@@ -2840,6 +2969,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 return 0;
             }
             hide_tip(bar);
+            // The band's grip, its arrows, its "»".
+            if press_quick_part(bar, x, y, quick_list_was_open) {
+                return 0;
+            }
             // A Quick Launch icon sinks while held; it acts when the button comes up over it.
             // It is remembered by what it is (`quick_launch::Held`), not only by its place.
             if let Some(i) = quick_at(x, y) {
@@ -2910,8 +3043,16 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             slide(bar, true);
             let (x, y) = point(lparam);
             arm_leave(bar);
+            // The band's grip held: only its drag.
+            if drag_quick_width(bar, x) {
+                return 0;
+            }
             set_hover(bar, hover_at(x, y));
             set_quick_hot(bar, quick_at(x, y));
+            set_quick_hot_control(bar, match quick_part_at(x, y) {
+                Some(bevel_core::quick_launch::Part::Control(c)) => Some(c),
+                _ => None,
+            });
             drag_move(bar, x);
             if let Some(index) = with_app(|app| app.pressed.filter(|_| !app.press.as_ref().is_some_and(|p| p.dragging)))
                 .flatten()
@@ -2924,15 +3065,38 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             return 0;
         }
+        // Over the band's grip, and while it is dragged: the pointer of a band's grip.
+        WM_SETCURSOR if (lparam as u32 & 0xffff) == HTCLIENT => {
+            let at = cursor();
+            if let Some((left, top)) = with_app(|app| (app.placed.left, app.placed.top))
+                && let Some(pointer) = quick_pointer(at.x - left, at.y - top)
+                && bevel_winkit::pointer::show(pointer)
+            {
+                return 1;
+            }
+        }
         WM_MOUSELEAVE => {
             with_app(|app| app.tracking = false);
             set_hover(bar, None);
             set_quick_hot(bar, None);
+            set_quick_hot_control(bar, None);
             return 0;
         }
         WM_LBUTTONUP => {
             let (x, y) = point(lparam);
             if release_tray(bar, tray::Button::Left, x, y) {
+                return 0;
+            }
+            // The band's grip: the drag ends, the width is remembered; then the mouse goes back.
+            if end_quick_drag(bar, "released") {
+                give_back_mouse(bar);
+                return 0;
+            }
+            // A 98 arrow pops back up (it scrolled at the press).
+            if with_app(|app| app.ql.pressed_control.take()).flatten().is_some() {
+                give_back_mouse(bar);
+                // SAFETY: our own window.
+                unsafe { InvalidateRect(bar, null(), 0) };
                 return 0;
             }
             // A Quick Launch icon held down: the mouse goes back whatever happened to the band
@@ -2986,6 +3150,13 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 0;
         }
         WM_CAPTURECHANGED => {
+            // A drag of the band's grip that loses the mouse ends where it is; the band keeps
+            // that width. An arrow held down pops back up.
+            end_quick_drag(bar, "the bar lost the mouse");
+            if with_app(|app| app.ql.pressed_control.take()).flatten().is_some() {
+                // SAFETY: our own window.
+                unsafe { InvalidateRect(bar, null(), 0) };
+            }
             // A drag that loses the mouse (another window took it) puts its button back.
             let (held, dragged) = with_app(|app| {
                 app.tray_pressed = None;
@@ -3093,8 +3264,13 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 0;
         }
         m if m == WM_QUICK_LAUNCH.id() => {
-            if wparam == 100 {
-                quick_launch::read_again();
+            match wparam {
+                100 => quick_launch::read_again(),
+                // The leak check of Windows 2000's list (brief 70): open it (every icon of the band
+                // where none is left out), and close it again. Neither starts anything.
+                101 => popup::open_quick_list(bar, true),
+                102 if popup::quick_list_open() => popup::close(true),
+                _ => {}
             }
             return 0;
         }

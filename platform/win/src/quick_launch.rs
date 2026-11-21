@@ -2,8 +2,9 @@
 //! shortcuts, read from Windows' own Quick Launch folder on a thread of its own (never on the bar's)
 //! and read again when the folder changes; the browser and mail program Windows has registered;
 //! what a click on each icon starts; Windows' own Show Desktop; the built-in icons taken off the
-//! band (`quick-launch.txt`). The band's layout, painting and rules are the core's
-//! (`bevel_core::quick_launch`).
+//! band and the band's width when the person dragged it (`quick-launch.txt`; the width is read at
+//! the bar's start and kept by the bar, which alone writes it). The band's layout, painting and
+//! rules are the core's (`bevel_core::quick_launch`).
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use bevel_core::fb::Icon;
-use bevel_core::quick_launch::{self, Band, Builtin, FolderEntry, Held, Item};
+use bevel_core::quick_launch::{self, Band, Builtin, Control, FolderEntry, Held, Item};
 use bevel_core::theme::Era;
 use bevel_winkit::state_file;
 use windows_sys::Win32::Foundation::HWND;
@@ -359,10 +360,18 @@ pub struct State {
     pub items: Vec<Item>,
     pub hot: Option<usize>,
     pub held: Option<Held<Target>>,
+    /// The band's width as the person set it (kept in quick-launch.txt) and a drag of its grip.
+    pub sizing: quick_launch::Sizing,
+    /// Windows 98's scroll position (not kept between runs).
+    pub scroll: i32,
+    /// The overflow control under the pointer, and the one held down (98's arrows).
+    pub hot_control: Option<Control>,
+    pub pressed_control: Option<Control>,
     /// What the log said last: whether there was a browser and a mail program.
     logged_programs: Option<(bool, bool)>,
-    /// How many icons the bar had room for at the last paint, as the log said last.
-    logged_narrow: Option<usize>,
+    /// How many icons the band showed whole at the last paint and how many it has, as the log
+    /// said last.
+    logged_shown: Option<(usize, usize)>,
 }
 
 impl State {
@@ -371,7 +380,8 @@ impl State {
     /// bar's thread, where a program on an unreachable network place would hold up the bar's
     /// start: the review before 0.1.2, B5), so their icons join the band a moment after it shows.
     pub fn new(setting: Option<bool>) -> State {
-        State { setting, removed: load_removed(), ..State::default() }
+        let saved = load_state();
+        State { setting, removed: saved.removed, sizing: quick_launch::Sizing::new(saved.width), ..State::default() }
     }
 
     pub fn on(&self, era: Era) -> bool {
@@ -409,28 +419,48 @@ impl State {
         self.items = items;
     }
 
-    /// After a paint: the bar had room for `shown` of the band's icons (`quick_launch::fitting`:
-    /// the task area keeps room for one whole task button and its arrows); the others are left
-    /// out, and the log says how many, once per change.
-    /// `None`: the band is off (no picture is wanted).
-    pub fn shown(&mut self, shown: Option<usize>) {
-        let Some(shown) = shown else {
+    /// After a paint in `era`, with the band laid out as `band` (`None`: the band is off, and no
+    /// picture is wanted): pictures are read for the icons that can be seen or reached, the scroll
+    /// position is kept within the band, Windows 2000's band grown by icons arriving keeps that
+    /// width (`quick_launch::grown`, saved), and the log says, once per change, how many icons
+    /// show whole.
+    pub fn shown(&mut self, era: Era, band: Option<&quick_launch::Layout>) {
+        let Some(band) = band else {
             want_pictures(0);
             return;
         };
-        // Only the shortcuts shown get their pictures read.
-        want_pictures(self.items.iter().take(shown).filter(|i| matches!(i, Item::Shortcut(_))).count());
-        let narrow = self.items.len().saturating_sub(shown);
-        if self.logged_narrow != Some(narrow) {
-            self.logged_narrow = Some(narrow);
-            if narrow > 0 {
-                log(&format!("quick launch: the bar has room for {shown} icons; {narrow} more are left out"));
+        // Pictures for every icon up to `PICTURES_ALWAYS` (more than any band holds), and beyond
+        // that for those up to a few past the last one that can be seen (98 scrolls one at a time).
+        let last_seen = (0..band.buttons.len()).rev().find(|&i| band.visible_button(i).is_some()).map_or(0, |i| i + 1);
+        let upto = self.items.len().min(PICTURES_ALWAYS.max(last_seen + PICTURES_AHEAD));
+        want_pictures(self.items.iter().take(upto).filter(|i| matches!(i, Item::Shortcut(_))).count());
+        self.scroll = band.scroll;
+        if !self.sizing.dragging()
+            && let Some(w) = quick_launch::grown(era, self.items.len(), self.sizing.kept)
+        {
+            self.sizing.kept = Some(w);
+            log(&format!("quick launch: icons arrived; the band grew to its narrowest with icons left out ({w})"));
+            save_width(w);
+        }
+        let whole = (0..band.buttons.len()).filter(|&i| band.visible_button(i).is_some_and(|r| r.w == quick_launch::BUTTON_W)).count();
+        let counts = (whole, self.items.len());
+        if self.logged_shown != Some(counts) {
+            self.logged_shown = Some(counts);
+            if whole < self.items.len() {
+                let how = if band.chevron.is_some() {
+                    "the others are in its \u{bb} list"
+                } else if band.right.is_some() || band.left.is_some() {
+                    "the others are reached by its arrows"
+                } else {
+                    "the bar has no room for the others"
+                };
+                log(&format!("quick launch: the band shows {whole} of its {} icons whole; {how}", self.items.len()));
             }
         }
     }
 
-    /// What the band shows in `era`.
-    pub fn band(&self, era: Era) -> Band {
+    /// What the band shows in `era` (`list_open`: Windows 2000's list of the icons left out is open).
+    pub fn band(&self, era: Era, list_open: bool) -> Band {
         let icons = self
             .items
             .iter()
@@ -440,7 +470,16 @@ impl State {
             })
             .collect();
         let pressed = self.held.as_ref().and_then(|h| h.sunk(|i| self.target(i)));
-        Band { icons, hot: self.hot, pressed, ..Band::default() }
+        Band {
+            icons,
+            hot: self.hot,
+            pressed,
+            width: self.sizing.kept,
+            scroll: self.scroll,
+            hot_control: self.hot_control,
+            pressed_control: self.pressed_control,
+            list_open,
+        }
     }
 
     /// What icon `index` is.
@@ -469,14 +508,42 @@ fn state_path() -> PathBuf {
     data_dir().join("quick-launch.txt")
 }
 
-/// The built-in icons taken off the band, from quick-launch.txt (none while it is missing; a file
-/// that cannot be read is kept as it is, and saves are skipped: `state_file::load`).
-pub fn load_removed() -> Vec<Builtin> {
+/// What quick-launch.txt keeps (nothing while it is missing; a file that cannot be read is kept as
+/// it is, and saves are skipped: `state_file::load`).
+pub fn load_state() -> quick_launch::Saved {
     match state_file::load(&state_path()) {
-        state_file::Read::Text(text) => quick_launch::parse_removed(&text),
-        _ => Vec::new(),
+        state_file::Read::Text(text) => quick_launch::parse_state(&text),
+        _ => quick_launch::Saved::default(),
     }
 }
+
+/// The built-in icons taken off the band, from quick-launch.txt.
+pub fn load_removed() -> Vec<Builtin> {
+    load_state().removed
+}
+
+/// Remembers the band's width (`width`, from its first etched line to its last, 1x) in
+/// quick-launch.txt, as it is now with the width changed (the icons taken off kept). False when the
+/// save was refused or failed (logged).
+pub fn save_width(width: i32) -> bool {
+    let path = state_path();
+    let with_width = |text: &str| quick_launch::state_text(&quick_launch::Saved { width: Some(width), ..quick_launch::parse_state(text) });
+    match state_file::change(&path, "", with_width) {
+        Ok(()) => true,
+        Err(e) => {
+            if !state_file::already_logged(&e) {
+                log(&format!("could not save the Quick Launch band's width to {}: {e}", crate::log::path_kind(&path)));
+            }
+            false
+        }
+    }
+}
+
+/// Pictures are read for every icon up to this many, and beyond that for those up to this many
+/// past the last one that can be seen (`State::shown`; the review before 0.1.2, C3: never for
+/// every file of a big folder).
+const PICTURES_ALWAYS: usize = 64;
+const PICTURES_AHEAD: usize = 8;
 
 /// quick-launch.txt's size and time of change (None: it is not there, or cannot be looked at).
 fn removed_stamp() -> Option<(u64, u64)> {
@@ -526,12 +593,8 @@ pub fn put_back_all() {
 pub fn save_removed(removed: &[Builtin]) -> bool {
     let path = state_path();
     // The band's width the file holds is kept as it is.
-    let width = match state_file::load(&path) {
-        state_file::Read::Text(text) => quick_launch::parse_state(&text).width,
-        _ => None,
-    };
-    let saved = quick_launch::Saved { removed: removed.to_vec(), width };
-    match state_file::save(&path, &quick_launch::state_text(&saved)) {
+    let with_removed = |text: &str| quick_launch::state_text(&quick_launch::Saved { removed: removed.to_vec(), ..quick_launch::parse_state(text) });
+    match state_file::change(&path, "", with_removed) {
         Ok(()) => true,
         Err(e) => {
             if !state_file::already_logged(&e) {
@@ -786,6 +849,24 @@ mod tests {
         std::fs::remove_file(&target).unwrap();
         assert_eq!(file_identity(&link), Identity::Known(id), "a link whose target went is still there");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The band's width and the built-in icons taken off share quick-launch.txt (in the tests'
+    /// scratch data folder): saving one keeps the other; nonsense in the file is no width.
+    #[test]
+    fn the_width_and_the_icons_taken_off_share_their_file() {
+        let path = state_path();
+        assert!(!crate::log::data_dir().to_string_lossy().contains("AppData\\Local\\Bevel95"), "a scratch data folder");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(load_state(), quick_launch::Saved::default());
+        assert!(save_width(140));
+        assert!(save_removed(&[Builtin::ShowDesktop]));
+        assert_eq!(load_state(), quick_launch::Saved { removed: vec![Builtin::ShowDesktop], width: Some(140) });
+        assert!(save_width(150));
+        assert_eq!(load_state(), quick_launch::Saved { removed: vec![Builtin::ShowDesktop], width: Some(150) });
+        std::fs::write(&path, "width = very wide\r\nshow-desktop\r\n").unwrap();
+        assert_eq!(load_state(), quick_launch::Saved { removed: vec![Builtin::ShowDesktop], width: None });
+        let _ = std::fs::remove_file(&path);
     }
 
     /// What Yes does in every case.
