@@ -511,11 +511,19 @@ pub fn take_off(builtin: Builtin) -> Vec<Builtin> {
 }
 
 /// Quick Launch switched on again: every built-in icon comes back (the way back after Delete).
-/// Only writes quick-launch.txt when it names an icon taken off.
+/// Only writes quick-launch.txt when it names an icon taken off; says what really happened, as
+/// `take_off` does: the icons come back only when the file was saved (the band follows the file).
 pub fn put_back_all() {
-    if !load_removed().is_empty() {
-        save_removed(&[]);
-        log("quick launch: switched on again; every built-in icon is back on the band");
+    let removed = load_removed();
+    if !removed.is_empty() {
+        if save_removed(&[]) {
+            log(&format!("quick launch: switched on again; the {} built-in icon(s) taken off are back on the band", removed.len()));
+        } else {
+            log(&format!(
+                "quick launch: switched on again, but quick-launch.txt was not saved, so the {} built-in icon(s) taken off stay off",
+                removed.len()
+            ));
+        }
     }
     read_again();
 }

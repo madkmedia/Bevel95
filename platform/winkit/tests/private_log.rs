@@ -29,7 +29,21 @@ const FORBIDDEN: &[(&str, &str)] = &[
     (".name,", "a program's, document's or network's name"),
     ("doc.name", "a document's name"),
     ("{target}", "a program or document"),
+    // An icon's or item's id is a file's whole path unless it is one of the look's own icons
+    // ("::my-computer"); found 2026-11-21 in the desktop's "opening {id}" lines, which only an
+    // `if id.starts_with("::")` before them kept from naming a file (log it by its kind).
+    ("{id}", "an item's id, a path (use log::path_kind)"),
+    ("{id:", "an item's id, a path (use log::path_kind)"),
+    (".id)", "an item's id, a path (use log::path_kind)"),
+    (".id,", "an item's id, a path (use log::path_kind)"),
+    ("{folder}", "a folder's path (use log::path_kind)"),
+    ("{file}", "a file's path or name (use log::path_kind)"),
 ];
+
+/// The forbidden patterns `call` contains, with why.
+fn forbidden_in(call: &str) -> Vec<(&'static str, &'static str)> {
+    FORBIDDEN.iter().copied().filter(|(pattern, _)| call.contains(pattern)).collect()
+}
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
@@ -112,10 +126,8 @@ fn log_calls_carry_no_private_text() {
         };
         for (line, call) in log_calls(source) {
             calls += 1;
-            for (pattern, what) in FORBIDDEN {
-                if call.contains(pattern) {
-                    found.push(format!("{}:{line}: {what} (`{pattern}`) in {call}", file.display()));
-                }
+            for (pattern, what) in forbidden_in(&call) {
+                found.push(format!("{}:{line}: {what} (`{pattern}`) in {call}", file.display()));
             }
         }
     }
@@ -127,4 +139,23 @@ fn log_calls_carry_no_private_text() {
 fn the_reader_finds_calls_and_their_arguments() {
     let calls = log_calls("fn log(text: &str) {}\n    log(&format!(\"Run: {text}\", f(x)));\n    catalog(1);\n");
     assert_eq!(calls, [(2, "log(&format!(\"Run: {text}\", f(x)))".to_string())]);
+}
+
+/// The lines found on 2026-11-21 would now be refused, however they are written; what replaced
+/// them passes.
+#[test]
+fn an_items_id_is_refused() {
+    for line in [
+        "        log(&format!(\"desktop: opening {id}\"));\n",
+        "        log(&format!(\"desktop: opening {id} in a folder window\"));\n",
+        "        log(&format!(\"desktop: opening {id:?}\"));\n",
+        "        log(&format!(\"desktop: opening {}\", item.id));\n",
+        "        log(&format!(\"desktop: opening {} ({n})\", t.id, n = 1));\n",
+    ] {
+        let calls = log_calls(line);
+        assert_eq!(calls.len(), 1, "{line}");
+        assert!(!forbidden_in(&calls[0].1).is_empty(), "not refused: {line}");
+    }
+    let calls = log_calls("        log(&format!(\"desktop: opening {} in a folder window\", item_kind(id)));\n");
+    assert!(forbidden_in(&calls[0].1).is_empty());
 }

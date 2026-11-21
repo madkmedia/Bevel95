@@ -1140,9 +1140,7 @@ pub fn open_item(id: String) {
             },
             _ => id.clone(),
         };
-        if id.starts_with("::") {
-            log(&format!("desktop: opening {id}"));
-        }
+        log(&format!("desktop: opening {}", item_kind(&id)));
         let file = crate::util::wide(&target);
         // One of a portable copy's own programs is told where its data is (`log::flag_for`).
         let flag = crate::log::flag_for(std::path::Path::new(&target)).map(crate::util::wide);
@@ -1153,12 +1151,24 @@ pub fn open_item(id: String) {
             windows_sys::Win32::UI::Shell::ShellExecuteW(null_mut(), null(), file.as_ptr(), params, null(), windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL)
         };
         if result as usize <= 32 {
-            let what = if id.starts_with("::") { id.as_str() } else { "an item of the owner's" };
-            log(&format!("desktop: could not open {what} (ShellExecute error {})", result as usize));
+            log(&format!("desktop: could not open {} (ShellExecute error {})", item_kind(&id), result as usize));
         }
     });
     if let Err(e) = spawned {
         log(&format!("desktop: could not start opening an icon: {e}"));
+    }
+}
+
+/// What an icon's `id` is, as the log may show it (decisions.md, "No private text in the log"):
+/// the look's own icons by their fixed names, anything else (a path with the person's file or
+/// folder name) by its kind only (`log::path_kind`: "a folder", "a .txt file").
+fn item_kind(id: &str) -> String {
+    match id {
+        "::my-computer" => String::from("My Computer"),
+        "::my-documents" => String::from("My Documents"),
+        "::recycle-bin" => String::from("the Recycle Bin"),
+        _ if id.starts_with("::") => String::from("one of the desktop's own icons"),
+        _ => crate::log::path_kind(std::path::Path::new(id)),
     }
 }
 
@@ -1174,9 +1184,7 @@ fn open_in_folder_window(id: &str) -> bool {
     // A portable copy's folder windows are told where their data is (`log::flag_for`).
     match std::process::Command::new(&exe).arg(id).args(crate::log::flag_for(&exe)).spawn() {
         Ok(_) => {
-            if id.starts_with("::") {
-                log(&format!("desktop: opening {id} in a folder window"));
-            }
+            log(&format!("desktop: opening {} in a folder window", item_kind(id)));
             true
         }
         Err(e) => {
@@ -2152,6 +2160,25 @@ mod tests {
             remember_targets(Vec::new());
         }
         assert!(targets_of(cut).is_empty());
+    }
+
+    /// The log names an opened icon by its kind only, never by its path (decisions.md, "No
+    /// private text in the log").
+    #[test]
+    fn an_opened_icon_is_logged_by_its_kind_only() {
+        use super::item_kind;
+        assert_eq!(item_kind("::my-computer"), "My Computer");
+        assert_eq!(item_kind("::my-documents"), "My Documents");
+        assert_eq!(item_kind("::recycle-bin"), "the Recycle Bin");
+        assert_eq!(item_kind("::something-new"), "one of the desktop's own icons");
+        let file = item_kind(r"C:\Users\Someone\Desktop\Private letter.txt");
+        assert_eq!(file, "a .txt file");
+        let dir = std::env::temp_dir();
+        let shown = item_kind(&dir.to_string_lossy());
+        assert_eq!(shown, "a folder");
+        for word in ["Someone", "Private", "letter", "Desktop"] {
+            assert!(!file.contains(word) && !shown.contains(word), "{word} in {file:?} / {shown:?}");
+        }
     }
 
     #[test]

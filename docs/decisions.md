@@ -228,6 +228,15 @@ it, but write nothing).
   programs for the patterns taken out (a test of the sources, not of types: a log call takes a
   `&str`, and wrapping every call in a type would be a large change for the same guard). The
   first line of every start says the version and build ("Groundwork for sharing" below).
+  **An item's id** (2026-11-21, before 0.1.2): the classic desktop's "desktop: opening {id}" and
+  "... in a folder window" wrote an icon's id, which is a file's whole path unless it is one of
+  the look's own icons (`::my-computer`). Only an `if id.starts_with("::")` before each kept a
+  path out, so no file name had reached a log, but the guard did not know the pattern (`{id}`
+  was not among its words). Now the desktop logs every opened icon by its kind
+  (`desktop::item_kind`: My Computer, My Documents, the Recycle Bin, else `path_kind`), and the
+  guard refuses `{id}`, `{id:`, `.id)`, `.id,`, `{folder}` and `{file}` in any log call
+  (`an_items_id_is_refused` holds the old lines). Every other log call of the bar, winkit and
+  the programs was read for the same pattern; none other carried a path or a person's name.
 - **Window resources in the log** (2026-11-13, after a morning when Windows' shared pool for
   windows, the desktop heap, ran out: another program's doing by Windows' System log; Explorer
   crashed and Bevel95 was refused windows). The bar's tick calls
@@ -5210,7 +5219,9 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   `confirm::tests::an_askers_question_closed_by_its_program_does_nothing` (the action dropped, a
   late Yes does nothing, another kind of question stays). The log line for a built-in icon taken
   off says "taken off the band" only when quick-launch.txt was saved; when the save was refused it
-  says the icon is off for now only and comes back at the next reading.
+  says the icon is off for now only and comes back at the next reading. Likewise the way back
+  (`put_back_all`, 2026-11-21) says how many built-in icons are back only when quick-launch.txt
+  was saved; when the save failed it says they stay off (the band follows the file).
 - **The bar without the band** (step 6, its own commit, after steps 1 to 5 had proved with
   unchanged golden pictures that nothing else moved): Windows 98's and 2000's bar with Quick Launch
   off was not what Bevel95 drew. The captures `<pc>-truecolor-ql-off-0`, `-1`, `-6` show that the
