@@ -108,7 +108,11 @@ pub fn bar_with(
 ) -> BarLayout {
     let start = start_button(theme, fonts);
     let w = tray_well(theme, fonts, width, tray_count, number, clock, widest);
-    let quick = quick.map(|n| quick_launch::layout(theme.era, start, w.well, n, theme.bar.item_y(), theme.bar.item_h()));
+    // Only as many icons as leave the task area room for one whole task button and its arrows.
+    let quick = quick.map(|n| {
+        let n = quick_launch::fitting(theme.era, start, w.well, n, &theme.task);
+        quick_launch::layout(theme.era, start, w.well, n, theme.bar.item_y(), theme.bar.item_h())
+    });
     let task_band = if quick.is_none() { quick_launch::task_band(theme.era, start, w.well) } else { None };
     let (tasks, first_task, scroll) = match (&quick, &task_band) {
         (Some(band), _) => task_buttons_in(theme, band.rect.right(), band.tasks_right, task_count, row),
@@ -223,9 +227,12 @@ pub fn task_buttons(
     task_buttons_in(theme, left, right, count, row)
 }
 
-/// `task_buttons` in the space from `left` to `right`.
+/// `task_buttons` in the space from `left` to `right`. A space narrower than nothing (a bar too
+/// narrow for its parts) counts as empty, and the arrows never start left of it: no width is ever
+/// negative (the review before 0.1.2, B3).
 fn task_buttons_in(theme: &Theme, left: i32, right: i32, count: usize, row: usize) -> (Vec<Rect>, usize, Option<TaskScroll>) {
     let t = &theme.task;
+    let right = right.max(left);
     let (y, h) = (theme.bar.item_y(), theme.bar.item_h());
     let button = |i: usize, slot: i32| Rect::new(left + i as i32 * slot, y, slot - t.spacing, h);
     if count == 0 {
@@ -234,7 +241,8 @@ fn task_buttons_in(theme: &Theme, left: i32, right: i32, count: usize, row: usiz
     if let Some(slot) = slot_width(t, right - left, count) {
         return ((0..count).map(|i| button(i, slot)).collect(), 0, None);
     }
-    let arrows_x = right - t.scroll_w;
+    let arrows_x = (right - t.scroll_w).max(left);
+    let arrows_w = right - arrows_x;
     let slot = t.min_width + t.spacing;
     let per_row = (((arrows_x - left) / slot).max(1)) as usize;
     let rows = count.div_ceil(per_row);
@@ -243,8 +251,8 @@ fn task_buttons_in(theme: &Theme, left: i32, right: i32, count: usize, row: usiz
     let shown = per_row.min(count - first);
     let up_h = h / 2;
     let scroll = TaskScroll {
-        up: Rect::new(arrows_x, y, t.scroll_w, up_h),
-        down: Rect::new(arrows_x, y + up_h, t.scroll_w, h - up_h),
+        up: Rect::new(arrows_x, y, arrows_w, up_h),
+        down: Rect::new(arrows_x, y + up_h, arrows_w, h - up_h),
         row,
         rows,
         per_row,
@@ -379,6 +387,61 @@ mod tests {
         let screen = Rect::new(-100, 0, 200, 100);
         assert_eq!(place_popup(-95, 10, 50, 120, screen), (-95, 0));
         assert_eq!(place_popup(0, 0, 500, 20, screen), (-100, 0));
+    }
+
+    /// The review before 0.1.2, B3: the band shows only as many icons as leave the task area room
+    /// for one task button at the look's full width plus its scroll arrows; no width is negative.
+    #[test]
+    fn a_narrow_bar_keeps_room_for_a_task_button() {
+        use crate::theme::{Depth, Era, theme_in};
+        let font = crate::text::ms_sans_serif();
+        let fonts = Fonts { regular: font, bold: font };
+        let theme = theme_in(Era::Win98, Depth::TrueColor);
+        let t = &theme.task;
+        let need = t.width + t.spacing + t.scroll_w;
+        let sane = |l: &BarLayout| {
+            let band = l.quick.as_ref().expect("the band");
+            assert!(band.rect.w >= 0 && band.tasks_right >= band.rect.right(), "{band:?}");
+            for r in &l.tasks {
+                assert!(r.w > 0 && r.x >= band.rect.right(), "{r:?} inside the band");
+            }
+            if let Some(s) = l.scroll {
+                assert!(s.up.w >= 0 && s.up.x >= band.rect.right(), "the arrows inside the band: {s:?}");
+                assert!(s.up.right() <= band.tasks_right, "the arrows over the notification area: {s:?}");
+            }
+        };
+        // The reviewer's case: the 98 look, 10 icons (the 4 built-in ones and 6 shortcuts), Size 3
+        // on a 1280-wide screen (427 pixels at 1x), six windows, two notification icons.
+        let l = bar_with(theme, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        sane(&l);
+        let band = l.quick.as_ref().unwrap();
+        let shown = band.buttons.len();
+        // Two of the ten: the task area keeps 194 (one button and its arrows need 160 + 3 + 16).
+        assert_eq!(shown, 2, "{shown} icons on a 427-wide bar");
+        let room = band.tasks_right - band.rect.right();
+        assert!(room >= need, "the task area keeps {room}, one button and its arrows need {need}");
+        assert!(room - quick_launch::BUTTON_W < need, "one more icon would have fitted ({room})");
+        // With one window it gets the look's full width.
+        let one = bar_with(theme, &fonts, 1280 / 3, 1, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        assert_eq!(one.tasks[0].w, t.width);
+        // With twenty, the rows' arrows sit at the task area's end, right of the band.
+        let many = bar_with(theme, &fonts, 1280 / 3, 20, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        sane(&many);
+        assert!(many.scroll.is_some());
+        // Fewer icons than fit: all shown, the layout as before.
+        let l = bar_with(theme, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(2));
+        assert_eq!(l.quick.as_ref().unwrap().buttons.len(), 2);
+        sane(&l);
+        // A wide bar: all ten.
+        let l = bar_with(theme, &fonts, 1280, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        assert_eq!(l.quick.as_ref().unwrap().buttons.len(), 10);
+        // A bar so narrow that no icon fits: the band keeps its lines and grips, no icon, and
+        // nothing has a negative width; the arrows stay inside the task area.
+        for width in [300, 250, 200, 120, 60] {
+            let l = bar_with(theme, &fonts, width, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+            assert_eq!(l.quick.as_ref().unwrap().buttons.len(), 0, "width {width}");
+            sane(&l);
+        }
     }
 
     #[test]

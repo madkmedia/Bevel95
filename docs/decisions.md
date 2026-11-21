@@ -5020,7 +5020,16 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   Windows' own `Shows Desktop.lnk` and `Window Switcher.lnk`, `desktop.ini`, hidden and system
   files and every folder (`quick_launch::shown_files`), each with the shell's 16×16 picture
   (`start_menu::file_icon`). At most 10 icons (`MAX_ICONS`); more are left out and the log says
-  how many. The 95 look takes 95's own pictures: its globe (SHELL32 group 14, the Internet picture
+  how many. **On a narrow bar** (a big Size on a small screen, or many icons; the review before
+  0.1.2, B3: the band took the whole bar, the task buttons ended under the notification area and
+  the scroll arrows inside the band) the band shows only as many icons as leave the task area room
+  for one task button at the look's full width plus its scroll arrows (`quick_launch::fitting`,
+  used by `layout::bar_with`); the rest are left out, the log saying how many once per change
+  (`quick_launch::State::shown`). A bar too narrow even for that shows the band with no icon; the
+  task area and the arrows never get a negative width and the arrows never start left of the task
+  area (`layout::task_buttons_in`). Test: `layout::tests::a_narrow_bar_keeps_room_for_a_task_button`
+  (the reviewer's case, 98 look, 10 icons, Size 3 on a 1280-wide screen: 2 icons show, the task
+  area keeps 194 of the 179 it needs; and bars of 300 down to 60 pixels where none fits). The 95 look takes 95's own pictures: its globe (SHELL32 group 14, the Internet picture
   its files have) for the browser, its desktop (EXPLORER.EXE 103) for Show Desktop; 95's files
   have no mail picture, so Outlook Express is left out of the 95 look. Bevel95's band is always
   right of Start in the look's default order (not copied: that a band switched on again appears at

@@ -288,6 +288,8 @@ pub struct State {
     /// What the log said last: how many icons were left out, whether there was a mail program.
     logged_left_out: Option<usize>,
     logged_programs: Option<(bool, bool)>,
+    /// How many icons the bar had room for at the last paint, as the log said last.
+    logged_narrow: Option<usize>,
 }
 
 impl State {
@@ -336,6 +338,19 @@ impl State {
             self.hot = None;
         }
         self.items = items;
+    }
+
+    /// After a paint: the bar had room for `shown` of the band's icons (`quick_launch::fitting`:
+    /// the task area keeps room for one whole task button and its arrows); the others are left
+    /// out, and the log says how many, once per change.
+    pub fn shown(&mut self, shown: usize) {
+        let narrow = self.items.len().saturating_sub(shown);
+        if self.logged_narrow != Some(narrow) {
+            self.logged_narrow = Some(narrow);
+            if narrow > 0 {
+                log(&format!("quick launch: the bar has room for {shown} icons; {narrow} more are left out"));
+            }
+        }
     }
 
     /// What the band shows in `era`.

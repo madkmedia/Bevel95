@@ -294,6 +294,8 @@ pub fn layout(era: Era, start: Rect, well: Rect, icons: usize, y: i32, h: i32) -
     let tasks_left = end_line + TASKS_FROM_END_LINE;
     // The task area ends 7 before the well on 98 (its line 4 before it), 6 before it on 2000.
     let (tasks_right, tray_line) = if era == Era::Win2000 { (well.x - 6, None) } else { (well.x - 7, Some(well.x - 4)) };
+    // A bar too narrow for its parts: the task area is empty, never of a negative width.
+    let tasks_right = tasks_right.max(tasks_left);
     Layout {
         rect: Rect::new(line, y, tasks_left - line, h),
         line,
@@ -304,6 +306,18 @@ pub fn layout(era: Era, start: Rect, well: Rect, icons: usize, y: i32, h: i32) -
         tasks_right,
         tray_line,
     }
+}
+
+/// How many of `icons` icons the band shows on a bar whose Start button is `start` and whose
+/// notification area is `well` (the review before 0.1.2, B3): as many as leave the task area room
+/// for one task button at the look's full width plus the scroll arrows (`task`); the others are
+/// left out. None at all when even the band without icons leaves less than that.
+pub fn fitting(era: Era, start: Rect, well: Rect, icons: usize, task: &crate::theme::TaskMetrics) -> usize {
+    let empty = layout(era, start, well, 0, 0, 0);
+    let room = empty.tasks_right - empty.rect.right();
+    let need = task.width + task.spacing + task.scroll_w;
+    let spare = (room - need).max(0);
+    icons.min((spare / BUTTON_W) as usize)
 }
 
 /// An entry of the band's own menu (a right-click on its grips, lines and gaps).
