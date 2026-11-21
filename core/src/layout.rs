@@ -28,6 +28,9 @@ pub struct BarLayout {
     pub number: Option<(usize, Rect)>,
     /// The Quick Launch band, while it is switched on.
     pub quick: Option<quick_launch::Layout>,
+    /// Windows 98's and 2000's line and grip before the task buttons while Quick Launch is off
+    /// (`quick_launch::task_band`; none in 95).
+    pub task_band: Option<quick_launch::TaskBand>,
 }
 
 impl BarLayout {
@@ -106,11 +109,13 @@ pub fn bar_with(
     let start = start_button(theme, fonts);
     let w = tray_well(theme, fonts, width, tray_count, number, clock, widest);
     let quick = quick.map(|n| quick_launch::layout(theme.era, start, w.well, n, theme.bar.item_y(), theme.bar.item_h()));
-    let (tasks, first_task, scroll) = match &quick {
-        Some(band) => task_buttons_in(theme, band.rect.right(), band.tasks_right, task_count, row),
-        None => task_buttons(theme, start, w.well, task_count, row),
+    let task_band = if quick.is_none() { quick_launch::task_band(theme.era, start, w.well) } else { None };
+    let (tasks, first_task, scroll) = match (&quick, &task_band) {
+        (Some(band), _) => task_buttons_in(theme, band.rect.right(), band.tasks_right, task_count, row),
+        (None, Some(t)) => task_buttons_in(theme, t.left, t.right, task_count, row),
+        (None, None) => task_buttons(theme, start, w.well, task_count, row),
     };
-    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number, quick }
+    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number, quick, task_band }
 }
 
 /// The notification area's well and what is in it (`tray_well`).

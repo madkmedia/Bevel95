@@ -277,6 +277,12 @@ menu with Adjust Date/Time and Task Manager... as its capture shows. The menu on
 shortened to Open, Delete (and Properties for the person's shortcuts) in this first pass.
 PROVISIONAL: the words "Show Quick Launch" in Bevel95 Settings.
 
+**Quick Launch off** (98 and 2000; `ql-off-0`, `-off-1`, `-off-6`): the line after Start and its
+grip stay, the task buttons start at L+11 (98 x 69, 2000 x 71); the task area ends as with the
+band (98: 7 before the well and its line 4 before it; 2000: 6 before it). Six windows: 98 buttons
+98 wide on a step of 101, 2000 101 on 104. The 95 look's bar has no bands. Cases
+`vm-<pc>-quick-launch-off-<n>`.
+
 ## Text
 
 | Value | WIN95 | WIN2000 | Source |
@@ -1622,8 +1628,11 @@ with your memory of the real thing.
 12. **Windows 98's menus open at once**; the real ones slid open (an animation no screenshot
     can show).
 13. **Windows 98 without Quick Launch**: every 98 screenshot has Quick Launch, and with it an
-    etched line between the task buttons and the clock. Whether 98 drew that line without
-    Quick Launch is unknown; the bar leaves it out, as 95 does.
+    etched line between the task buttons and the clock. **Settled 2026-11-20** by the captures
+    `<pc>-truecolor-ql-off-<n>`: without Quick Launch 98 and 2000 keep the line after Start and one
+    grip, the task buttons start at L+11 (69, 71), the task area ends 7 (98, its line 4 before the
+    well) or 6 (2000) before the well; Bevel95 draws that since then (`quick_launch::task_band`;
+    the 95 look keeps 95's bar). See [Quick Launch](#quick-launch).
 14. **Narrow menus without submenus in Windows 2000** (98 has them): 2000 runs the same Start
     menu code, but no 2000 screenshot shows such a menu, so 2000 keeps the arrow room.
 15. **Windows 98's Run box with text in it** (where the text starts) and **where a Windows 98

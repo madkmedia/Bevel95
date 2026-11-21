@@ -82,6 +82,14 @@ pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) 
     if let (Some(band), Some(q)) = (&layout.quick, &bar.quick_launch) {
         paint_quick_launch(fb, theme, band, q);
     }
+    if let Some(t) = &layout.task_band {
+        let (y, h) = (theme.bar.item_y(), theme.bar.item_h());
+        etched_line(fb, &theme.colors, t.line, y, h);
+        grip(fb, &theme.colors, t.grip, y);
+        if let Some(x) = t.tray_line {
+            etched_line(fb, &theme.colors, x, y, h);
+        }
+    }
     // Pressed buttons share one checkerboard, lined up with the first button's (Windows lines
     // the pattern up with its task window): measured on the reference PCs, where a pressed
     // button an odd number of pixels further right has the pattern the other way round. A
@@ -115,13 +123,8 @@ pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) 
 fn paint_quick_launch(fb: &mut Framebuffer, theme: &Theme, band: &quick_launch::Layout, q: &quick_launch::Band) {
     let c = &theme.colors;
     let (y, h) = (band.rect.y, band.rect.h);
-    let etched = |fb: &mut Framebuffer, x: i32| {
-        fb.vline(x, y, h, c.shadow);
-        fb.vline(x + 1, y, h, c.highlight);
-    };
-    let grip = |fb: &mut Framebuffer, x: i32| {
-        fb.frame(Rect::new(x, y + quick_launch::GRIP_DY, quick_launch::GRIP_W, quick_launch::GRIP_H), c.highlight, c.shadow);
-    };
+    let etched = |fb: &mut Framebuffer, x: i32| etched_line(fb, c, x, y, h);
+    let grip = |fb: &mut Framebuffer, x: i32| grip(fb, c, x, y);
     etched(fb, band.line);
     grip(fb, band.grip);
     for (i, r) in band.buttons.iter().enumerate() {
@@ -145,6 +148,18 @@ fn paint_quick_launch(fb: &mut Framebuffer, theme: &Theme, band: &quick_launch::
     if let Some(x) = band.tray_line {
         etched(fb, x);
     }
+}
+
+/// An etched line on the bar (98's and 2000's bands): a shadow column, then a highlight one, as
+/// tall as the row of buttons (`y`, `h`).
+fn etched_line(fb: &mut Framebuffer, c: &Colors, x: i32, y: i32, h: i32) {
+    fb.vline(x, y, h, c.shadow);
+    fb.vline(x + 1, y, h, c.highlight);
+}
+
+/// A band's grip: a 3×18 raised box 2 rows below the row's top `y`.
+fn grip(fb: &mut Framebuffer, c: &Colors, x: i32, y: i32) {
+    fb.frame(Rect::new(x, y + quick_launch::GRIP_DY, quick_launch::GRIP_W, quick_launch::GRIP_H), c.highlight, c.shadow);
 }
 
 /// The arrows of a 16×11 scroll button, as (x, y) from its top-left corner: Windows 98's

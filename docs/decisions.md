@@ -5073,6 +5073,17 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   for a built-in icon yet except deleting that file (todo). A menu acts on the icon it opened on
   (`quick_launch::Target`: a built-in icon, or the shortcut by its file) and only while that icon
   is still on the band ("Remembered by what it is, never by where it is").
+- **The bar without the band** (step 6, its own commit, after steps 1 to 5 had proved with
+  unchanged golden pictures that nothing else moved): Windows 98's and 2000's bar with Quick Launch
+  off was not what Bevel95 drew. The captures `<pc>-truecolor-ql-off-0`, `-1`, `-6` show that the
+  etched line after Start and one grip stay (now the task band's own), the first task button
+  starts 7 after the grip (L+11: x 69 on 98, 71 on 2000, where Bevel95 had 60 and 61), the task
+  area ends as with the band (98: 7 before the well, with its etched line 4 before the well; 2000:
+  6 before it), and with six windows the buttons are 98 wide on a step of 101 (98) and 101 on 104
+  (2000), which the same rules give. `quick_launch::task_band`, `BarLayout::task_band`; the 95
+  look keeps 95's bar (it had no bands). The golden pictures of the 98 and 2000 bar changed on
+  purpose in that commit (listed in it); cases `vm-<pc>-quick-launch-off-0/1/6`; the older
+  `vm-<pc>-tasks-<n>` cases now narrow their task area from Bevel95's new end of it.
 - **New BarCommands** (at the end, so the old codes stay): `QuickLaunch` 15 (toggle),
   `QuickLaunchOpen` 16, `QuickLaunchClose` 17, `QuickLaunchRefresh` 18. **New message**
   `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages).

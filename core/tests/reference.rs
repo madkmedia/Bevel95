@@ -2813,7 +2813,14 @@ fn task_icon_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         // width that gives our task area the capture's width.
         let (_, plain) = bar(theme, fonts, 800, false, vec![task("x", TaskState::Normal)], tray, WIDEST);
         let shift = first_x - plain.tasks[0].x;
-        let our_area = plain.well.x - theme.tray.margin_x - plain.tasks[0].x;
+        // Where our task area ends: 95's 2 before the well; 98's and 2000's bands end 7 and 6
+        // before it (`quick_launch::task_band`).
+        let end_gap = match era {
+            Era::Win98 => 7,
+            Era::Win2000 => 6,
+            Era::Win95 => theme.tray.margin_x,
+        };
+        let our_area = plain.well.x - end_gap - plain.tasks[0].x;
         let width = area.map_or(800, |a| 800 - our_area + a);
         for n in 1..=windows.len() + 1 {
             let tasks = windows[..n.min(windows.len())]
@@ -2963,6 +2970,53 @@ fn quick_launch_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 regions: vec![region((0, 0), Rect::new(0, 572, right, 28))],
                 ours,
                 masks: cells.clone(),
+                vga: false,
+            });
+        }
+    }
+    // Quick Launch switched off (`ql-off-<n>`: no window, the first window of `tasks-7`, its six windows;
+    // the last one active): 98's and 2000's bar keeps the line after Start and one grip, the
+    // task buttons start after it, 98's line before the notification area stays. The whole bar from
+    // x 0 to the well.
+    for (prefix, theme, fonts, era, tray, windows) in [
+        (
+            "win98",
+            &WIN98,
+            f95,
+            Era::Win98,
+            3,
+            [("My Documents", MyDocuments), ("My Computer", MyComputer), ("Recycle Bin", RecycleBin), ("Untitled - Notepad", Notepad), ("Control Panel", ControlPanel), ("Temp", Folder)],
+        ),
+        (
+            "win2000",
+            &WIN2000,
+            f2k,
+            Era::Win2000,
+            1,
+            [("My Computer", MyComputer), ("My Documents", MyDocuments), ("Recycle Bin", RecycleBin), ("Untitled - Notepad", Notepad), ("Control Panel", ControlPanel), ("Temp", Folder)],
+        ),
+    ] {
+        for n in [0usize, 1, 6] {
+            let chosen = &windows[..n];
+            let tasks: Vec<Task> = chosen
+                .iter()
+                .enumerate()
+                .map(|(i, &(title, kind))| Task {
+                    title: title.to_string(),
+                    icon: Some(window_icons::icon(era, kind)),
+                    state: if i + 1 == chosen.len() { TaskState::Active } else { TaskState::Normal },
+                })
+                .collect();
+            let (ours, layout) = bar(theme, fonts, 800, false, tasks, tray, WIDEST);
+            // Windows 2000 SP4's Tahoma fits one letter more before "..." ("Untitled - N..."): that
+            // label's end is left out, as in `task_icon_cases`.
+            let masks = if prefix == "win2000" && n == 6 { vec![Rect::new(462, 578, 21, 18)] } else { Vec::new() };
+            out.push(Case {
+                name: format!("vm-{prefix}-quick-launch-off-{n}").leak(),
+                file: format!("vm/{prefix}-truecolor-ql-off-{n}.png").leak(),
+                regions: vec![region((0, 0), Rect::new(0, 572, layout.well.x, 28))],
+                ours,
+                masks,
                 vga: false,
             });
         }

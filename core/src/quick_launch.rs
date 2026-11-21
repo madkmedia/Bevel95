@@ -394,6 +394,31 @@ pub fn icon_entry(shortcut: bool, index: usize) -> Option<IconEntry> {
     icon_entries(shortcut).get(index).copied().flatten().map(|(_, e)| e)
 }
 
+/// Windows 98's and 2000's bar with Quick Launch switched off (the Reference PCs'
+/// `<pc>-truecolor-ql-off-<n>`): the etched line after the Start button and one grip stay (now the
+/// task band's own), the task buttons start 7 after the grip (L+11: x 69 on 98, 71 on 2000), the
+/// task area ends as with the band (7 before the well on 98, its line 4 before it; 6 on 2000).
+/// Windows 95 had no bands: `None`, and its bar stays as it always was.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskBand {
+    pub line: i32,
+    pub grip: i32,
+    /// Where the task buttons go: from `left` to `right`.
+    pub left: i32,
+    pub right: i32,
+    pub tray_line: Option<i32>,
+}
+
+/// The task band of `era`'s bar without Quick Launch (see `TaskBand`).
+pub fn task_band(era: Era, start: Rect, well: Rect) -> Option<TaskBand> {
+    if era == Era::Win95 {
+        return None;
+    }
+    // The same rules as with the band (`layout`), with no band between the line and the tasks.
+    let band = layout(era, start, well, 0, 0, 0);
+    Some(TaskBand { line: band.line, grip: band.grip, left: band.line + FIRST_BUTTON_FROM_LINE, right: band.tasks_right, tray_line: band.tray_line })
+}
+
 static W95_INTERNET: ClassicIcon = ClassicIcon::art("quick-launch/internet-explorer", Look::Win95);
 static W98_INTERNET: ClassicIcon = ClassicIcon::art("quick-launch/internet-explorer", Look::Win98);
 static W98_OUTLOOK: ClassicIcon = ClassicIcon::art("quick-launch/outlook-express", Look::Win98);
