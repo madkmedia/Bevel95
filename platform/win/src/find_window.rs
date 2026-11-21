@@ -354,7 +354,7 @@ fn run_command(action: Action) {
         Action::Bar(command) => (WM_BAR_COMMAND.id(), command.code()),
         Action::Look(era) => (WM_BAR_THEME.id(), Era::ALL.iter().position(|&e| e == era).unwrap_or(0)),
         Action::Size(scale) => (WM_BAR_SIZE.id(), scale as usize),
-        Action::Colors(depth) => (WM_BAR_COLORS.id(), Depth::ALL.iter().position(|&d| d == depth).unwrap_or(1)),
+        Action::Colors(depth) => (WM_BAR_COLORS.id(), Depth::ALL.iter().position(|&d| d == depth).unwrap_or(Depth::ALL.len() - 1)),
     };
     // SAFETY: posting to our own bar window.
     unsafe { PostMessageW(bar, msg, wparam, 0) };

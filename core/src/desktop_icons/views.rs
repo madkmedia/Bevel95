@@ -561,7 +561,7 @@ impl Desktop {
             let selected = (self.is_selected(i) && (active || gray) || hover) && renaming != Some(i);
             let lit = active || hover;
             let r = self.small_icon_rect(cell);
-            let sixteen = theme.depth == crate::colors16::Depth::Sixteen;
+            let sixteen = theme.depth.reduced();
             if let Some(icon) = self.small_picture(theme, i, selected && lit && !sixteen) {
                 let icon = if self.is_cut(i) { crate::desktop_icons::cut_picture(self.era, &icon, crate::desktop_icons::WINDOW) } else { icon };
                 let icon = if sixteen { crate::desktop_icons::sixteen_picture(theme, &icon, selected && lit, (0, 0)) } else { icon };

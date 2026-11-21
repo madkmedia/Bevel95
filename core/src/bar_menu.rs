@@ -428,13 +428,15 @@ mod tests {
 
     #[test]
     fn colors_menu_marks_the_colors_in_use() {
-        let m = colors_menu(Depth::Sixteen);
+        let m = colors_menu(Depth::TwoFiftySix);
         let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["16 Colors", "True Color"]);
+        assert_eq!(labels, ["16 Colors", "256 Colors", "True Color"]);
         let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
-        assert_eq!(marked, [true, false]);
-        assert_eq!(colors_at(1), Some(Depth::TrueColor));
-        assert_eq!(colors_at(2), None);
+        assert_eq!(marked, [false, true, false]);
+        assert_eq!(colors_at(0), Some(Depth::Sixteen));
+        assert_eq!(colors_at(1), Some(Depth::TwoFiftySix));
+        assert_eq!(colors_at(2), Some(Depth::TrueColor));
+        assert_eq!(colors_at(3), None);
     }
 
     #[test]

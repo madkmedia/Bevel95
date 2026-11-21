@@ -139,6 +139,7 @@ mod tests {
                 "Size 3\u{d7}",
                 "Size 4\u{d7}",
                 "16 Colors",
+                "256 Colors",
                 "True Color",
                 "Switch back to Windows",
                 "Show the classic desktop",

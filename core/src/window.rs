@@ -11,7 +11,7 @@
 
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::text::Fonts;
-use crate::colors16::{self, Depth};
+use crate::colors16;
 use crate::theme::{Colors, Era, Theme, rgb};
 
 /// The frame around every window measured: a 2px raised edge and 1px of face color.
@@ -98,7 +98,7 @@ fn pixel(c: [i32; 3]) -> u32 {
 /// (under and between the buttons).
 fn caption_fill(fb: &mut Framebuffer, theme: &Theme, era: Era, r: Rect, left: i32, right: i32, active: bool) {
     let (from, to, _) = caption_colors(era, active);
-    if theme.depth == Depth::Sixteen {
+    if theme.depth.reduced() {
         // A 16-color screen has no gradient: 98 and 2000 fill the caption with its start
         // color, navy or gray (Windows 2000's 0A246A by the nearest of the 16, navy).
         fb.fill(r, colors16::convert(era, pixel(from)));

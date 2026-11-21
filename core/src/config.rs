@@ -181,8 +181,8 @@ pub const DEFAULT_FILE: &str = "\
 # Look: win95, win98 or win2000
 era = win95
 
-# Colors: true (True Color) or 16 (16 Colors: each look as its Windows looked on a 16-color
-# screen, as on a PC without its display driver).
+# Colors: true (True Color), 256 (256 Colors: each look as its Windows looked on a 256-color
+# screen) or 16 (16 Colors: as on a 16-color screen, a PC without its display driver).
 colors = true
 
 # Size: a whole number (1 = original pixel size, 2 = double, ...), or auto
@@ -296,7 +296,7 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             },
             "colors" => match Depth::from_setting(&value) {
                 Some(depth) => config.colors = depth,
-                None => warn("colors must be true or 16"),
+                None => warn("colors must be true, 256 or 16"),
             },
             "clock_offset" => match value.parse::<i64>() {
                 Ok(seconds) => config.clock_offset = seconds,
@@ -432,8 +432,11 @@ mod tests {
         assert_eq!(parse("era = win98\n").0.colors, Depth::TrueColor);
         assert_eq!(parse("colors = 16\n").0.colors, Depth::Sixteen);
         assert_eq!(parse("COLORS = True  # as today\n").0.colors, Depth::TrueColor);
-        let (c, w) = parse("colors = 256\n");
-        assert_eq!((c.colors, w.len()), (Depth::TrueColor, 1));
+        assert_eq!(parse("colors = 256\n").0.colors, Depth::TwoFiftySix);
+        // A value it does not know (as an older Bevel95 met `colors = 256`): True Color and a
+        // warning, nothing else changed.
+        let (c, w) = parse("colors = 65536\nera = win98\n");
+        assert_eq!((c.colors, c.era, w.len()), (Depth::TrueColor, Era::Win98, 1));
         for depth in Depth::ALL {
             assert_eq!(parse(&with_setting(DEFAULT_FILE, "colors", depth.setting())).0.colors, depth);
         }

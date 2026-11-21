@@ -748,7 +748,7 @@ fn line_98(fb: &mut Framebuffer, x: i32, y: i32, w: i32) {
 pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &WebFonts, laid: &Laid, art: Option<&Icon>, scroll: i32, hot: Option<Link>) {
     let _ = hot;
     let era = theme.era;
-    let sixteen = theme.depth == crate::colors16::Depth::Sixteen;
+    let sixteen = theme.depth.reduced();
     let m = metrics(era);
     fb.fill(Rect::new(0, 0, fb.width, fb.height), WHITE);
     if sixteen {

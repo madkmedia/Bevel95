@@ -137,7 +137,8 @@ pub static WM_SHORTCUT_WIZARD_ENDED: Private = Private::new("Bevel95.Bar.Shortcu
 /// (WM_APP + 12 is Quick Search's programs read, which only refreshes its list.)
 pub const WM_TASK_AT: u32 = WM_APP + 16;
 /// The colors were chosen (the Colors submenu, Quick Search, a live test): wParam = its index
-/// in `Depth::ALL` (0: 16 Colors, 1: True Color).
+/// in `Depth::ALL` (0: 16 Colors, 1: 256 Colors, 2: True Color; before 256 Colors came, 1 was
+/// True Color).
 pub static WM_BAR_COLORS: Private = Private::new("Bevel95.Bar.Colors");
 /// Quick Launch, for live tests (`tools\dev\postbar.ps1 QuickLaunch 100`): wParam 100 has the
 /// folder read again (the band's Refresh); any other wParam does nothing. It never clicks an icon:
@@ -208,7 +209,7 @@ static SHELL_HOOK: AtomicU32 = AtomicU32::new(0);
 
 pub struct App {
     pub era: Era,
-    /// True Color or 16 Colors (`colors` in settings.txt).
+    /// True Color, 256 Colors or 16 Colors (`colors` in settings.txt).
     pub colors: Depth,
     /// The look in these colors (`theme::theme_in(era, colors)`).
     pub theme: &'static Theme,
@@ -2503,7 +2504,7 @@ fn set_era(bar: HWND, era: Era) {
     about_window::look_changed();
 }
 
-/// Colors menu: switches between True Color and 16 Colors at once (the look's colors, patterns
+/// Colors menu: switches between True Color, 256 Colors and 16 Colors at once (the look's colors, patterns
 /// and pictures; sizes and font stay) and remembers it in settings.txt.
 fn set_colors(bar: HWND, depth: Depth) {
     let Some(era) = with_app(|app| (app.colors != depth).then_some(app.era)).flatten() else {

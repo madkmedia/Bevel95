@@ -1712,6 +1712,7 @@ fn scenes() -> Vec<Scene> {
         out.push(Scene { section: "Windows 2000", name: "win2000-folder-options".into(), caption: "Folder Options (Tools menu): Web View and Browse Folders, classic folders just chosen", image: fb });
     }
     out.extend(sixteen_color_scenes());
+    out.extend(reduced_color_scenes(Depth::TwoFiftySix));
     // The integer upscaler, checked on a real image.
     let three = out.iter().find(|s| s.name == "win95-three-groups").expect("scene exists").image.clone();
     out.push(Scene {
@@ -1727,14 +1728,30 @@ fn scenes() -> Vec<Scene> {
 /// The 16 Colors option: a chosen set of scenes per look drawn with its 16-color theme
 /// (`theme_in(era, Depth::Sixteen)`), named `<look>-16-<state>`.
 fn sixteen_color_scenes() -> Vec<Scene> {
+    reduced_color_scenes(Depth::Sixteen)
+}
+
+/// The same scenes for 16 Colors (`<look>-16-<state>`) or 256 Colors (`<look>-256-<state>`).
+fn reduced_color_scenes(depth: Depth) -> Vec<Scene> {
     let mut out = Vec::new();
-    DEPTH.set(Depth::Sixteen);
-    for (era, section) in [(Era::Win95, "Windows 95, 16 Colors"), (Era::Win98, "Windows 98, 16 Colors"), (Era::Win2000, "Windows 2000, 16 Colors")] {
-        let theme = bevel_core::theme::theme_in(era, Depth::Sixteen);
+    DEPTH.set(depth);
+    let sections: [(Era, &'static str); 3] = match depth {
+        Depth::TwoFiftySix => [(Era::Win95, "Windows 95, 256 Colors"), (Era::Win98, "Windows 98, 256 Colors"), (Era::Win2000, "Windows 2000, 256 Colors")],
+        _ => [(Era::Win95, "Windows 95, 16 Colors"), (Era::Win98, "Windows 98, 16 Colors"), (Era::Win2000, "Windows 2000, 16 Colors")],
+    };
+    let (tag, words) = match depth {
+        Depth::TwoFiftySix => ("256", "256 Colors"),
+        _ => ("16", "16 Colors"),
+    };
+    for (era, section) in sections {
+        let theme = bevel_core::theme::theme_in(era, depth);
         let (regular, bold) = (load_font(theme, false), load_font(theme, true));
         let fonts = Fonts { regular: &regular, bold: &bold };
         let mut add = |state: &str, caption: &'static str, image: Framebuffer| {
-            out.push(Scene { section, name: format!("{}-16-{state}", theme.slug), caption, image });
+            // The 16-color captions as they were; the 256-color ones name their own colors.
+            let caption: &'static str =
+                if depth == Depth::Sixteen { caption } else { Box::leak(caption.replace("16 Colors", words).into_boxed_str()) };
+            out.push(Scene { section, name: format!("{}-{tag}-{state}", theme.slug), caption, image });
         };
         add("three-groups", "16 Colors: the bar with three groups: normal, active, flashing", bar_image(theme, &fonts, false, three_groups()));
         add(

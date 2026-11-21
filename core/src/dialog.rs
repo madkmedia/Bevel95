@@ -320,7 +320,7 @@ pub(crate) fn focus_dots(fb: &mut Framebuffer, r: Rect, origin: (i32, i32), colo
 /// In True Color the others stay. PROVISIONAL in True Color
 /// (not seen: 2000 shows it only after the keyboard was used).
 pub(crate) fn invert_dots(fb: &mut Framebuffer, theme: &Theme, r: Rect) {
-    let sixteen = theme.depth == crate::colors16::Depth::Sixteen;
+    let sixteen = theme.depth.reduced();
     let mut dot = |x: i32, y: i32| {
         if x < 0 || y < 0 || x >= fb.width || y >= fb.height {
             return;
@@ -562,7 +562,7 @@ pub fn paint_dialog(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, dialog: 
         }
         (DialogKind::ShutDown, Era::Win2000) => {
             let (bw, bh) = BANNER_2000_SIZE;
-            let banner = if theme.depth == crate::colors16::Depth::Sixteen { BANNER_2000_16 } else { BANNER_2000 };
+            let banner = if theme.depth.reduced() { BANNER_2000_16 } else { BANNER_2000 };
             for y in 0..bh {
                 for x in 0..bw {
                     let i = ((y * bw + x) * 3) as usize;

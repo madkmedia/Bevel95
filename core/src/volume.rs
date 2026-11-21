@@ -131,7 +131,7 @@ fn raised(fb: &mut Framebuffer, r: Rect, c: &Colors) {
 /// cross it (the reference PC).
 /// On a 16-color screen the XOR works on the colors' numbers among the 16.
 fn focus_rect(fb: &mut Framebuffer, theme: &Theme, r: Rect, phase: i32, with: u32) {
-    let sixteen = theme.depth == crate::colors16::Depth::Sixteen;
+    let sixteen = theme.depth.reduced();
     let mut dot = |x: i32, y: i32| {
         if ((x - r.x) + (y - r.y)) % 2 == phase && x >= 0 && y >= 0 && x < fb.width && y < fb.height {
             let p = fb.get(x, y);

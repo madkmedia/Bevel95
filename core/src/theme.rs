@@ -73,6 +73,9 @@ pub fn theme_in(era: Era, depth: Depth) -> &'static Theme {
         (Era::Win95, Depth::Sixteen) => &WIN95_16,
         (Era::Win98, Depth::Sixteen) => &WIN98_16,
         (Era::Win2000, Depth::Sixteen) => &WIN2000_16,
+        (Era::Win95, Depth::TwoFiftySix) => &WIN95_256,
+        (Era::Win98, Depth::TwoFiftySix) => &WIN98_256,
+        (Era::Win2000, Depth::TwoFiftySix) => &WIN2000_256,
     }
 }
 
@@ -716,6 +719,19 @@ pub const WIN2000_16: Theme = Theme {
     ..WIN2000
 };
 
+// The three looks on a 256-color screen (after the restart Windows asked for): their 16-color
+// look in the shell, with what each showed richer there (the Reference PCs at 256 colors:
+// private/probes/colors256/survey.md, docs/theme-spec.md "256 Colors").
+
+/// Windows 95 in 256 colors: as its 16 Colors in everything measured.
+pub const WIN95_256: Theme = Theme { depth: Depth::TwoFiftySix, ..WIN95_16 };
+
+/// Windows 98 in 256 colors: as its 16 Colors in its colors and menus.
+pub const WIN98_256: Theme = Theme { depth: Depth::TwoFiftySix, ..WIN98_16 };
+
+/// Windows 2000 in 256 colors.
+pub const WIN2000_256: Theme = Theme { depth: Depth::TwoFiftySix, ..WIN2000_16 };
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -754,6 +770,8 @@ mod tests {
         }
         // Sizes are the same as in True Color.
         assert_eq!(WIN98_16.start_menu.large.h, WIN98.start_menu.large.h);
+        assert_eq!(WIN98_256.start_menu.large.h, WIN98.start_menu.large.h);
+        assert_eq!(WIN2000_256.font_face, "Tahoma");
         assert_eq!(WIN2000_16.font_face, "Tahoma");
     }
 

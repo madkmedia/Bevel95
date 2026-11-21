@@ -24,26 +24,30 @@ use std::borrow::Cow;
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::theme::{Era, Theme, rgb};
 
-/// How many colors the screen shows (`colors` in settings.txt). Only True Color and 16 colors:
-/// High Color looked the same as True Color on all three Reference PCs, and 256 colors is
-/// for later (a third value would join here).
+/// How many colors the screen shows (`colors` in settings.txt): True Color, 256 colors or 16
+/// colors. High Color looked the same as True Color on all three Reference PCs (no choice).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Depth {
     /// As everything was drawn before this option: the three Windows in True Color.
     #[default]
     TrueColor,
+    /// As each Windows looked on a 256-color screen after its restart: its 16-color look in the
+    /// shell (the 16-color drawings, the navy checkerboard, plain title bars), with what that
+    /// Windows showed richer there (`colors256`).
+    TwoFiftySix,
     /// As each Windows looked on a 16-color screen.
     Sixteen,
 }
 
 impl Depth {
     /// In the order of Windows' own Display Properties list (fewest colors first).
-    pub const ALL: [Depth; 2] = [Depth::Sixteen, Depth::TrueColor];
+    pub const ALL: [Depth; 3] = [Depth::Sixteen, Depth::TwoFiftySix, Depth::TrueColor];
 
-    /// The word in settings.txt (`colors = true` or `colors = 16`).
+    /// The word in settings.txt (`colors = true`, `colors = 256` or `colors = 16`).
     pub const fn setting(self) -> &'static str {
         match self {
             Depth::TrueColor => "true",
+            Depth::TwoFiftySix => "256",
             Depth::Sixteen => "16",
         }
     }
@@ -52,6 +56,7 @@ impl Depth {
     pub fn from_setting(value: &str) -> Option<Depth> {
         match value.trim().to_ascii_lowercase().replace([' ', '_', '-'], "").as_str() {
             "true" | "truecolor" | "truecolour" | "24" | "32" => Some(Depth::TrueColor),
+            "256" | "256colors" | "256colours" | "256color" | "256colour" | "8" => Some(Depth::TwoFiftySix),
             "16" | "16colors" | "16colours" | "16color" | "16colour" | "4" => Some(Depth::Sixteen),
             _ => None,
         }
@@ -61,8 +66,16 @@ impl Depth {
     pub const fn title(self) -> &'static str {
         match self {
             Depth::TrueColor => "True Color",
+            Depth::TwoFiftySix => "256 Colors",
             Depth::Sixteen => "16 Colors",
         }
+    }
+
+    /// True for 16 and 256 colors: the screens on which the shell drew its 16-color look (the
+    /// 16-color drawings, the navy checkerboard, plain title bars). 256 colors differs from it
+    /// only where `colors256` says so.
+    pub const fn reduced(self) -> bool {
+        !matches!(self, Depth::TrueColor)
     }
 }
 
@@ -167,7 +180,7 @@ pub fn picture(era: Era, icon: &Icon) -> Icon {
 pub fn shown<'a>(theme: &Theme, icon: &'a Icon) -> Cow<'a, Icon> {
     match theme.depth {
         Depth::TrueColor => Cow::Borrowed(icon),
-        Depth::Sixteen => Cow::Owned(picture(theme.era, icon)),
+        Depth::TwoFiftySix | Depth::Sixteen => Cow::Owned(picture(theme.era, icon)),
     }
 }
 
@@ -235,7 +248,7 @@ pub fn fill(fb: &mut Framebuffer, theme: &Theme, r: Rect, color: u32) {
 pub fn line(theme: &Theme, color: u32) -> u32 {
     match theme.depth {
         Depth::TrueColor => color,
-        Depth::Sixteen => convert(theme.era, color),
+        Depth::TwoFiftySix | Depth::Sixteen => convert(theme.era, color),
     }
 }
 
@@ -273,8 +286,12 @@ mod tests {
         }
         assert_eq!(Depth::from_setting(" 16 Colors "), Some(Depth::Sixteen));
         assert_eq!(Depth::from_setting("True Color"), Some(Depth::TrueColor));
-        assert_eq!(Depth::from_setting("256"), None, "not built (yet)");
+        assert_eq!(Depth::from_setting("256"), Some(Depth::TwoFiftySix));
+        assert_eq!(Depth::from_setting("256 Colors"), Some(Depth::TwoFiftySix));
+        assert_eq!(Depth::from_setting("65536"), None);
+        assert_eq!(Depth::TwoFiftySix.title(), "256 Colors");
         assert_eq!(Depth::Sixteen.title(), "16 Colors");
+        assert!(Depth::Sixteen.reduced() && Depth::TwoFiftySix.reduced() && !Depth::TrueColor.reduced());
         assert_eq!(Depth::TrueColor.title(), "True Color");
     }
 

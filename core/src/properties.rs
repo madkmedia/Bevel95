@@ -297,10 +297,12 @@ fn windows_key_label(key: WindowsKey) -> &'static str {
     }
 }
 
-/// The Colors group's two choices, in the words of Windows' own Display Properties.
+/// The Colors group's three choices, in the words of Windows' own Display Properties (256's
+/// access key the 6: the 2 is the Size group's 2×).
 fn colors_label(depth: Depth) -> &'static str {
     match depth {
         Depth::Sixteen => "16 &Colors",
+        Depth::TwoFiftySix => "25&6 Colors",
         Depth::TrueColor => "&True Color",
     }
 }
@@ -937,7 +939,8 @@ fn list_row_rect(i: usize, top: usize) -> Rect {
 /// The Look group and, beside it, the Colors group (each half of the row, 8 apart).
 const LOOK_GROUP: Rect = Rect::new(24, 68, 144, 89);
 const COLORS_GROUP: Rect = Rect::new(176, 68, 144, 89);
-const COLORS_ROWS: [(Depth, i32, i32); 2] = [(Depth::Sixteen, 188, 84), (Depth::TrueColor, 188, 105)];
+const COLORS_ROWS: [(Depth, i32, i32); 3] =
+    [(Depth::Sixteen, 188, 84), (Depth::TwoFiftySix, 188, 105), (Depth::TrueColor, 188, 126)];
 const LOOK_ROWS: [(Era, i32, i32); 3] = [(Era::Win95, 36, 84), (Era::Win98, 36, 105), (Era::Win2000, 36, 126)];
 const SIZE_GROUP: Rect = Rect::new(24, 165, 296, 68);
 const SIZE_ROW_Y: i32 = 181;
@@ -1241,7 +1244,7 @@ fn paint_preview(fb: &mut Framebuffer, theme: &Theme, frame: Rect, o: TaskbarOpt
     }
     // In 16 colors the pieces cut from the True Color captures take the look's rule (Windows 2000's
     // face D4D0C8 in them becomes silver, as its system color did).
-    if theme.depth == Depth::Sixteen {
+    if theme.depth.reduced() {
         for p in &mut pic.pixels {
             *p = crate::colors16::convert(era, *p);
         }
@@ -2061,12 +2064,15 @@ mod tests {
         assert_eq!(p.access_key('4'), Some(Part::Size(4)));
         assert_eq!(p.arrow(Part::Size(2), true), Some(Part::Size(3)));
         assert_eq!(p.arrow(Part::Look(Era::Win95), false), Some(Part::Look(Era::Win95)));
-        // The colors: C and T, the arrows between the two.
+        // The colors: C, 6 and T, the arrows between the three.
         assert_eq!(p.access_key('c'), Some(Part::Colors(Depth::Sixteen)));
+        assert_eq!(p.access_key('6'), Some(Part::Colors(Depth::TwoFiftySix)));
         assert_eq!(p.access_key('t'), Some(Part::Colors(Depth::TrueColor)));
-        assert_eq!(p.arrow(Part::Colors(Depth::Sixteen), true), Some(Part::Colors(Depth::TrueColor)));
+        assert_eq!(p.arrow(Part::Colors(Depth::Sixteen), true), Some(Part::Colors(Depth::TwoFiftySix)));
+        assert_eq!(p.arrow(Part::Colors(Depth::TwoFiftySix), true), Some(Part::Colors(Depth::TrueColor)));
         let mut p = p;
         assert!(p.choose(Part::Colors(Depth::Sixteen)) && p.values.colors == Depth::Sixteen && p.changed);
+        assert!(p.choose(Part::Colors(Depth::TwoFiftySix)) && p.values.colors == Depth::TwoFiftySix);
     }
 
     #[test]

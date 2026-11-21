@@ -1,5 +1,5 @@
 //! What a program paints with, as the bar is set up: the look (Windows 95, 98 or 2000), its
-//! colors (True Color or 16 Colors) and the size from Bevel95's settings.txt, and that look's
+//! colors (True Color, 256 Colors or 16 Colors) and the size from Bevel95's settings.txt, and that look's
 //! fonts from GDI. A program reads it when it
 //! starts and again when the bar says its look or size changed (`kit::Hosted::look_changed`).
 
@@ -51,7 +51,7 @@ fn settings() -> config::Config {
     config::parse(&text).0
 }
 
-/// The colors Bevel95 is set to (True Color or 16 Colors; settings.txt).
+/// The colors Bevel95 is set to (True Color, 256 Colors or 16 Colors; settings.txt).
 pub fn colors() -> Depth {
     settings().colors
 }

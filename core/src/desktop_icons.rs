@@ -1722,7 +1722,7 @@ impl Desktop {
             let arrow = desktop_art::shortcut_arrow(self.era);
             let arrow = if selected { desktop_art::selected(&arrow, highlight) } else { arrow };
             // In 16 colors each part as its own picture (the look's own drawing where it had one).
-            let (arrow, base) = if theme.depth == crate::colors16::Depth::Sixteen {
+            let (arrow, base) = if theme.depth.reduced() {
                 (crate::colors16::picture(self.era, &arrow), crate::colors16::picture(self.era, &icon))
             } else {
                 (arrow, icon)
@@ -1778,7 +1778,7 @@ impl Desktop {
             // While its label is renamed, an icon's picture shows plain (the Reference PCs).
             let selected = self.shows_selected(i, active) && renaming != Some(i);
             let r = self.icon_rect(i);
-            let sixteen = theme.depth == crate::colors16::Depth::Sixteen;
+            let sixteen = theme.depth.reduced();
             if let Some(icon) = self.picture(theme, i, selected && !sixteen) {
                 let icon = if self.is_cut(i) { cut_picture(self.era, &icon, ground) } else { icon };
                 let icon = if sixteen { sixteen_picture(theme, &icon, selected, (0, 0)) } else { icon };
@@ -2059,7 +2059,7 @@ fn focus_frame(fb: &mut Framebuffer, r: Rect, origin: (i32, i32), theme: &Theme)
     if r.w <= 0 || r.h <= 0 {
         return;
     }
-    let sixteen = theme.depth == crate::colors16::Depth::Sixteen;
+    let sixteen = theme.depth.reduced();
     let mut dot = |x: i32, y: i32| {
         let inside = x >= 0 && y >= 0 && x < fb.width && y < fb.height;
         let odd = (x + origin.0 + y + origin.1).rem_euclid(2) == 1;

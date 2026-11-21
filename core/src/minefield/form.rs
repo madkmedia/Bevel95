@@ -437,7 +437,7 @@ impl kit::Form for MinefieldWindow {
         window::paint_menu_bar(fb, theme, fonts, self.era, &MENUS, &self.titles, &looks, show_keys, self.active);
         let view = View { game: &self.game, held: self.held(), button_down: self.pressed == Some(Part::Mascot) };
         board::paint(fb, &self.board, &view, self.color);
-        if theme.depth == crate::colors16::Depth::Sixteen {
+        if theme.depth.reduced() {
             // 95's and 98's face bitmap has one color outside the 16 (BFBF00): by the look's rule.
             let b = self.board.button();
             for y in b.y.max(0)..b.bottom().min(fb.height) {

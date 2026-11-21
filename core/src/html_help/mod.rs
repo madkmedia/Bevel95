@@ -1015,7 +1015,7 @@ impl Form for HtmlHelp {
                 highlights: if self.highlight { &self.matches } else { &[] },
             },
         );
-        if theme.depth == crate::colors16::Depth::Sixteen {
+        if theme.depth.reduced() {
             // The page as Internet Explorer showed it on a 16-color screen: its colors and pictures
             // (none with a 16-color drawing) each pixel by the look's rule. (Explorer dithered the
             // pictures; PROVISIONAL.)
