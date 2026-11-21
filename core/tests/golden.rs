@@ -373,6 +373,42 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
     fb
 }
 
+/// Bevel95 Settings' General page at a size between whole numbers (1.75): how it is drawn can be
+/// chosen and the line says it is not pixel-exact. `open`: that drop-down list open, its
+/// highlight one entry on from the chosen one; otherwise the keyboard on the way's list.
+fn quarter_size_scene(theme: &Theme, era: Era, fonts: &Fonts, open: Option<properties::Part>) -> Framebuffer {
+    use bevel_core::scale::{Scale, Way};
+    let values = properties::Values {
+        options: TaskbarOptions::default(),
+        start: StartOptions::default(),
+        era,
+        colors: theme.depth,
+        scale: Scale::from_quarters(7).with_way(Way::Even),
+        start_with_windows: true,
+        clock_offset: 300,
+        desktop: true,
+        programs: Shown::Everything,
+        windows_key: bevel_core::config::WindowsKey::Find,
+        quick_search_all: false,
+        battery_percent: false,
+        quick_launch: bevel_core::quick_launch::on_by_default(era),
+        group: true,
+    };
+    let mut p = properties::Properties::new(properties::Sheet::Bevel95, era, values);
+    p.show_keys = true;
+    match open {
+        Some(list) => {
+            p.focus = list;
+            p.drop = Some((list, p.list_chosen(list).unwrap_or(0) + 1));
+        }
+        None => p.focus = properties::Part::WayList,
+    }
+    let l = properties::layout(&p, fonts);
+    let mut fb = Framebuffer::new(l.width, l.height, 0);
+    properties::paint(&mut fb, theme, fonts, &p, &l);
+    fb
+}
+
 /// A small Programs menu for the trees of programs: Accessories with Games and System Tools
 /// (two programs each) and three programs of its own, an empty StartUp, three programs in
 /// Programs itself.
@@ -1413,6 +1449,21 @@ fn scenes() -> Vec<Scene> {
             "bevel95-settings",
             "Bevel95 Settings (right-click the bar): look, size, starting with Windows, and the clock",
             properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 0),
+        );
+        add(
+            "bevel95-settings-quarter",
+            "Bevel95 Settings at a size between whole numbers (1.75): how it is drawn can be chosen, and the line says it is not pixel-exact; the keyboard on that list",
+            quarter_size_scene(theme, era, &fonts, None),
+        );
+        add(
+            "bevel95-settings-size-list",
+            "Bevel95 Settings, the list of sizes open: 1 to 4 in quarter steps, 1.75 chosen, the pointer one below",
+            quarter_size_scene(theme, era, &fonts, Some(properties::Part::SizeList)),
+        );
+        add(
+            "bevel95-settings-way-list",
+            "Bevel95 Settings, the list of the ways a size between whole numbers is drawn, open",
+            quarter_size_scene(theme, era, &fonts, Some(properties::Part::WayList)),
         );
         add(
             "bevel95-settings-taskbar",

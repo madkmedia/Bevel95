@@ -420,11 +420,18 @@ mod tests {
     fn size_menu_marks_the_current_size() {
         let m = size_menu(Scale::whole(2).with_way(crate::scale::Way::Nearest));
         let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["1\u{d7}", "2\u{d7}", "3\u{d7}", "4\u{d7}"]);
-        let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
-        assert_eq!(marked, [false, true, false, false]);
-        assert_eq!(size_at(3), Some(Scale::whole(4)));
-        assert_eq!(size_at(4), None);
+        assert_eq!(
+            labels,
+            ["1", "1.25", "1.5", "1.75", "2", "2.25", "2.5", "2.75", "3", "3.25", "3.5", "3.75", "4"].map(|s| format!("{s}\u{d7}"))
+        );
+        let marked: Vec<usize> = (0..m.entries.len()).filter(|&i| m.entries[i].mark.is_some()).collect();
+        assert_eq!(marked, [4]);
+        assert_eq!(size_at(12), Some(Scale::whole(4)));
+        assert_eq!(size_at(3), Some(Scale::from_quarters(7)));
+        assert_eq!(size_at(13), None);
+        // A quarter size in use has its bullet too.
+        let m = size_menu(Scale::from_quarters(7));
+        assert_eq!((0..m.entries.len()).filter(|&i| m.entries[i].mark.is_some()).collect::<Vec<_>>(), [3]);
     }
 
     #[test]

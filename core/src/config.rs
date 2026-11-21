@@ -186,9 +186,17 @@ impl Default for Config {
 /// The size used unless the settings say otherwise: double, crisp on most screens.
 pub const DEFAULT_SCALE: Scale = Scale::whole(2);
 
-/// The sizes offered in the bar's right-click menu and the Properties window (the file
-/// accepts 1 to 8 in quarter steps, or auto).
-pub const MENU_SCALES: [Scale; 4] = [Scale::whole(1), Scale::whole(2), Scale::whole(3), Scale::whole(4)];
+/// The sizes offered in the bar's Size menu, Bevel95 Settings and Quick Search: 1× to 4× in
+/// quarter steps (the file accepts 1 to 8 in quarter steps, or auto).
+pub const MENU_SCALES: [Scale; 13] = {
+    let mut all = [Scale::ONE; 13];
+    let mut i = 0;
+    while i < all.len() {
+        all[i] = Scale::from_quarters(4 + i as i32);
+        i += 1;
+    }
+    all
+};
 
 /// What a new settings file contains.
 pub const DEFAULT_FILE: &str = "\

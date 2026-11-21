@@ -22,7 +22,7 @@ use crate::fb::{Framebuffer, Rect};
 use crate::kit::{self, Effect, Key, Mods, Press};
 use crate::paint::CHECK_ART;
 use crate::programs::{self, Row, RowKind, Shown, Tick};
-use crate::scale::Scale;
+use crate::scale::{Scale, Way};
 use crate::scroll::ScrollBar;
 use crate::text::{Font, Fonts, split_access_key};
 use crate::theme::{Colors, Depth, Era, Theme, rgb};
@@ -181,12 +181,17 @@ pub enum Part {
     /// The tab of page `i`. The tabs are one stop for the keyboard (the tab control).
     Tab(usize),
     Check(Check),
-    /// Bevel95 Settings: the option buttons of the look and the size.
+    /// Bevel95 Settings: the option buttons of the look.
     Look(Era),
     /// Bevel95 Settings: the option buttons of the colors.
     Colors(Depth),
-    /// The size's option buttons (a size drawn the default way: size_part).
-    Size(Scale),
+    /// Bevel95 Settings, General page: the drop-down list of the sizes (every size the menus
+    /// offer, `MENU_SCALES`) and the one of how a size between whole numbers is drawn
+    /// (`Way::ALL`; usable only at such a size); one stop each for the keyboard.
+    SizeList,
+    WayList,
+    /// An entry of the open drop-down list (its index in the list's choices).
+    DropRow(usize),
     /// Bevel95 Settings: the option buttons of what the Windows key opens.
     WinKey(WindowsKey),
     /// Start Menu Programs page (Advanced in Windows 2000).
@@ -310,13 +315,27 @@ fn colors_label(depth: Depth) -> &'static str {
     }
 }
 
-/// The option button of size s.
-fn size_part(s: Scale) -> Part {
-    Part::Size(Scale::from_quarters(s.quarters()))
+/// A size as its drop-down list writes it: "2×", "1.75×".
+fn size_text(scale: Scale) -> String {
+    format!("{scale}\u{d7}")
 }
 
-fn size_label(scale: Scale) -> String {
-    format!("&{scale}\u{d7}")
+/// The labels before the two drop-down lists (ours, PROVISIONAL).
+const SIZE_LIST_LABEL: &str = "Si&ze:";
+const WAY_LIST_LABEL: &str = "&Drawn as:";
+
+/// The line under them: what the size does, and at a size between whole numbers that it is not
+/// pixel-exact (ours, PROVISIONAL).
+const SIZE_WHOLE_TEXT: &str = "Each pixel of the classic look becomes this many.";
+const SIZE_QUARTER_TEXT: &str = "A size between whole numbers is not pixel-exact.";
+
+/// The choices of drop-down list `list` (`Part::SizeList` or `Part::WayList`).
+fn list_choices(list: Part) -> Vec<String> {
+    match list {
+        Part::SizeList => MENU_SCALES.iter().map(|&s| size_text(s)).collect(),
+        Part::WayList => Way::ALL.iter().map(|w| w.title().to_string()).collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The Programs page's three choices (ours; the last one's colon leads on to the list).
@@ -352,7 +371,8 @@ fn label_of(era: Era, part: Part) -> Option<String> {
         Part::Look(e) => Some(look_label(e).to_string()),
         Part::Colors(d) => Some(colors_label(d).to_string()),
         Part::WinKey(k) => Some(windows_key_label(k).to_string()),
-        Part::Size(s) => Some(size_label(s)),
+        Part::SizeList => Some(SIZE_LIST_LABEL.to_string()),
+        Part::WayList => Some(WAY_LIST_LABEL.to_string()),
         Part::Shown(s) => Some(shown_label(s).to_string()),
         Part::List => Some(LIST_LABEL.to_string()),
         p if p.is_push_button() => Some(button_label(era, p).to_string()),
@@ -412,6 +432,8 @@ pub struct Properties {
     /// Where the window's top-left corner is on the screen, in 1× pixels (Windows lines the
     /// dots of its focus rectangles up with the screen).
     pub screen: (i32, i32),
+    /// The open drop-down list (`Part::SizeList` or `Part::WayList`) and its highlighted entry.
+    pub drop: Option<(Part, usize)>,
 }
 
 impl Properties {
@@ -430,6 +452,70 @@ impl Properties {
             list_top: 0,
             programs: ProgramList::default(),
             screen: (0, 0),
+            drop: None,
+        }
+    }
+
+    /// The entry of drop-down list `list` that is chosen now, if the list has it (a size set in
+    /// settings.txt that the list does not offer has none).
+    pub fn list_chosen(&self, list: Part) -> Option<usize> {
+        match list {
+            Part::SizeList => MENU_SCALES.iter().position(|s| s.quarters() == self.values.scale.quarters()),
+            Part::WayList => Way::ALL.iter().position(|&w| w == self.values.scale.way),
+            _ => None,
+        }
+    }
+
+    /// What drop-down list `list` shows in its field.
+    pub fn list_text(&self, list: Part) -> String {
+        match list {
+            Part::SizeList => size_text(self.values.scale),
+            Part::WayList => self.values.scale.way.title().to_string(),
+            _ => String::new(),
+        }
+    }
+
+    /// Entry `i` of drop-down list `list` is chosen. False if it does not have one.
+    pub fn choose_entry(&mut self, list: Part, i: usize) -> bool {
+        let v = &mut self.values;
+        match list {
+            Part::SizeList => match MENU_SCALES.get(i) {
+                Some(s) => v.scale = s.with_way(v.scale.way),
+                None => return false,
+            },
+            Part::WayList => match Way::ALL.get(i) {
+                Some(&way) => v.scale = v.scale.with_way(way),
+                None => return false,
+            },
+            _ => return false,
+        }
+        self.changed = true;
+        true
+    }
+
+    /// Opens drop-down list `list` on its chosen entry, or closes the open one.
+    pub fn toggle_list(&mut self, list: Part) {
+        self.drop = match self.drop {
+            Some(_) => None,
+            None if self.enabled(list) => Some((list, self.list_chosen(list).unwrap_or(0))),
+            None => None,
+        };
+    }
+
+    /// The Up and Down keys (Left and Right too while it is closed) in drop-down list `list`:
+    /// the open list's highlight moves; a closed list's choice moves at once, as Windows' did.
+    pub fn step_list(&mut self, list: Part, forward: bool) {
+        let n = list_choices(list).len();
+        if n == 0 {
+            return;
+        }
+        let step = |at: usize| if forward { (at + 1).min(n - 1) } else { at.saturating_sub(1) };
+        match self.drop {
+            Some((open, hover)) if open == list => self.drop = Some((open, step(hover))),
+            _ => {
+                let next = self.list_chosen(list).map_or(0, step);
+                self.choose_entry(list, next);
+            }
         }
     }
 
@@ -527,6 +613,7 @@ impl Properties {
     pub fn show_page(&mut self, index: usize) {
         self.page = index.min(self.sheet.pages().len() - 1);
         self.focus = first_control(self.era, self.current_page(), &self.values);
+        self.drop = None;
     }
 
     /// Whether `part` can be used now: Apply only after a change, Clear only while the
@@ -538,6 +625,8 @@ impl Properties {
             Part::Clear => !self.documents_empty,
             Part::UsePcTime => self.values.clock_offset != 0,
             Part::Check(Check::PersonalizedMenus) => false,
+            // How a size is drawn matters only between whole numbers.
+            Part::WayList => !self.values.scale.is_whole(),
             _ => true,
         }
     }
@@ -573,7 +662,6 @@ impl Properties {
             Part::Look(era) => v.era = era,
             Part::Colors(depth) => v.colors = depth,
             Part::WinKey(key) => v.windows_key = key,
-            Part::Size(s) => v.scale = Scale::from_quarters(s.quarters()).with_way(v.scale.way),
             Part::Shown(shown) => {
                 v.programs = shown;
                 // The list shows what the choice is about: the classic programs' folders open
@@ -635,7 +723,6 @@ impl Properties {
                 Part::Look(_) => Part::Look(self.values.era),
                 Part::Colors(_) => Part::Colors(self.values.colors),
                 Part::WinKey(_) => Part::WinKey(self.values.windows_key),
-                Part::Size(_) => size_part(self.values.scale),
                 Part::Shown(_) => Part::Shown(self.values.programs),
                 p => p,
             };
@@ -665,7 +752,6 @@ impl Properties {
             Part::Look(_) => Era::ALL.iter().map(|&e| Part::Look(e)).collect(),
             Part::Colors(_) => Depth::ALL.iter().map(|&d| Part::Colors(d)).collect(),
             Part::WinKey(_) => WindowsKey::ALL.iter().map(|&k| Part::WinKey(k)).collect(),
-            Part::Size(_) => MENU_SCALES.iter().map(|&s| Part::Size(s)).collect(),
             Part::Shown(_) => Shown::ALL.iter().map(|&s| Part::Shown(s)).collect(),
             _ => return None,
         };
@@ -788,7 +874,7 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
             .iter()
             .map(|&e| Part::Look(e))
             .chain(Depth::ALL.iter().map(|&d| Part::Colors(d)))
-            .chain(MENU_SCALES.iter().map(|&s| Part::Size(s)))
+            .chain([Part::SizeList, Part::WayList])
             .chain([Part::Check(Check::StartWithWindows), Part::UsePcTime])
             .collect(),
         Page::OwnTaskbar => {
@@ -951,8 +1037,32 @@ const COLORS_ROWS: [(Depth, i32, i32); 3] =
     [(Depth::Sixteen, 188, 84), (Depth::TwoFiftySix, 188, 105), (Depth::TrueColor, 188, 126)];
 const LOOK_ROWS: [(Era, i32, i32); 3] = [(Era::Win95, 36, 84), (Era::Win98, 36, 105), (Era::Win2000, 36, 126)];
 const SIZE_GROUP: Rect = Rect::new(24, 165, 296, 68);
-const SIZE_ROW_Y: i32 = 181;
-const SIZE_ROW_X: [i32; 4] = [36, 96, 156, 216];
+/// The Size group's row (ours, PROVISIONAL): "Size:" and its drop-down list, "Drawn as:" and
+/// its list (21 high, as Run's and Shut Down's fields), the labels on the fields' text line; then
+/// a line of text.
+const SIZE_TEXT_Y: i32 = 183;
+const SIZE_LABEL_X: i32 = 36;
+const SIZE_FIELD: Rect = Rect::new(64, 179, 58, 21);
+const WAY_LABEL_X: i32 = 132;
+const WAY_FIELD: Rect = Rect::new(180, 179, 128, 21);
+const SIZE_LINE_Y: i32 = 206;
+/// An open list's rows (as Shut Down's in Windows 2000).
+const DROP_ROW_H: i32 = 13;
+
+/// Where drop-down list `list` opens: under its field, at least as wide as the field and as
+/// its widest entry, kept inside the window.
+fn drop_frame(font: &Font, list: Part) -> Option<Rect> {
+    let field = match list {
+        Part::SizeList => SIZE_FIELD,
+        Part::WayList => WAY_FIELD,
+        _ => return None,
+    };
+    let choices = list_choices(list);
+    let widest = choices.iter().map(|c| font.measure(c)).max().unwrap_or(0) + 6;
+    let w = field.w.max(widest);
+    let x = field.x.min(SIZE.0 - 4 - w);
+    Some(Rect::new(x, field.bottom(), w, choices.len() as i32 * DROP_ROW_H + 2))
+}
 const STARTUP_GROUP: Rect = Rect::new(24, 241, 296, 47);
 const STARTUP_CHECK: (i32, i32) = (36, 258);
 const CLOCK_GROUP: Rect = Rect::new(24, 296, 296, 55);
@@ -1091,10 +1201,17 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
                 let part = Part::Colors(depth);
                 parts.push((part, Rect::new(x, y, 17 + label_w(part) + 1, 16)));
             }
-            for (&s, &x) in MENU_SCALES.iter().zip(&SIZE_ROW_X) {
-                let part = Part::Size(s);
-                parts.push((part, Rect::new(x, SIZE_ROW_Y, 17 + label_w(part) + 1, 16)));
+            // An open list lies over everything under it: its rows come first.
+            if let Some((list, _)) = p.drop
+                && let Some(frame) = drop_frame(font, list)
+            {
+                for i in 0..list_choices(list).len() {
+                    let row = Rect::new(frame.x + 1, frame.y + 1 + i as i32 * DROP_ROW_H, frame.w - 2, DROP_ROW_H);
+                    parts.insert(i, (Part::DropRow(i), row));
+                }
             }
+            parts.push((Part::SizeList, SIZE_FIELD));
+            parts.push((Part::WayList, WAY_FIELD));
             parts.push(check(Part::Check(Check::StartWithWindows), STARTUP_CHECK.0, STARTUP_CHECK.1));
             parts.push((Part::UsePcTime, clock_button(font, p.era)));
         }
@@ -1453,10 +1570,19 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
                 option(fb, Part::Colors(d), p.values.colors == d, x, y);
             }
             group_box(fb, c, font, SIZE_GROUP, "Size", false);
-            for (&s, &x) in MENU_SCALES.iter().zip(&SIZE_ROW_X) {
-                option(fb, Part::Size(s), p.values.scale.quarters() == s.quarters(), x, SIZE_ROW_Y);
+            for (list, label_x, field) in [(Part::SizeList, SIZE_LABEL_X, SIZE_FIELD), (Part::WayList, WAY_LABEL_X, WAY_FIELD)] {
+                let enabled = p.enabled(list);
+                let label = label_of(era, list).unwrap_or_default();
+                if enabled {
+                    font.draw_label(fb, (label_x, SIZE_TEXT_Y), &label, i32::MAX, c.text, keys);
+                } else {
+                    font.draw_label(fb, (label_x + 1, SIZE_TEXT_Y + 1), &label, i32::MAX, c.etch, keys);
+                    font.draw_label(fb, (label_x, SIZE_TEXT_Y), &label, i32::MAX, c.shadow, keys);
+                }
+                paint_list_field(fb, theme, font, p, list, field, enabled, keys);
             }
-            lines(fb, 36, SIZE_ROW_Y + 22, &["Each pixel of the classic look becomes this many."]);
+            let line = if p.values.scale.is_whole() { SIZE_WHOLE_TEXT } else { SIZE_QUARTER_TEXT };
+            lines(fb, 36, SIZE_LINE_Y, &[line]);
             group_box(fb, c, font, STARTUP_GROUP, "Startup", false);
             check(fb, Part::Check(Check::StartWithWindows), STARTUP_CHECK.0, STARTUP_CHECK.1);
             group_box(fb, c, font, CLOCK_GROUP, "Clock", false);
@@ -1494,6 +1620,54 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
     for (part, _) in BUTTONS {
         button(fb, part);
     }
+    // An open drop-down list, over everything (as Shut Down's in Windows 2000: a 1px frame,
+    // white rows of 13px, the highlighted one in the menu's highlight).
+    if p.current_page() == Page::Bevel95
+        && let Some((list, hover)) = p.drop
+        && let Some(frame) = drop_frame(font, list)
+    {
+        fb.fill(frame, rgb(0xFFFFFF));
+        fb.frame(frame, c.text, c.text);
+        for (i, label) in list_choices(list).iter().enumerate() {
+            let row = Rect::new(frame.x + 1, frame.y + 1 + DROP_ROW_H * i as i32, frame.w - 2, DROP_ROW_H);
+            let color = if i == hover {
+                fb.fill(row, c.menu_highlight);
+                c.menu_highlight_text
+            } else {
+                c.text
+            };
+            font.draw(fb, row.x + 2, row.y, label, color);
+        }
+    }
+}
+
+/// A drop-down list's field (as Shut Down's in Windows 2000): the sunken field, what is chosen,
+/// highlighted while it has the focus and is closed, and the button with its arrow. Not usable:
+/// the face color inside and the text grayed (PROVISIONAL: not measured).
+#[allow(clippy::too_many_arguments)]
+fn paint_list_field(fb: &mut Framebuffer, theme: &Theme, font: &Font, p: &Properties, list: Part, r: Rect, enabled: bool, keys: bool) {
+    let c = &theme.colors;
+    let field = dialog::well(fb, r, c);
+    let item = Rect::new(field.x + 1, field.y + 1, field.w - 2 - 16, field.h - 2);
+    let text = p.list_text(list);
+    if !enabled {
+        fb.fill(field, c.face);
+        font.draw(fb, item.x + 2, item.y + 2, &text, c.etch);
+        font.draw(fb, item.x + 1, item.y + 1, &text, c.shadow);
+    } else {
+        let focused = p.focus == list && p.drop.is_none();
+        let color = if focused {
+            fb.fill(item, c.menu_highlight);
+            c.menu_highlight_text
+        } else {
+            c.text
+        };
+        font.draw(fb, item.x + 1, item.y + 1, &text, color);
+        if focused && keys {
+            dialog::invert_dots(fb, theme, item);
+        }
+    }
+    dialog::drop_down(fb, Rect::new(field.right() - 16, field.y, 16, field.h), c, p.pressed == Some(list));
 }
 
 /// Windows 2000's Start Menu Settings: the label, a sunken white list of check box rows, and
@@ -1652,6 +1826,7 @@ impl kit::Form for PropertiesWindow {
     }
     fn set_focus(&mut self, part: Part) {
         self.props.focus = part;
+        self.props.drop = None;
     }
     fn tab_stops(&self) -> Vec<Part> {
         self.props.tab_stops()
@@ -1672,8 +1847,34 @@ impl kit::Form for PropertiesWindow {
     fn key(&mut self, key: Key, mods: Mods) -> Option<Vec<Effect<Part>>> {
         let p = &mut self.props;
         let (list, programs) = (p.focus == Part::List, p.focus == Part::Programs);
-        let options = matches!(p.focus, Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Size(_) | Part::Shown(_));
+        let options = matches!(p.focus, Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_));
+        let drop_list = matches!(p.focus, Part::SizeList | Part::WayList).then_some(p.focus);
         match key {
+            // A drop-down list: Enter takes the highlighted entry and Esc leaves the choice as it
+            // was (both only close the open list), F4 opens and closes it, the arrows step.
+            Key::Enter if p.drop.is_some() => {
+                if let Some((list, hover)) = p.drop.take() {
+                    p.choose_entry(list, hover);
+                }
+            }
+            Key::Escape if p.drop.is_some() => p.drop = None,
+            Key::F4 if drop_list.is_some() => p.toggle_list(p.focus),
+            Key::Up | Key::Down | Key::Left | Key::Right if drop_list.is_some() => {
+                let open = p.drop.is_some();
+                if !open || matches!(key, Key::Up | Key::Down) {
+                    p.step_list(p.focus, matches!(key, Key::Down | Key::Right));
+                }
+            }
+            Key::Home | Key::End if drop_list.is_some() => {
+                let n = list_choices(p.focus).len();
+                let at = if key == Key::End { n.saturating_sub(1) } else { 0 };
+                match p.drop.as_mut() {
+                    Some((_, hover)) => *hover = at,
+                    None => {
+                        p.choose_entry(p.focus, at);
+                    }
+                }
+            }
             Key::Tab if mods.ctrl => self.page_step(!mods.shift),
             Key::PageUp | Key::PageDown if mods.ctrl => self.page_step(key == Key::PageDown),
             Key::Left | Key::Right if matches!(p.focus, Part::Tab(_)) => self.page_step(key == Key::Right),
@@ -1726,16 +1927,35 @@ impl kit::Form for PropertiesWindow {
             return Vec::new();
         }
         p.show_keys = true;
+        // In a drop-down list a letter or a digit goes to the next entry that starts with it.
+        if matches!(p.focus, Part::SizeList | Part::WayList) {
+            let list = p.focus;
+            let choices = list_choices(list);
+            let from = p.drop.map(|(_, h)| h).or_else(|| p.list_chosen(list)).unwrap_or(0);
+            let starts = |i: usize| choices[i].chars().next().is_some_and(|c| c.eq_ignore_ascii_case(&ch));
+            if let Some(i) = (1..=choices.len()).map(|k| (from + k) % choices.len()).find(|&i| starts(i)) {
+                match p.drop.as_mut() {
+                    Some((_, hover)) => *hover = i,
+                    None => {
+                        p.choose_entry(list, i);
+                    }
+                }
+                return Vec::new();
+            }
+        }
         self.access(ch)
     }
     fn access(&mut self, ch: char) -> Vec<Effect<Part>> {
         let p = &mut self.props;
         match p.access_key(ch) {
-            Some(part @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Size(_) | Part::Shown(_))) => {
+            Some(part @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_))) => {
                 p.focus = part;
                 p.choose(part);
             }
-            Some(Part::List) => p.focus = Part::List,
+            Some(part @ (Part::List | Part::SizeList | Part::WayList)) => {
+                p.focus = part;
+                p.drop = None;
+            }
             Some(part) => {
                 p.focus = part;
                 return kit::activate(self, part);
@@ -1753,7 +1973,7 @@ impl kit::Form for PropertiesWindow {
             Part::Programs => {
                 p.choose(Part::ProgramRow(p.programs.sel));
             }
-            f @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Size(_) | Part::Shown(_)) => {
+            f @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_)) => {
                 p.choose(f);
             }
             f if f.is_push_button() => return kit::activate(self, f),
@@ -1767,7 +1987,19 @@ impl kit::Form for PropertiesWindow {
             _ => Zone::Blank,
         };
         let p = &mut self.props;
+        // While a drop-down list is open a press takes its entry, or closes it (on its field
+        // or anywhere else; the press does nothing more).
+        if let Some((list, _)) = p.drop.take() {
+            if let Some(Part::DropRow(i)) = part {
+                p.choose_entry(list, i);
+            }
+            return Press::Done;
+        }
         match part {
+            Some(list @ (Part::SizeList | Part::WayList)) if p.enabled(list) => {
+                p.focus = list;
+                p.toggle_list(list);
+            }
             Some(Part::Tab(i)) => {
                 p.show_page(i);
                 p.focus = Part::Tab(i);
@@ -1822,7 +2054,7 @@ impl kit::Form for PropertiesWindow {
     }
     fn release(&mut self, part: Part) -> Vec<Effect<Part>> {
         match part {
-            Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Size(_) | Part::Shown(_) => {
+            Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_) => {
                 self.props.choose(part);
                 Vec::new()
             }
@@ -1840,6 +2072,37 @@ impl kit::Form for PropertiesWindow {
     }
     /// The wheel turns the list of the page shown: Start Menu Settings by a row for each notch,
     /// the long list of programs by three (Windows' usual).
+    /// Alt+Down and Alt+Up open a drop-down list, and close it taking the highlighted entry.
+    fn alt_key(&mut self, key: Key) -> bool {
+        let p = &mut self.props;
+        if !matches!(p.focus, Part::SizeList | Part::WayList) || !matches!(key, Key::Up | Key::Down) {
+            return false;
+        }
+        match p.drop.take() {
+            Some((list, hover)) => {
+                p.choose_entry(list, hover);
+            }
+            None => p.toggle_list(p.focus),
+        }
+        true
+    }
+    /// The pointer over an open drop-down list highlights the entry under it.
+    fn hover(&mut self, x: i32, y: i32) -> bool {
+        let Some((list, hover)) = self.props.drop else { return false };
+        match self.layout.hit(x, y) {
+            Some(Part::DropRow(i)) if i != hover => {
+                self.props.drop = Some((list, i));
+                true
+            }
+            _ => false,
+        }
+    }
+    /// Another window came to the front: an open drop-down list closes, as it is.
+    fn set_active(&mut self, active: bool) {
+        if !active {
+            self.props.drop = None;
+        }
+    }
     fn wheel(&mut self, notches: i32) {
         match self.props.current_page() {
             Page::StartMenuPrograms => self.props.scroll(-notches),
@@ -1909,7 +2172,7 @@ mod tests {
         assert!(p.choose(Part::Check(Check::AutoHide)));
         assert!(!p.values.options.auto_hide && p.enabled(Part::Apply), "Windows keeps Apply on once something changed");
         assert!(!p.choose(Part::Ok));
-        assert!(p.choose(Part::Size(Scale::whole(4))) && p.values.scale == Scale::whole(4));
+        assert!(p.choose_entry(Part::SizeList, 12) && p.values.scale == Scale::whole(4));
     }
 
     #[test]
@@ -1930,7 +2193,7 @@ mod tests {
             [
                 Part::Look(Era::Win95),
                 Part::Colors(Depth::TrueColor),
-                Part::Size(Scale::whole(2)),
+                Part::SizeList,
                 Part::Check(Check::StartWithWindows),
                 Part::Ok,
                 Part::Cancel
@@ -2061,6 +2324,51 @@ mod tests {
     }
 
     #[test]
+    fn the_size_lists_choose_every_size_and_how_it_is_drawn() {
+        let font = one_glyph_font();
+        let fonts = Fonts { regular: &font, bold: &font };
+        let mut w = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win98, values()), &fonts);
+        // Every size the menus offer, 1 to 4 in quarter steps; the size in use chosen.
+        assert_eq!(list_choices(Part::SizeList).len(), MENU_SCALES.len());
+        assert_eq!(w.props.list_chosen(Part::SizeList), MENU_SCALES.iter().position(|s| s.quarters() == 8));
+        assert!(!w.props.enabled(Part::WayList), "at a whole size the way does not matter");
+        // The keyboard: the arrows step the closed list at once.
+        w.props.focus = Part::SizeList;
+        assert!(kit::Form::key(&mut w, Key::Down, Mods::default()).is_some());
+        assert_eq!(w.props.values.scale.quarters(), 9);
+        assert!(w.props.changed && w.props.enabled(Part::WayList));
+        // F4 opens it on the chosen entry; Down moves the highlight only; Enter takes it.
+        kit::Form::key(&mut w, Key::F4, Mods::default());
+        assert_eq!(w.props.drop, Some((Part::SizeList, 5)));
+        kit::Form::key(&mut w, Key::Down, Mods::default());
+        assert_eq!((w.props.drop, w.props.values.scale.quarters()), (Some((Part::SizeList, 6)), 9));
+        kit::Form::key(&mut w, Key::Enter, Mods::default());
+        assert_eq!((w.props.drop, w.props.values.scale.quarters()), (None, 10));
+        // Esc closes it as it was.
+        kit::Form::key(&mut w, Key::F4, Mods::default());
+        kit::Form::key(&mut w, Key::Up, Mods::default());
+        kit::Form::key(&mut w, Key::Escape, Mods::default());
+        assert_eq!((w.props.drop, w.props.values.scale.quarters()), (None, 10));
+        // The mouse: a press on the field opens it, its rows lie over what is under them, a press
+        // on one takes it.
+        kit::Form::layout(&mut w, &fonts);
+        let field = w.layout.rect(Part::WayList).unwrap();
+        kit::Form::press(&mut w, Some(Part::WayList), field.x + 4, field.y + 4);
+        kit::Form::layout(&mut w, &fonts);
+        assert_eq!(w.props.drop, Some((Part::WayList, 0)));
+        let row = w.layout.rect(Part::DropRow(3)).unwrap();
+        assert_eq!(kit::Form::hit(&w, row.x + 2, row.y + 2), Some(Part::DropRow(3)));
+        kit::Form::press(&mut w, Some(Part::DropRow(3)), row.x + 2, row.y + 2);
+        assert_eq!((w.props.drop, w.props.values.scale.way, w.props.values.scale.quarters()), (None, Way::Smooth, 10));
+        // A digit goes to the next size that starts with it.
+        w.props.focus = Part::SizeList;
+        kit::Form::typed(&mut w, '3');
+        assert_eq!(w.props.values.scale.quarters(), 12);
+        // Back at a whole size the way stays as chosen, grayed.
+        assert!(!w.props.enabled(Part::WayList) && w.props.values.scale.way == Way::Smooth);
+    }
+
+    #[test]
     fn access_keys_and_arrows() {
         let mut p = Properties::new(Sheet::Taskbar, Era::Win95, values());
         assert_eq!(p.access_key('U'), Some(Part::Check(Check::AutoHide)));
@@ -2070,8 +2378,8 @@ mod tests {
         assert_eq!(p.access_key('d'), Some(Part::Advanced));
         let p = Properties::new(Sheet::Bevel95, Era::Win95, values());
         assert_eq!(p.access_key('8'), Some(Part::Look(Era::Win98)));
-        assert_eq!(p.access_key('4'), Some(Part::Size(Scale::whole(4))));
-        assert_eq!(p.arrow(Part::Size(Scale::whole(2)), true), Some(Part::Size(Scale::whole(3))));
+        assert_eq!(p.access_key('z'), Some(Part::SizeList));
+        assert_eq!(p.access_key('d'), None, "how a size is drawn is grayed at a whole size");
         assert_eq!(p.arrow(Part::Look(Era::Win95), false), Some(Part::Look(Era::Win95)));
         // The colors: C, 6 and T, the arrows between the three.
         assert_eq!(p.access_key('c'), Some(Part::Colors(Depth::Sixteen)));

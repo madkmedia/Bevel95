@@ -258,6 +258,11 @@ pub fn find(programs: &[Program], text: &str) -> Vec<usize> {
                     2
                 }
             };
+            // The sizes in their own order (1×, 1.25×, ... 4×), not their names' ("1.25×" first).
+            let name = match p.command {
+                Some(quick::Action::Size(s)) => format!("size {:03}", s.quarters()),
+                _ => name,
+            };
             Some((rank, name, !p.own, fold(&p.folder), i))
         })
         .collect();
@@ -1054,8 +1059,11 @@ mod tests {
         assert_eq!(names(&typed(Era::Win98, "theme")), ["Windows 2000 look", "Windows 95 look", "Windows 98 look"]);
         assert_eq!(names(&typed(Era::Win98, "look")), ["Windows 2000 look", "Windows 95 look", "Windows 98 look"]);
         // "size" and "scale": each size the Size menu offers; names beginning with it come first.
-        assert_eq!(names(&typed(Era::Win98, "size")), ["Size 1\u{d7}", "Size 2\u{d7}", "Size 3\u{d7}", "Size 4\u{d7}"]);
-        assert_eq!(typed(Era::Win98, "scale").found.len(), 4);
+        // In their own order, the quarter steps between the whole sizes.
+        let sizes: Vec<String> = crate::config::MENU_SCALES.iter().map(|s| format!("Size {s}\u{d7}")).collect();
+        assert_eq!(names(&typed(Era::Win98, "size")), sizes);
+        assert_eq!(sizes[..5], ["Size 1\u{d7}", "Size 1.25\u{d7}", "Size 1.5\u{d7}", "Size 1.75\u{d7}", "Size 2\u{d7}"]);
+        assert_eq!(typed(Era::Win98, "scale").found.len(), 13);
         // "sett": Bevel95 Settings, a word of its name beginning with it (and its own word
         // "settings"); nothing else has it.
         assert_eq!(names(&typed(Era::Win98, "sett")), ["Bevel95 Settings"]);
@@ -1065,7 +1073,7 @@ mod tests {
         assert!(rows(&w).iter().all(|(_, f)| f == "Bevel95"));
         assert_eq!(rows(&w)[0].0, "Bevel95 Settings", "its name begins with it");
         assert_eq!(w.selected().unwrap().command, Some(Action::Bar(crate::bar_menu::BarCommand::Settings)));
-        assert_eq!(status(w.found.len()), "23 item(s) found");
+        assert_eq!(status(w.found.len()), "32 item(s) found");
     }
 
     #[test]
