@@ -444,6 +444,14 @@ pub struct Properties {
     /// Bevel95 Settings' "Allow quarter sizes" box: the page's own state, not a setting
     /// (`follow_size` ticks it at a size between whole numbers).
     pub quarters: bool,
+    /// The box is ticked because the size shown is between whole numbers (opened so, or such a
+    /// size came from outside), not because the person ticked it: a whole size from outside (the
+    /// keep-this-size question's No) unticks it again.
+    quarters_followed: bool,
+    /// Unticking the box moved the list from a size between whole numbers to a whole one: the
+    /// values just after, and the size and `changed` just before (ticking the box again with
+    /// nothing else changed puts them back, so that OK then saves nothing).
+    quarter_before: Option<(Values, Scale, bool)>,
 }
 
 impl Properties {
@@ -464,13 +472,26 @@ impl Properties {
             screen: (0, 0),
             drop: None,
             quarters: !values.scale.is_whole(),
+            quarters_followed: !values.scale.is_whole(),
+            quarter_before: None,
         }
     }
 
-    /// The size shown was set from outside (opened, Apply, a size chosen on the bar): "Allow
-    /// quarter sizes" is ticked by itself when it is a size between whole numbers.
+    /// The size shown was set from outside (opened, Apply, a size chosen on the bar, the
+    /// keep-this-size question's No): "Allow quarter sizes" is ticked by itself when it is a size
+    /// between whole numbers, and unticked again at a whole size if it was ticked only so (a box
+    /// the person ticked stays ticked).
     pub fn follow_size(&mut self) {
-        self.quarters |= !self.values.scale.is_whole();
+        self.quarter_before = None;
+        if !self.values.scale.is_whole() {
+            if !self.quarters {
+                self.quarters = true;
+                self.quarters_followed = true;
+            }
+        } else if self.quarters_followed {
+            self.quarters = false;
+            self.quarters_followed = false;
+        }
     }
 
     /// The choices of drop-down list `list` as it offers them now.
@@ -692,13 +713,23 @@ impl Properties {
         if part == Part::Check(Check::QuarterSizes) {
             // Unticked while a size between whole numbers is chosen: the list moves to the
             // nearest whole size it offers (in effect at OK or Apply, as everything here).
+            // Ticked again with nothing else changed meanwhile: the size between whole numbers
+            // comes back, and with it whether anything was to apply (the review of 2026-11-21, C5).
             self.quarters = !self.quarters;
+            self.quarters_followed = false;
             self.drop = None;
             let s = self.values.scale;
             if !self.quarters && !s.is_whole() {
                 let whole = ((s.quarters() + 2) / 4).clamp(1, 4);
                 self.values.scale = Scale::whole(whole).with_way(s.way);
+                self.quarter_before = Some((self.values, s, self.changed));
                 self.changed = true;
+            } else if self.quarters
+                && let Some((after, scale, changed)) = self.quarter_before.take()
+                && after == self.values
+            {
+                self.values.scale = scale;
+                self.changed = changed;
             }
             return true;
         }
@@ -2478,17 +2509,25 @@ mod tests {
         w.props.focus = Part::SizeList;
         kit::Form::key(&mut w, Key::Down, Mods::default());
         assert_eq!(w.props.values.scale.quarters(), 12);
-        // Ticked again: every size; a size chosen from outside at a quarter ticks it by itself.
+        // Ticked again: every size (another size was chosen meanwhile: it stays).
         assert!(w.props.choose(Part::Check(Check::QuarterSizes)));
         assert_eq!(w.props.choices(Part::SizeList).len(), MENU_SCALES.len());
-        w.props.quarters = false;
-        w.props.values.scale = Scale::from_quarters(10);
-        w.props.follow_size();
-        assert!(w.props.quarters);
-        // A whole size from outside leaves the box as it is.
+        assert_eq!(w.props.values.scale.quarters(), 12);
+        // A whole size from outside leaves a box the person ticked as it is.
         w.props.values.scale = Scale::whole(3);
         w.props.follow_size();
         assert!(w.props.quarters);
+        // Unticked by the person, a size chosen from outside at a quarter ticks it by itself...
+        assert!(w.props.choose(Part::Check(Check::QuarterSizes)));
+        assert!(!w.props.quarters);
+        w.props.values.scale = Scale::from_quarters(10);
+        w.props.follow_size();
+        assert!(w.props.quarters);
+        // ...and a whole size from outside after it (the keep-this-size question's No) unticks
+        // it again, as the window would have opened at that size (the review of 2026-11-21, C6).
+        w.props.values.scale = Scale::whole(2);
+        w.props.follow_size();
+        assert!(!w.props.quarters && !w.props.is_checked(Check::QuarterSizes));
         // 1.5 and 1.25 go to 2 and 1 (half up); a size past the list's (6.5) to 4.
         for (q, want) in [(6, 2), (5, 1), (26, 4)] {
             let mut v = values();
@@ -2497,6 +2536,44 @@ mod tests {
             p.choose(Part::Check(Check::QuarterSizes));
             assert_eq!(p.values.scale, Scale::whole(want), "{q}");
         }
+    }
+
+    #[test]
+    fn ticking_allow_quarter_sizes_again_brings_the_size_in_force_back() {
+        // Opened at 1.75: unticked, the list goes to 2 and there is something to apply; ticked
+        // again with nothing else touched, 1.75 is back and OK saves nothing (C5).
+        let mut v = values();
+        v.scale = Scale::from_quarters(7).with_way(Way::Smooth);
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, v);
+        assert!(p.choose(Part::Check(Check::QuarterSizes)));
+        assert_eq!((p.values.scale, p.changed), (Scale::whole(2).with_way(Way::Smooth), true));
+        assert!(p.choose(Part::Check(Check::QuarterSizes)));
+        assert_eq!(p.values, v);
+        assert!(p.quarters && !p.changed);
+        // Opened at 1.75 by a quarter size still being asked about, then the question's No: the
+        // bar is back at 2, the box follows it (C6), and ticked by the person stays ticked.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, v);
+        p.values.scale = Scale::whole(2);
+        p.follow_size();
+        assert!(!p.quarters);
+        // Something else changed meanwhile: the box gives the size back, `changed` stays.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, v);
+        p.choose(Part::Check(Check::QuarterSizes));
+        p.values.colors = if v.colors == Depth::Sixteen { Depth::TrueColor } else { Depth::Sixteen };
+        p.choose(Part::Check(Check::QuarterSizes));
+        assert_eq!((p.values.scale, p.changed), (Scale::whole(2).with_way(Way::Smooth), true), "another value changed: the list is left as it is");
+        // A size chosen in the list meanwhile stays.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, v);
+        p.choose(Part::Check(Check::QuarterSizes));
+        p.values.scale = Scale::whole(3);
+        p.choose(Part::Check(Check::QuarterSizes));
+        assert_eq!((p.values.scale, p.changed), (Scale::whole(3), true));
+        // Unticked, then a size from outside (Apply, the bar): ticking does not bring back the old.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, v);
+        p.choose(Part::Check(Check::QuarterSizes));
+        p.follow_size();
+        p.choose(Part::Check(Check::QuarterSizes));
+        assert_eq!(p.values.scale, Scale::whole(2).with_way(Way::Smooth));
     }
 
     #[test]

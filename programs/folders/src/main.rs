@@ -349,8 +349,10 @@ fn read_desktop(era: Era) -> Option<(Vec<Seen>, usize, u64)> {
 }
 
 /// This PC's drives as My Computer shows them, with their free space, then (in each look's order)
-/// Control Panel and Printers (Windows 2000 had no Printers there).
-fn read_my_computer(era: Era) -> Snapshot {
+/// Control Panel and Printers (Windows 2000 had no Printers there). `ask_lock`: a drive that cannot
+/// be read is asked whether it is locked by BitLocker (on a reading thread only: false on a
+/// window's thread, which then uses what the reading threads found, `known_locked`).
+fn read_my_computer(era: Era, ask_lock: bool) -> Snapshot {
     let mut items = Vec::new();
     let mut spaces = HashMap::new();
     // SAFETY: plain queries; a drive without a disk answers with an error, not a message box.
@@ -363,7 +365,8 @@ fn read_my_computer(era: Era) -> Snapshot {
         let root = format!("{letter}:\\");
         let w = wide(&root);
         // SAFETY: a null-terminated root path.
-        let kind = match unsafe { GetDriveTypeW(w.as_ptr()) } {
+        let drive_type = unsafe { GetDriveTypeW(w.as_ptr()) };
+        let kind = match drive_type {
             2 if letter <= 'B' => DriveKind::Floppy,
             2 => DriveKind::Removable,
             3 => DriveKind::Fixed,
@@ -383,9 +386,9 @@ fn read_my_computer(era: Era) -> Snapshot {
                 let len = label.iter().position(|&c| c == 0).unwrap_or(0);
                 label_text = String::from_utf16_lossy(&label[..len]);
                 note_lock(letter, false);
-            } else {
+            } else if ask_lock {
                 // SAFETY: a plain query, right after the call that failed.
-                lock_after_failed_read(letter, unsafe { GetLastError() });
+                lock_after_failed_read(letter, drive_type, unsafe { GetLastError() });
             }
             let (mut free, mut total) = (0u64, 0u64);
             // SAFETY: a null-terminated root and valid out-pointers.
@@ -451,7 +454,7 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
             };
             let snapshot = match &shows {
                 Shows::MyComputer => {
-                    let s = read_my_computer(era);
+                    let s = read_my_computer(era, true);
                     let names: Vec<(String, String)> = s.items.iter().map(|i| (i.id.clone(), i.name.clone())).collect();
                     if last_drives.as_ref() == Some(&names) {
                         None
@@ -477,6 +480,9 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
                                 note_lock(l, locked);
                                 locked
                             });
+                            if locked {
+                                tell_locked(id, letter);
+                            }
                             let flag = if locked { LOCKED_FLAG } else { 0 };
                             // SAFETY: posting to the program's own window.
                             unsafe { PostMessageW(hub as HWND, WM_UNREADABLE.id(), id, letter as isize | flag) };
@@ -620,6 +626,37 @@ fn known_locked(letter: char, fresh: bool) -> bool {
     LOCKED.lock().ok().and_then(|all| all.as_ref()?.get(&letter.to_ascii_uppercase()).copied()).is_some_and(|(locked, at)| locked && (!fresh || at.elapsed() < LOCK_BELIEVED))
 }
 
+/// The windows (by id) whose reader found their drive locked and is telling the program so
+/// (`WM_UNREADABLE` with `LOCKED_FLAG`): the message is acted on only if its window and letter are
+/// here, and each is taken out as it is acted on, so that a message from another program, which
+/// anyone can send, does nothing.
+static LOCKED_TOLD: Mutex<Vec<(usize, char)>> = Mutex::new(Vec::new());
+
+/// A reader of window `id` found its drive `letter` locked and is about to tell the program.
+fn tell_locked(id: usize, letter: char) {
+    if let Ok(mut told) = LOCKED_TOLD.lock() {
+        // At most one per window: a window has one reader, which tells it once.
+        told.retain(|&(w, _)| w != id);
+        told.push((id, letter.to_ascii_uppercase()));
+    }
+}
+
+/// Whether window `id`'s reader told that drive `letter` is locked (taken out: once only).
+fn take_locked_told(id: usize, letter: char) -> bool {
+    let letter = letter.to_ascii_uppercase();
+    if !letter.is_ascii_uppercase() {
+        return false;
+    }
+    let Ok(mut told) = LOCKED_TOLD.lock() else { return false };
+    match told.iter().position(|&t| t == (id, letter)) {
+        Some(i) => {
+            told.swap_remove(i);
+            true
+        }
+        None => false,
+    }
+}
+
 /// The drive letter of a drive's root ("E:\"), if `id` is one.
 fn root_letter(id: &str) -> Option<char> {
     let b = id.as_bytes();
@@ -643,10 +680,18 @@ fn kind_of(item: &Item) -> ItemKind {
     }
 }
 
-/// Reads drive `letter`'s lock after a call on it failed (`error`: `GetLastError` right after it)
-/// and keeps what was found. On a reading thread only.
-fn lock_after_failed_read(letter: char, error: u32) -> bool {
-    let locked = bevel_winkit::bitlocker::locked_after_failed_read(letter, error);
+/// The window's menus' state, its selection's kinds as the menu on the icons has them
+/// (`kind_of`: a drive found locked has Unlock Drive... in 98's and 2000's File menu too).
+fn menu_state(h: &FolderHost, can_paste: bool) -> menus::State {
+    let mut state = h.form.menu_state(can_paste);
+    state.kinds = h.form.view.selection().into_iter().map(|i| kind_of(&h.form.view.items[i])).collect();
+    state
+}
+
+/// Reads drive `letter`'s lock after a call on it failed (`error`: `GetLastError` right after it;
+/// `drive_type`: its `GetDriveTypeW`) and keeps what was found. On a reading thread only.
+fn lock_after_failed_read(letter: char, drive_type: u32, error: u32) -> bool {
+    let locked = bevel_winkit::bitlocker::locked_after_failed_read(letter, drive_type, error);
     note_lock(letter, locked);
     locked
 }
@@ -826,7 +871,8 @@ fn drive_of(root: &Path) -> Option<(DriveKind, String)> {
     let letter = root.to_string_lossy().chars().next()?.to_ascii_uppercase();
     let w = wide(&format!("{letter}:\\"));
     // SAFETY: a null-terminated root path.
-    let kind = match unsafe { GetDriveTypeW(w.as_ptr()) } {
+    let drive_type = unsafe { GetDriveTypeW(w.as_ptr()) };
+    let kind = match drive_type {
         2 if letter <= 'B' => DriveKind::Floppy,
         2 => DriveKind::Removable,
         3 => DriveKind::Fixed,
@@ -845,7 +891,7 @@ fn drive_of(root: &Path) -> Option<(DriveKind, String)> {
             note_lock(letter, false);
         } else {
             // SAFETY: a plain query, right after the call that failed.
-            lock_after_failed_read(letter, unsafe { GetLastError() });
+            lock_after_failed_read(letter, drive_type, unsafe { GetLastError() });
         }
     }
     Some((kind, text))
@@ -891,7 +937,7 @@ fn read_facts(shows: &Shows) -> Facts {
         _ => None,
     };
     let (items, my_computer) = match shows {
-        Shows::MyComputer => (read_my_computer(Era::Win95).items.iter().filter(|i| matches!(i.picture, Picture::Art(Art::Drive(_)))).count(), true),
+        Shows::MyComputer => (read_my_computer(Era::Win95, true).items.iter().filter(|i| matches!(i.picture, Picture::Art(Art::Drive(_)))).count(), true),
         Shows::Desktop => (read_desktop(Era::Win95).map_or(0, |(seen, ..)| seen.len() + 3), false),
         Shows::Folder(p) => (shell::list_folder(p).map_or(0, |(seen, _)| seen.len()), false),
     };
@@ -1604,7 +1650,7 @@ fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
     start_reader(id, shows, era, stop, HUB.with(Cell::get));
     if with_tree {
         let wanted = kit::scope::<FolderHost, _>(hwnd, || kit::with::<FolderHost, _>(|h| h.form.tree.wanted()).unwrap_or_default());
-        read_tree_rows(hwnd, era, wanted);
+        read_tree_rows(hwnd, era, wanted, OpenedBy::Person);
     }
     Some(hwnd)
 }
@@ -1827,7 +1873,7 @@ fn tree_rows(era: Era, id: &str) -> Option<Vec<NodeSpec>> {
             Some(rows)
         }
         MY_COMPUTER => Some(
-            read_my_computer(era)
+            read_my_computer(era, true)
                 .items
                 .into_iter()
                 .map(|i| match i.picture {
@@ -1847,14 +1893,43 @@ fn tree_rows(era: Era, id: &str) -> Option<Vec<NodeSpec>> {
     }
 }
 
-/// Rows read for a window's tree: (the window, the row, its rows or `None`, and whether the row
-/// is a drive that could not be read because it is locked by BitLocker).
-type TreeRows = (usize, String, Option<Vec<NodeSpec>>, bool);
+/// Why a tree's rows are read: the person opened them (a click, a key, the window's start), or a
+/// drag resting on a row opened it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OpenedBy {
+    Person,
+    Drag,
+}
+
+/// Rows read for a window's tree: (the window, the row, its rows or `None`, whether the row is a
+/// drive that could not be read because it is locked by BitLocker, and why it was read).
+type TreeRows = (usize, String, Option<Vec<NodeSpec>>, bool, OpenedBy);
 static TREE_ROWS: Mutex<Vec<TreeRows>> = Mutex::new(Vec::new());
+
+/// What a tree row that could not be read leads to, once it is marked as not readable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnreadableRow {
+    /// Nothing more (not a drive; or a locked drive's row opened by a drag: Windows' unlock window
+    /// is never started by a drag resting on a row).
+    Nothing,
+    /// The look's "not accessible" message for the drive (Retry opens it again).
+    DriveMessage,
+    /// Windows' own unlock window for the drive locked by BitLocker.
+    Unlock,
+}
+
+fn after_unreadable_row(id: &str, locked: bool, by: OpenedBy) -> UnreadableRow {
+    match (root_letter(id).is_some() && locked, by) {
+        (true, OpenedBy::Person) => UnreadableRow::Unlock,
+        (true, OpenedBy::Drag) => UnreadableRow::Nothing,
+        (false, _) if id.len() == 3 && id.ends_with(":\\") => UnreadableRow::DriveMessage,
+        _ => UnreadableRow::Nothing,
+    }
+}
 
 /// Reads the rows of `ids` for window `hwnd`'s tree on a thread of its own (a slow drive never
 /// holds the window up), then tells the program (`WM_TREE_ROWS`).
-fn read_tree_rows(hwnd: HWND, era: Era, ids: Vec<String>) {
+fn read_tree_rows(hwnd: HWND, era: Era, ids: Vec<String>, by: OpenedBy) {
     if ids.is_empty() {
         return;
     }
@@ -1870,7 +1945,7 @@ fn read_tree_rows(hwnd: HWND, era: Era, ids: Vec<String>) {
                     note_lock(l, locked);
                     locked
                 });
-            TREE_ROWS.lock().map(|mut r| r.push((w, id, rows, locked))).ok();
+            TREE_ROWS.lock().map(|mut r| r.push((w, id, rows, locked, by))).ok();
             // SAFETY: posting to the program's own window.
             unsafe { PostMessageW(hub as HWND, WM_TREE_ROWS.id(), 0, 0) };
         }
@@ -1886,7 +1961,7 @@ fn tree_rows_ready() {
     let all = TREE_ROWS.lock().map(|mut r| std::mem::take(&mut *r)).unwrap_or_default();
     let mut unreadable_drive: Vec<(HWND, char, Option<String>)> = Vec::new();
     let mut locked_drive: Vec<char> = Vec::new();
-    for (w, id, rows, locked) in all {
+    for (w, id, rows, locked, by) in all {
         let hwnd = w as HWND;
         if !kit::windows::<FolderHost>().contains(&hwnd) {
             continue;
@@ -1899,11 +1974,12 @@ fn tree_rows_ready() {
                         log("folders: a folder of the tree could not be read");
                         h.form.tree.unreadable(&id);
                         // A drive opened in the tree: the look's message (Retry opens it again);
-                        // one locked by BitLocker: Windows' own unlock window instead.
-                        if let Some(letter) = root_letter(&id).filter(|_| locked) {
-                            locked_drive.push(letter);
-                        } else if id.len() == 3 && id.ends_with(":\\") {
-                            unreadable_drive.push((hwnd, id.chars().next().unwrap_or('A'), Some(id.clone())));
+                        // one locked by BitLocker: Windows' own unlock window instead, but only
+                        // for a row the person opened, never for one a drag opened.
+                        match after_unreadable_row(&id, locked, by) {
+                            UnreadableRow::Unlock => locked_drive.extend(root_letter(&id)),
+                            UnreadableRow::DriveMessage => unreadable_drive.push((hwnd, id.chars().next().unwrap_or('A'), Some(id.clone()))),
+                            UnreadableRow::Nothing => {}
                         }
                     }
                 }
@@ -2179,7 +2255,7 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
                 }
             });
             if let Some(wanted) = wanted {
-                read_tree_rows(hwnd, era, wanted);
+                read_tree_rows(hwnd, era, wanted, OpenedBy::Drag);
             }
             return effect;
         }
@@ -2322,7 +2398,7 @@ fn ask_drive(owner: HWND, letter: char, node: Option<String>) {
     }
     let Some((era, look)) = the_look() else { return };
     let title = kit::scope::<FolderHost, _>(owner, || kit::with::<FolderHost, _>(|h| h.form.title.clone())).unwrap_or_default();
-    let kind = read_my_computer(era).items.iter().find_map(|i| match i.picture {
+    let kind = read_my_computer(era, false).items.iter().find_map(|i| match i.picture {
         Picture::Art(Art::Drive(k)) if i.id.starts_with(letter) => Some(k),
         _ => None,
     });
@@ -2468,7 +2544,7 @@ fn tree_tick() {
             })
             .unwrap_or_default()
         });
-        read_tree_rows(hwnd, era, wanted);
+        read_tree_rows(hwnd, era, wanted, OpenedBy::Person);
         if settled {
             kit::scope::<FolderHost, _>(hwnd, || tree_go(hwnd, false));
         }
@@ -2511,6 +2587,7 @@ fn node_target(n: &pane::Node) -> Option<Target> {
     let kind = match n.kind {
         NodeKind::Desktop => return None,
         NodeKind::Folder => ItemKind::Folder,
+        NodeKind::Drive(_) if node_locked(n) => ItemKind::LockedDrive,
         NodeKind::Drive(_) => ItemKind::Drive,
         NodeKind::MyDocuments => ItemKind::System(System::MyDocuments),
         NodeKind::MyComputer => ItemKind::System(System::MyComputer),
@@ -2563,6 +2640,8 @@ fn tree_command(hwnd: HWND, c: D, by_keyboard: bool) {
         }
     };
     match c {
+        // A drive shown locked: Windows' unlock window at once (`unlock_shown_locked`).
+        D::Explore | D::Open if unlock_shown_locked(&target) => {}
         D::Explore => match node_shows(&node.id) {
             Some(s) => open_explorer(s),
             None => open_target(target),
@@ -2602,20 +2681,34 @@ fn tree_command(hwnd: HWND, c: D, by_keyboard: bool) {
             }
         }
         D::ItemProperties if !matches!(node.kind, NodeKind::ControlPanel | NodeKind::Printers) => file_ops::properties(&[target]),
+        // Windows' own unlock window; it asks for the password itself.
+        D::UnlockDrive if node_locked(&node) => {
+            if let Some(letter) = root_letter(&node.id) {
+                log(&format!("folders: Unlock Drive... on {letter}: (the tree)"));
+                bevel_winkit::bitlocker::start_unlock(letter);
+            }
+        }
         _ => {}
     }
+}
+
+/// Whether a tree row is a drive whose last reading found it locked by BitLocker (as `kind_of`
+/// decides for a drive's icon).
+fn node_locked(n: &pane::Node) -> bool {
+    matches!(n.kind, NodeKind::Drive(_)) && root_letter(&n.id).is_some_and(|l| known_locked(l, false))
 }
 
 /// The menu on a tree row (`menu_row`), at `menu_at`.
 fn tree_menu(hwnd: HWND) {
     let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
-    let Some((kind, at, era)) = kit::with::<FolderHost, _>(|h| h.form.menu_node().map(|n| (n.kind, h.form.menu_at, h.form.era))).flatten()
+    let Some((kind, locked, at, era)) =
+        kit::with::<FolderHost, _>(|h| h.form.menu_node().map(|n| (n.kind, node_locked(n), h.form.menu_at, h.form.era))).flatten()
     else {
         kit::with::<FolderHost, _>(|h| h.form.menu_row = None);
         return;
     };
     let can_paste = file_ops::clipboard_has_files();
-    let entries = pane::row_entries(kind, can_paste);
+    let entries = pane::row_entries(kind, can_paste, locked);
     if entries.is_empty() {
         kit::with::<FolderHost, _>(|h| h.form.menu_row = None);
         return;
@@ -2626,7 +2719,7 @@ fn tree_menu(hwnd: HWND) {
         kit::with::<FolderHost, _>(|h| h.form.menu_row = None);
         return;
     };
-    let menu = pane::row_menu(era, kind, can_paste);
+    let menu = pane::row_menu(era, kind, can_paste, locked);
     let at = to_screen(hwnd, at, scale);
     // 95 and 98 blanked the status bar while an entry of this menu was lit (no words for any);
     // 2000 left it as it was (`private/probes/measure17`, G).
@@ -2911,6 +3004,7 @@ fn open_selected(hwnd: HWND) {
         && SAVED.with(|s| s.borrow().own_window)
         && !kit::with::<FolderHost, _>(|h| h.form.tree_shown || h.form.exploring).unwrap_or(false);
     if let [one] = targets.as_slice()
+        && !matches!(one.kind, ItemKind::LockedDrive)
         && let Some(shows) = place_of(one)
         && !own
     {
@@ -2922,9 +3016,21 @@ fn open_selected(hwnd: HWND) {
     }
 }
 
+/// Open on a drive whose icon is shown as locked (`kind_of`: its menu has Unlock Drive...):
+/// Windows' own unlock window at once, without going to the drive first (true).
+fn unlock_shown_locked(t: &Target) -> bool {
+    let Some(letter) = root_letter(&t.id).filter(|_| matches!(t.kind, ItemKind::LockedDrive)) else { return false };
+    log(&format!("folders: {letter}: is shown locked by BitLocker; Windows' unlock window instead"));
+    bevel_winkit::bitlocker::start_unlock(letter);
+    true
+}
+
 /// Opens an item as Explorer would: a folder or a drive in a window of its own here, Control Panel
 /// and Printers as Windows' own, a file with its program.
 fn open_target(t: Target) {
+    if unlock_shown_locked(&t) {
+        return;
+    }
     match place_of(&t) {
         Some(shows) => open(shows),
         None => {
@@ -3052,6 +3158,9 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
             D::Explore if offered(D::Explore) => {
                 // Places shown here open in an Explorer window of Bevel95's; others in Windows'.
                 for t in &selection {
+                    if unlock_shown_locked(t) {
+                        continue;
+                    }
                     match place_of(t) {
                         Some(s) => open_explorer(s),
                         None => file_ops::explore(std::slice::from_ref(t)),
@@ -3242,7 +3351,7 @@ fn tool(hwnd: HWND, t: Tool) {
 fn views_menu(hwnd: HWND) {
     let Some((_, look)) = the_look() else { return };
     let scale = look.scale;
-    let Some((rows, button)) = kit::with::<FolderHost, _>(|h| (menus::view_choices(&h.form.menu_state(false)), h.form.rect(Part::Tool(Tool::Views)))) else { return };
+    let Some((rows, button)) = kit::with::<FolderHost, _>(|h| (menus::view_choices(&menu_state(h, false)), h.form.rect(Part::Tool(Tool::Views)))) else { return };
     let Some(button) = button else { return };
     kit::update::<FolderHost>(|h| h.form.bar.open_list = Some(Tool::Views));
     let at = to_screen(hwnd, (button.x, button.bottom()), scale);
@@ -3325,7 +3434,7 @@ fn toggle_list() {
         });
         return;
     }
-    let computer = read_my_computer(era)
+    let computer = read_my_computer(era, false)
         .items
         .iter()
         .map(|i| {
@@ -3380,7 +3489,7 @@ fn list_chosen(hwnd: HWND, i: usize) {
         }),
         Some(id) => {
             let era = the_look().map_or(Era::Win95, |(e, _)| e);
-            if let Some(item) = read_my_computer(era).items.iter().find(|it| it.id == id) {
+            if let Some(item) = read_my_computer(era, false).items.iter().find(|it| it.id == id) {
                 open_target(Target { id: item.id.clone(), name: item.name.clone(), kind: kind_of(item) });
             }
         }
@@ -3394,7 +3503,7 @@ fn list_chosen(hwnd: HWND, i: usize) {
 fn go_typed(hwnd: HWND) {
     let Some((era, _)) = the_look() else { return };
     let Some(text) = kit::with::<FolderHost, _>(|h| h.form.field.text.clone()) else { return };
-    let drives: Vec<(String, String)> = read_my_computer(era).items.iter().map(|i| (i.id.clone(), i.name.clone())).collect();
+    let drives: Vec<(String, String)> = read_my_computer(era, false).items.iter().map(|i| (i.id.clone(), i.name.clone())).collect();
     // A relative name means one in the folder the window shows (the Desktop's: the desktop
     // folder), never one in the program's working folder (the second safety review of
     // 2026-11-18, C2).
@@ -3628,7 +3737,7 @@ fn track_rows(hwnd: HWND, rows: Vec<menus::Row>, at: (i32, i32), above: Option<i
         return menu::Ended { outcome: Outcome::Cancelled, pending: None, keyboard: false, rect: RECT::default(), layout: None };
     };
     let can_paste = file_ops::clipboard_has_files();
-    let state = kit::with::<FolderHost, _>(|h| h.form.menu_state(can_paste));
+    let state = kit::with::<FolderHost, _>(|h| menu_state(h, can_paste));
     let Some(state) = state else {
         return menu::Ended { outcome: Outcome::Cancelled, pending: None, keyboard: false, rect: RECT::default(), layout: None };
     };
@@ -3680,7 +3789,7 @@ fn menu_bar(hwnd: HWND, first: usize) {
     let mut by_key = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_LBUTTON)) } >= 0;
     loop {
         let Some((rows, rects)) = kit::with::<FolderHost, _>(|h| {
-            let state = h.form.menu_state(file_ops::clipboard_has_files());
+            let state = menu_state(h, file_ops::clipboard_has_files());
             let rects: Vec<(usize, bevel_core::fb::Rect)> = (0..menus::titles(h.form.era).len()).filter_map(|i| h.form.title_rect(i).map(|r| (i, r))).collect();
             (menus::bar_rows(&state, title), rects)
         }) else {
@@ -3804,7 +3913,7 @@ fn item_menu(hwnd: HWND) {
 /// The menu of the window's empty area, at `menu_at`.
 fn background_menu(hwnd: HWND) {
     let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
-    let Some((rows, at)) = kit::with::<FolderHost, _>(|h| (menus::background_rows(&h.form.menu_state(file_ops::clipboard_has_files())), h.form.menu_at))
+    let Some((rows, at)) = kit::with::<FolderHost, _>(|h| (menus::background_rows(&menu_state(h, file_ops::clipboard_has_files())), h.form.menu_at))
     else {
         return;
     };
@@ -3919,7 +4028,13 @@ unsafe extern "system" fn hub_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             if let Some(hwnd) = window_of(wparam) {
                 let letter = char::from_u32((lparam & 0xFFFF) as u32).unwrap_or('A');
                 if lparam & LOCKED_FLAG != 0 {
-                    locked_found(hwnd, letter);
+                    // Only what this program's own reader recorded for that window (the review of
+                    // 2026-11-21, C1): from any other sender, nothing.
+                    if take_locked_told(wparam, letter) {
+                        locked_found(hwnd, letter);
+                    } else {
+                        log("folders: a message about a locked drive that no reader of this program sent; nothing done");
+                    }
                 } else {
                     ask_drive(hwnd, letter, None);
                 }
@@ -4506,6 +4621,41 @@ mod tests {
         note_lock('Q', false);
         assert_eq!(kind_of(&drive("Q:\\")), ItemKind::Drive);
         assert!(!known_locked('Q', false));
+    }
+
+    /// A tree row that could not be read: a locked drive's row opened by the person starts
+    /// Windows' unlock window, one a drag opened is only marked as not readable (the review of
+    /// 2026-11-21, A1); a drive that cannot be read for another reason gets the look's message
+    /// as before, by either. (Plain values: nothing is started.)
+    #[test]
+    fn a_drag_resting_on_a_locked_drive_starts_nothing() {
+        use super::{OpenedBy, UnreadableRow, after_unreadable_row};
+        assert_eq!(after_unreadable_row("E:\\", true, OpenedBy::Person), UnreadableRow::Unlock);
+        assert_eq!(after_unreadable_row("E:\\", true, OpenedBy::Drag), UnreadableRow::Nothing);
+        for by in [OpenedBy::Person, OpenedBy::Drag] {
+            assert_eq!(after_unreadable_row("E:\\", false, by), UnreadableRow::DriveMessage, "{by:?}");
+            assert_eq!(after_unreadable_row("E:\\folder", true, by), UnreadableRow::Nothing, "{by:?}");
+            assert_eq!(after_unreadable_row("E:\\folder", false, by), UnreadableRow::Nothing, "{by:?}");
+            assert_eq!(after_unreadable_row("::my-computer", true, by), UnreadableRow::Nothing, "{by:?}");
+        }
+    }
+
+    /// "This drive turned out locked" is acted on only when this program's own reader told it,
+    /// for that window and that letter, once (the review of 2026-11-21, C1). Window ids no test
+    /// window has.
+    #[test]
+    fn a_locked_drive_message_from_outside_does_nothing() {
+        use super::{take_locked_told, tell_locked};
+        // Nobody told: another program's message.
+        assert!(!take_locked_told(9_001, 'T'));
+        tell_locked(9_001, 't');
+        assert!(!take_locked_told(9_002, 'T'), "another window");
+        assert!(!take_locked_told(9_001, 'U'), "another letter");
+        assert!(take_locked_told(9_001, 'T'));
+        assert!(!take_locked_told(9_001, 'T'), "once only: the same message again does nothing");
+        // Not a drive letter: never.
+        tell_locked(9_003, '1');
+        assert!(!take_locked_told(9_003, '1'));
     }
 
     /// The folder windows' private messages are registered by name, each its own number: none is

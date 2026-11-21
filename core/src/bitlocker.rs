@@ -35,6 +35,65 @@ pub fn ask_shell_after(error: u32) -> bool {
     error != 0 && error != LOCKED_VOLUME && error != NOT_READY
 }
 
+/// Whether a drive of Windows' kind `drive_type` (`GetDriveTypeW`) can be locked by BitLocker at
+/// all, so that its lock is worth asking about: only a fixed (3) or a removable (2) drive. A
+/// network drive (4), a CD or DVD drive (5) and a RAM disk (6) are never asked: BitLocker does
+/// not lock them, and asking a network drive whose server is off only makes the asker wait.
+pub fn may_be_locked(drive_type: u32) -> bool {
+    matches!(drive_type, 2 | 3)
+}
+
+/// How long after Windows' unlock window was started for a drive it is not started again for
+/// that drive, whoever asks (a drag resting on the drive's row, a click on its plus and then on
+/// its row, two windows): one password window for one drive.
+pub const UNLOCK_AGAIN_AFTER_MS: u64 = 10_000;
+
+/// When Windows' unlock window was last started for each drive letter (A to Z), in
+/// milliseconds of any clock that only goes forward, and whether a start left out since then
+/// was already told (the log says it once, not several times a second).
+#[derive(Debug, Clone, Default)]
+pub struct UnlockStarts {
+    at: [Option<(u64, bool)>; 26],
+}
+
+/// What `UnlockStarts::ask` decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnlockStart {
+    /// Start Windows' unlock window (the start is noted).
+    Start,
+    /// Leave it out: it was started for this drive less than `UNLOCK_AGAIN_AFTER_MS` ago
+    /// (`first`: the first one left out since that start, the one the log tells).
+    LeftOut { first: bool },
+    /// Not a drive letter A to Z: nothing is started.
+    NotADrive,
+}
+
+impl UnlockStarts {
+    pub const fn new() -> Self {
+        Self { at: [None; 26] }
+    }
+
+    /// Whether the unlock window may be started for drive `letter` at `now_ms`.
+    pub fn ask(&mut self, letter: char, now_ms: u64) -> UnlockStart {
+        let letter = letter.to_ascii_uppercase();
+        if !letter.is_ascii_uppercase() {
+            return UnlockStart::NotADrive;
+        }
+        let slot = &mut self.at[(letter as u8 - b'A') as usize];
+        match slot {
+            Some((then, told)) if now_ms.saturating_sub(*then) < UNLOCK_AGAIN_AFTER_MS => {
+                let first = !*told;
+                *told = true;
+                UnlockStart::LeftOut { first }
+            }
+            _ => {
+                *slot = Some((now_ms, false));
+                UnlockStart::Start
+            }
+        }
+    }
+}
+
 /// Whether a drive is locked by BitLocker: `read_error` is `None` when its read worked, else the
 /// error the read gave; `protection` is the shell's `System.Volume.BitLockerProtection`, if it
 /// was asked and answered.
@@ -74,6 +133,40 @@ mod tests {
         }
         assert!(ask_shell_after(1005));
         assert!(!ask_shell_after(0));
+    }
+
+    #[test]
+    fn only_fixed_and_removable_drives_are_asked() {
+        assert!(may_be_locked(2), "removable (a BitLocker To Go stick)");
+        assert!(may_be_locked(3), "fixed");
+        for other in [0, 1, 4, 5, 6, 7] {
+            assert!(!may_be_locked(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn the_unlock_window_starts_once_per_drive_within_ten_seconds() {
+        use UnlockStart::*;
+        let mut starts = UnlockStarts::new();
+        assert_eq!(starts.ask('E', 1_000), Start);
+        // A drag resting on the row asks several times a second: none of them starts it, and
+        // only the first one left out is told.
+        assert_eq!(starts.ask('E', 1_050), LeftOut { first: true });
+        for t in (1_100..11_000).step_by(100) {
+            assert_eq!(starts.ask('E', t), LeftOut { first: false }, "{t}");
+            assert_eq!(starts.ask('e', t), LeftOut { first: false }, "small letter, same drive {t}");
+        }
+        // Another drive is not held back.
+        assert_eq!(starts.ask('F', 1_200), Start);
+        // Ten seconds after the start: again (the person closed the window and asks again),
+        // and a new start is told afresh when its doubles are left out.
+        assert_eq!(starts.ask('E', 11_000), Start);
+        assert_eq!(starts.ask('E', 11_001), LeftOut { first: true });
+        // A clock that goes back does not let it through twice.
+        assert_eq!(starts.ask('E', 500), LeftOut { first: false });
+        // Not a drive letter: never.
+        assert_eq!(starts.ask('1', 50_000), NotADrive);
+        assert_eq!(starts.ask('\u{e9}', 50_000), NotADrive);
     }
 
     #[test]

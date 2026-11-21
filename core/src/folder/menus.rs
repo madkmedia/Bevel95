@@ -239,6 +239,11 @@ fn file_rows(s: &State) -> Vec<Row> {
     if offered(s, D::Explore) {
         rows.push(Row::item("&Explore", Command::Shared(D::Explore), if old { "" } else { "Explore" }));
     }
+    // A drive locked by BitLocker (98 and 2000: their File menu held the selection's own
+    // commands, as the menu on the icon; the brief of 2026-11-21, job 4): Windows' own entry.
+    if !old && offered(s, D::UnlockDrive) {
+        rows.push(Row::item(crate::bitlocker::UNLOCK_LABEL, Command::Shared(D::UnlockDrive), item_help(s.era, D::UnlockDrive)));
+    }
     if !rows.is_empty() {
         rows.push(Row::separator());
     }
@@ -572,6 +577,23 @@ mod tests {
         // Nothing selected in a folder of files (-c-menu-file-none): New first.
         assert_eq!(labels(&file_rows(&state(&[], true)))[0], "Ne&w");
         assert_eq!(rows.last().unwrap().help, "Closes the window.");
+    }
+
+    #[test]
+    fn a_locked_drive_has_unlock_drive_in_the_file_menu_of_98_and_2000() {
+        for era in [Era::Win98, Era::Win2000] {
+            let rows = file_rows(&State { era, ..state(&[ItemKind::LockedDrive], false) });
+            assert_eq!(labels(&rows)[..4], ["&Open", "&Explore", crate::bitlocker::UNLOCK_LABEL, "-"], "{era:?}");
+            assert_eq!(rows[2].command, Some(Command::Shared(DesktopCommand::UnlockDrive)));
+            assert!(rows[0].entry.bold && !rows[2].entry.bold && !rows[2].entry.disabled);
+            // A drive that reads, and two locked drives at once: no such entry.
+            for kinds in [&[ItemKind::Drive][..], &[ItemKind::LockedDrive, ItemKind::LockedDrive]] {
+                assert!(!file_rows(&State { era, ..state(kinds, false) }).iter().any(|r| r.command == Some(Command::Shared(DesktopCommand::UnlockDrive))));
+            }
+        }
+        // Windows 95's File menu stays as its Reference PC's.
+        let rows = file_rows(&state(&[ItemKind::LockedDrive], false));
+        assert!(!rows.iter().any(|r| r.command == Some(Command::Shared(DesktopCommand::UnlockDrive))));
     }
 
     #[test]

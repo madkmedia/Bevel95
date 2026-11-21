@@ -825,8 +825,18 @@ use crate::paint::{Menu, MenuEntry};
 /// The commands of the menu on a tree row, in Windows' order (`None`: a separator): Explore (the
 /// default, in bold) and Open; Cut, Copy and Paste for a folder of files; Create Shortcut and
 /// Delete; Properties. Left out for now (todo): Find..., Send To, Format..., Rename, Sharing.
-pub fn row_entries(kind: NodeKind, can_paste: bool) -> Vec<Option<D>> {
+/// `locked`: the row is a drive found locked by BitLocker; Windows' own Unlock Drive... follows
+/// Open, as on the drive's icon (`desktop::ItemKind::LockedDrive`).
+pub fn row_entries(kind: NodeKind, can_paste: bool, locked: bool) -> Vec<Option<D>> {
     match kind {
+        NodeKind::Drive(_) if locked => {
+            let mut out = vec![Some(D::Explore), Some(D::Open), Some(D::UnlockDrive)];
+            if can_paste {
+                out.extend([None, Some(D::Paste)]);
+            }
+            out.extend([None, Some(D::CreateShortcut), None, Some(D::ItemProperties)]);
+            out
+        }
         NodeKind::Desktop => Vec::new(),
         NodeKind::Folder => {
             let mut out = vec![Some(D::Explore), Some(D::Open), None, Some(D::Cut), Some(D::Copy)];
@@ -851,8 +861,8 @@ pub fn row_entries(kind: NodeKind, can_paste: bool) -> Vec<Option<D>> {
 }
 
 /// The menu on a tree row in `era` (`row_entries`), Explore in bold.
-pub fn row_menu(era: Era, kind: NodeKind, can_paste: bool) -> Menu {
-    let entries = row_entries(kind, can_paste)
+pub fn row_menu(era: Era, kind: NodeKind, can_paste: bool, locked: bool) -> Menu {
+    let entries = row_entries(kind, can_paste, locked)
         .into_iter()
         .map(|e| match e {
             Some(c) => {
@@ -865,6 +875,7 @@ pub fn row_menu(era: Era, kind: NodeKind, can_paste: bool) -> Menu {
                     D::Paste => "&Paste",
                     D::CreateShortcut => "Create &Shortcut",
                     D::Delete => "&Delete",
+                    D::UnlockDrive => crate::bitlocker::UNLOCK_LABEL,
                     _ => "P&roperties",
                 };
                 let mut entry = MenuEntry::item(label, None);
@@ -1049,12 +1060,29 @@ mod tests {
 
     #[test]
     fn the_menu_on_a_row_holds_what_works() {
-        assert_eq!(row_entries(NodeKind::Desktop, true), Vec::new());
-        let folder = row_entries(NodeKind::Folder, false);
+        assert_eq!(row_entries(NodeKind::Desktop, true, false), Vec::new());
+        let folder = row_entries(NodeKind::Folder, false, false);
         assert_eq!(folder[0], Some(D::Explore));
         assert!(!folder.contains(&Some(D::Paste)));
-        assert!(row_entries(NodeKind::Folder, true).contains(&Some(D::Paste)));
-        let m = row_menu(Era::Win95, NodeKind::Drive(DriveKind::Fixed), false);
+        assert!(row_entries(NodeKind::Folder, true, false).contains(&Some(D::Paste)));
+        let m = row_menu(Era::Win95, NodeKind::Drive(DriveKind::Fixed), false, false);
         assert!(m.entries[0].bold);
+    }
+
+    #[test]
+    fn a_locked_drive_row_has_unlock_drive_after_open() {
+        let drive = NodeKind::Drive(DriveKind::Removable);
+        for era in Era::ALL {
+            let entries = row_entries(drive, false, true);
+            assert_eq!(entries[..4], [Some(D::Explore), Some(D::Open), Some(D::UnlockDrive), None]);
+            let m = row_menu(era, drive, false, true);
+            assert_eq!(m.entries[2].label, crate::bitlocker::UNLOCK_LABEL);
+            assert!(m.entries[0].bold && !m.entries[2].bold);
+        }
+        // A drive that reads, and any other row: no such entry, whatever `locked` says.
+        assert!(!row_entries(drive, true, false).contains(&Some(D::UnlockDrive)));
+        for kind in [NodeKind::Folder, NodeKind::MyComputer, NodeKind::MyDocuments, NodeKind::RecycleBin, NodeKind::ControlPanel] {
+            assert!(!row_entries(kind, true, true).contains(&Some(D::UnlockDrive)), "{kind:?}");
+        }
     }
 }
