@@ -1242,20 +1242,25 @@ pub fn quick_item_command(target: &quick_launch::Target, entry: bevel_core::quic
     };
     match (entry, target) {
         (IconEntry::Open, _) => quick_launch::start_item(target, browser.as_deref(), mail.as_deref()),
+        // A built-in icon: the look's question first (its name in it); Yes takes it off the band
+        // (quick-launch.txt), No does nothing. Switching Quick Launch off and on brings it back.
         (IconEntry::Delete, quick_launch::Target::Builtin(b)) => {
-            let removed = with_app(|app| {
-                if !app.ql.removed.contains(b) {
-                    app.ql.removed.push(*b);
-                }
-                app.ql.removed.clone()
-            });
-            if let Some(removed) = removed {
-                quick_launch::save_removed(&removed);
-                log(&format!("quick launch: {} taken off the band", b.key()));
-            }
-            let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
-            // SAFETY: our own window.
-            unsafe { InvalidateRect(bar, null(), 0) };
+            let b = *b;
+            let Some(name) = with_app(|app| b.tooltip(app.era).lines().next().unwrap_or_default().to_string()) else {
+                return;
+            };
+            let question = bevel_core::delete_confirm::Question::RemoveFromBand(name);
+            crate::confirm_window::ask_then(
+                question,
+                false,
+                Box::new(move || {
+                    let removed = quick_launch::take_off(b);
+                    with_app(|app| app.ql.removed = removed);
+                    let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
+                    // SAFETY: our own window.
+                    unsafe { InvalidateRect(bar, null(), 0) };
+                }),
+            );
         }
         (IconEntry::Delete, quick_launch::Target::File(path)) => quick_launch::delete_shortcut(path, false),
         (IconEntry::Properties, quick_launch::Target::File(path)) => quick_launch::shortcut_properties(path),
@@ -1279,6 +1284,12 @@ pub fn set_quick_launch(on: bool) {
     save_setting("quick_launch", if on { "yes" } else { "no" });
     if was != on {
         log(if on { "quick launch: switched on" } else { "quick launch: switched off" });
+    }
+    // Switched off and on again: every built-in icon taken off comes back (the way back after
+    // Delete on one of them).
+    if on && !was {
+        quick_launch::put_back_all();
+        with_app(|app| app.ql.removed.clear());
     }
     properties_window::quick_launch_changed(on);
     hide_tip(bar);

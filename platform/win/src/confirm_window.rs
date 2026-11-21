@@ -25,6 +25,13 @@ pub fn ask_delete(targets: Vec<Target>, by_keyboard: bool) {
     }
 }
 
+/// The look's question `question`, whose Yes carries out `yes` (Quick Launch's Delete).
+pub fn ask_then(question: bevel_core::delete_confirm::Question, by_keyboard: bool, yes: Box<dyn FnOnce()>) {
+    if let Some(place) = place() {
+        confirm::ask_then(place, question, by_keyboard, yes);
+    }
+}
+
 /// Opens the extension warning (posted by the desktop's thread), where USER put a message box on
 /// the main screen. `by_keyboard`: the name was taken with Enter.
 pub fn ask_rename(by_keyboard: bool) {

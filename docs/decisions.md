@@ -5095,8 +5095,22 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   desktop icons' Delete (`confirm_window::ask_delete`: the look's question, then the Recycle Bin,
   the same code); on a built-in icon it only takes the icon off the band, remembered in
   `quick-launch.txt` (`quick_launch::removed_text`, written through `winkit::state_file`; in
-  `state_file::OWN_FILES`, Setup's Remove list and README's list of files). There is no way back
-  for a built-in icon yet except deleting that file (todo). A menu acts on the icon it opened on
+  `state_file::OWN_FILES`, Setup's Remove list and README's list of files). **Since the review
+  before 0.1.2, B4** (Delete took a built-in icon away at once, and the only way back was deleting
+  that file and restarting the bar, since the list was kept in memory and written back): Delete on
+  a built-in icon first asks, in the look's Confirm File Delete window (the desktop's Delete
+  window; Windows 98 asked that one here, its Show Desktop being a file in the folder):
+  `delete_confirm::Question::RemoveFromBand`, "Are you sure you want to remove 'Show Desktop' from
+  Quick Launch?" (PROVISIONAL words, the icon's name in it; through `winkit::confirm::ask_then`,
+  whose Yes runs the asker's action). No does nothing. Yes reads quick-launch.txt as it is now,
+  adds the icon and saves it (`quick_launch::take_off`). **The way back**: switching Quick Launch
+  off and on again (Bevel95 Settings' check box, or Toolbars > Quick Launch twice, or the band's
+  Close and then Toolbars) brings every built-in icon back (`quick_launch::put_back_all`, which
+  writes the file only when it names an icon). **The file and the list in memory never disagree**:
+  the reading thread looks at quick-launch.txt's size and time with every look at the folder and
+  reads it again when it changed, so a file deleted or edited by hand is what holds at the next
+  reading (within 2 s, no restart). No golden picture was added for the new question (it is the
+  one-file window with other words). A menu acts on the icon it opened on
   (`quick_launch::Target`: a built-in icon, or the shortcut by its file) and only while that icon
   is still on the band ("Remembered by what it is, never by where it is").
 - **The bar without the band** (step 6, its own commit, after steps 1 to 5 had proved with

@@ -32,6 +32,8 @@ enum Pending {
     /// Undo Copy: the copies still as they were made go to the Recycle Bin; then the look's
     /// message names those changed since (left), where the question was.
     UndoCopy(Vec<bevel_core::drag::Made>, Vec<String>, Option<Box<Place>>, crate::undo::Asking),
+    /// The asker's own action (`ask_then`), carried out on this thread after Yes.
+    Then(Box<dyn FnOnce()>),
 }
 
 thread_local! {
@@ -67,6 +69,7 @@ impl Hosted for ConfirmHost {
                     show_message(place, &title, &text);
                 }
             }
+            Some(Pending::Then(yes)) => yes(),
             None => {}
         }
     }
@@ -140,6 +143,13 @@ pub fn ask_delete(place: Place, targets: Vec<Target>, by_keyboard: bool) {
         several => Question::Several(several.len()),
     };
     ask(place, question, Pending::Delete(files), by_keyboard);
+}
+
+/// The look's question `question`; Yes carries out `yes` (on this thread, after the window has
+/// closed; it should check once more that what it acts on is still what the question named), No,
+/// Esc and the X do nothing.
+pub fn ask_then(place: Place, question: Question, by_keyboard: bool, yes: Box<dyn FnOnce()>) {
+    ask(place, question, Pending::Then(yes), by_keyboard);
 }
 
 /// Empty Recycle Bin: the look's question (one item by its name, several by their number).

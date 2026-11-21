@@ -19,6 +19,7 @@ look you choose.
   volume control, the network and battery icons.
 - **Quick Launch** (on in the 98 and 2000 looks): one-click icons for your browser, your mail
   program, Show Desktop and Windows Explorer, then the shortcuts in Windows' own Quick Launch folder.
+  A built-in icon you delete from the band comes back when you switch Quick Launch off and on again.
 - **The Start menu**: your programs, Documents, Settings, Find, Help, Run and Shut Down, as each
   of the three Windows showed them.
 - **Three looks**: Windows 95, Windows 98 and Windows 2000, each with its own pictures, fonts and

@@ -31,12 +31,17 @@ pub enum Question {
     EmptyOne(String),
     /// Emptying a Recycle Bin that holds this many items.
     EmptySeveral(usize),
+    /// Delete on one of Quick Launch's built-in icons (its name): it only leaves the band, and
+    /// comes back when Quick Launch is switched off and on again. Windows 98 asked its Confirm File
+    /// Delete here (its Show Desktop was a file in the Quick Launch folder), so this is that window,
+    /// with Bevel95's own words (PROVISIONAL).
+    RemoveFromBand(String),
 }
 
 impl Question {
     pub fn title(&self) -> &'static str {
         match self {
-            Question::File(_) | Question::EmptyOne(_) => "Confirm File Delete",
+            Question::File(_) | Question::EmptyOne(_) | Question::RemoveFromBand(_) => "Confirm File Delete",
             Question::Folder(_) => "Confirm Folder Delete",
             Question::Several(_) | Question::EmptySeveral(_) => "Confirm Multiple File Delete",
         }
@@ -54,6 +59,7 @@ impl Question {
             Question::Several(n) => format!("Are you sure you want to send these {n} items to the Recycle Bin?"),
             Question::EmptyOne(name) => format!("Are you sure you want to delete '{name}'?"),
             Question::EmptySeveral(n) => format!("Are you sure you want to delete these {n} items?"),
+            Question::RemoveFromBand(name) => format!("Are you sure you want to remove '{name}' from Quick Launch?"),
         }
     }
 
@@ -61,7 +67,7 @@ impl Question {
     /// folder, several; deleted for good.
     fn picture(&self) -> usize {
         match self {
-            Question::File(_) => 0,
+            Question::File(_) | Question::RemoveFromBand(_) => 0,
             Question::Folder(_) => 1,
             Question::Several(_) => 2,
             Question::EmptyOne(_) | Question::EmptySeveral(_) => 3,
@@ -70,7 +76,7 @@ impl Question {
 
     fn layout(&self) -> &'static Layout {
         match self {
-            Question::File(_) | Question::EmptyOne(_) => &ONE,
+            Question::File(_) | Question::EmptyOne(_) | Question::RemoveFromBand(_) => &ONE,
             Question::Folder(_) => &FOLDER,
             Question::Several(_) | Question::EmptySeveral(_) => &SEVERAL,
         }
@@ -297,6 +303,11 @@ mod tests {
         assert_eq!(Question::EmptyOne("x".into()).title(), "Confirm File Delete");
         assert_eq!(Question::EmptyOne("x".into()).text(), "Are you sure you want to delete 'x'?");
         assert_eq!(Question::EmptySeveral(3).text(), "Are you sure you want to delete these 3 items?");
+        // Delete on a Quick Launch icon of Bevel95's own: the one-file window, the icon's name in it.
+        let q = Question::RemoveFromBand("Show Desktop".into());
+        assert_eq!(q.title(), "Confirm File Delete");
+        assert_eq!(q.text(), "Are you sure you want to remove 'Show Desktop' from Quick Launch?");
+        assert_eq!(ConfirmWindow::new(Era::Win98, q, false).size(), (419, 133));
     }
 
     #[test]

@@ -41,6 +41,9 @@ pub struct Snapshot {
     pub shortcuts: Vec<Shortcut>,
     pub browser: Option<String>,
     pub mail: Option<String>,
+    /// The built-in icons taken off the band, as quick-launch.txt says now (a file deleted or
+    /// changed by hand is what holds).
+    pub removed: Vec<Builtin>,
 }
 
 static LATEST: Mutex<Option<Snapshot>> = Mutex::new(None);
@@ -110,7 +113,11 @@ fn run() {
     // COM for this thread (the shell's icon list needs it).
     bevel_winkit::com::init();
     let mut last: Option<Vec<(FolderEntry, u64)>> = None;
+    let mut shortcuts: Vec<Shortcut> = Vec::new();
     let mut programs: (Option<String>, Option<String>) = (None, None);
+    // quick-launch.txt as last looked at (its size and time; None: not there) and what it said.
+    let mut removed_seen: Option<Option<(u64, u64)>> = None;
+    let mut removed: Vec<Builtin> = Vec::new();
     let mut looks: u32 = 0;
     let mut logged_count: Option<usize> = None;
     while !STOP.load(Ordering::SeqCst) {
@@ -119,13 +126,22 @@ fn run() {
             programs = (registered("http"), registered("mailto"));
         }
         looks = looks.wrapping_add(1);
+        // The built-in icons taken off: read again whenever the file changed (also by hand, or
+        // deleted), so that the band and the file never disagree.
+        let stamp = removed_stamp();
+        let removed_changed = again || removed_seen != Some(stamp);
+        if removed_changed {
+            removed = load_removed();
+            removed_seen = Some(stamp);
+        }
         let dir = folder();
         let seen = dir.as_deref().and_then(list).unwrap_or_default();
-        if again || last.as_ref() != Some(&seen) {
+        let folder_changed = again || last.as_ref() != Some(&seen);
+        if folder_changed {
             let started = Instant::now();
             let entries: Vec<FolderEntry> = seen.iter().map(|(e, _)| e.clone()).collect();
             let era = crate::start_menu::era_now();
-            let shortcuts: Vec<Shortcut> = match &dir {
+            shortcuts = match &dir {
                 Some(dir) => quick_launch::shown_files(&entries)
                     .into_iter()
                     .map(|name| {
@@ -145,11 +161,18 @@ fn run() {
                 let place = if dir.is_some() { "" } else { " (Windows names no Quick Launch folder)" };
                 log(&format!("quick launch: {} shortcuts of the person's{place}", shortcuts.len()));
             }
+            last = Some(seen);
+        }
+        if folder_changed || removed_changed {
             if let Ok(mut latest) = LATEST.lock() {
-                *latest = Some(Snapshot { shortcuts, browser: programs.0.clone(), mail: programs.1.clone() });
+                *latest = Some(Snapshot {
+                    shortcuts: shortcuts.clone(),
+                    browser: programs.0.clone(),
+                    mail: programs.1.clone(),
+                    removed: removed.clone(),
+                });
             }
             repaint();
-            last = Some(seen);
         }
         let wait = Instant::now();
         while wait.elapsed() < EVERY && !STOP.load(Ordering::SeqCst) && !AGAIN.load(Ordering::SeqCst) {
@@ -310,6 +333,7 @@ impl State {
             self.shortcuts = s.shortcuts;
             self.browser = s.browser;
             self.mail = s.mail;
+            self.removed = s.removed;
             let programs = (self.browser.is_some(), self.mail.is_some());
             if self.logged_programs != Some(programs) {
                 self.logged_programs = Some(programs);
@@ -400,6 +424,35 @@ pub fn load_removed() -> Vec<Builtin> {
         state_file::Read::Text(text) => quick_launch::parse_removed(&text),
         _ => Vec::new(),
     }
+}
+
+/// quick-launch.txt's size and time of change (None: it is not there, or cannot be looked at).
+fn removed_stamp() -> Option<(u64, u64)> {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::metadata(state_path()).ok().map(|m| (m.len(), m.last_write_time()))
+}
+
+/// Takes built-in icon `builtin` off the band (Yes to its question): quick-launch.txt as it is now
+/// (also when it was changed or deleted by hand), with `builtin` added. Returns the new list.
+pub fn take_off(builtin: Builtin) -> Vec<Builtin> {
+    let mut removed = load_removed();
+    if !removed.contains(&builtin) {
+        removed.push(builtin);
+    }
+    save_removed(&removed);
+    read_again();
+    log(&format!("quick launch: {} taken off the band", builtin.key()));
+    removed
+}
+
+/// Quick Launch switched on again: every built-in icon comes back (the way back after Delete).
+/// Only writes quick-launch.txt when it names an icon taken off.
+pub fn put_back_all() {
+    if !load_removed().is_empty() {
+        save_removed(&[]);
+        log("quick launch: switched on again; every built-in icon is back on the band");
+    }
+    read_again();
 }
 
 /// Remembers the built-in icons taken off the band.
