@@ -2150,7 +2150,13 @@ fn auto_hide_tick(bar: HWND) {
     let Some((wanted, away)) = with_app(|app| {
         let m = app.monitor;
         let over = at.x >= m.left && at.x < m.right && at.y >= app.placed.top && at.y < m.bottom;
-        let busy = !app.menus.is_empty() || app.pressed.is_some() || app.scroll_pressed.is_some();
+        // Also while the Quick Launch band's grip is dragged, an arrow or an icon of it held down.
+        let busy = !app.menus.is_empty()
+            || app.pressed.is_some()
+            || app.scroll_pressed.is_some()
+            || app.ql.sizing.dragging()
+            || app.ql.pressed_control.is_some()
+            || app.ql.held.is_some();
         app.away_ticks = if over || busy { 0 } else { app.away_ticks + 1 };
         (over || busy, app.away_ticks)
     }) else {

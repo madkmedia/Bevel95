@@ -691,11 +691,12 @@ pub fn list_choice<T: Clone>(list: &[T], row: usize, on_band: impl Fn(&T) -> boo
 /// pixels): its left edge at the chevron's, its bottom row just above the chevron's top, so it
 /// overlaps the bar's top rows (resize.md, 3). Not measured: a bar at the top of the screen (then
 /// it opens below the chevron) and a list that would run past the screen's right edge (then it
-/// moves left).
+/// moves left). A list taller than the room on either side starts at the screen's top (then it
+/// runs into further columns, as every long menu of the bar does).
 pub fn place_list(chevron: Rect, w: i32, h: i32, screen: Rect) -> (i32, i32) {
     let mut y = chevron.y - h;
     if y < screen.y {
-        y = chevron.bottom();
+        y = if chevron.bottom() + h <= screen.bottom() { chevron.bottom() } else { screen.y };
     }
     let x = chevron.x.min(screen.right() - w).max(screen.x);
     (x, y)
@@ -1169,6 +1170,8 @@ mod tests {
         // A bar at the top: below the chevron. Near the right edge: moved left.
         assert_eq!(place_list(Rect::new(167, 4, 12, 22), 216, 66, screen), (167, 26));
         assert_eq!(place_list(Rect::new(700, 576, 12, 22), 216, 66, screen), (584, 510));
+        // Taller than the room above a bar at the bottom: never below the screen's bottom.
+        assert_eq!(place_list(Rect::new(167, 576, 12, 22), 216, 586, screen), (167, 0));
     }
 
     #[test]

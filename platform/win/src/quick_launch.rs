@@ -367,6 +367,8 @@ pub struct State {
     /// The overflow control under the pointer, and the one held down (98's arrows).
     pub hot_control: Option<Control>,
     pub pressed_control: Option<Control>,
+    /// How many icons the band had at the last paint (Windows 2000's band grows when more arrive).
+    painted_count: Option<usize>,
     /// What the log said last: whether there was a browser and a mail program.
     logged_programs: Option<(bool, bool)>,
     /// How many icons the band showed whole at the last paint and how many it has, as the log
@@ -435,7 +437,12 @@ impl State {
         let upto = self.items.len().min(PICTURES_ALWAYS.max(last_seen + PICTURES_AHEAD));
         want_pictures(self.items.iter().take(upto).filter(|i| matches!(i, Item::Shortcut(_))).count());
         self.scroll = band.scroll;
-        if !self.sizing.dragging()
+        // Only when icons really arrived since the last paint (a band held narrower by a narrow
+        // bar is not grown and saved again: the review of brief 70, fault 3).
+        let arrived = self.painted_count.is_some_and(|n| self.items.len() > n);
+        self.painted_count = Some(self.items.len());
+        if arrived
+            && !self.sizing.dragging()
             && let Some(w) = quick_launch::grown(era, self.items.len(), self.sizing.kept)
         {
             self.sizing.kept = Some(w);
@@ -444,7 +451,8 @@ impl State {
         }
         let whole = (0..band.buttons.len()).filter(|&i| band.visible_button(i).is_some_and(|r| r.w == quick_launch::BUTTON_W)).count();
         let counts = (whole, self.items.len());
-        if self.logged_shown != Some(counts) {
+        // (Not during a drag of the grip: once, after it.)
+        if self.logged_shown != Some(counts) && !self.sizing.dragging() {
             self.logged_shown = Some(counts);
             if whole < self.items.len() {
                 let how = if band.chevron.is_some() {
