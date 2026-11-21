@@ -21,6 +21,7 @@ pub mod desktop;
 pub mod desktop_art;
 pub mod desktop_icons;
 pub mod dialog;
+pub mod display;
 pub mod disk_box;
 pub mod drag;
 pub mod droplist;

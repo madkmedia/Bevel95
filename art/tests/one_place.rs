@@ -9,7 +9,7 @@ use bevel_art::{Art, Depth, Look};
 
 /// Extensions of the files Windows' pictures, sounds and fonts are kept in.
 const DATA_FILES: &[&str] =
-    &["rgb", "rgba", "pic", "idx", "idx4", "bits", "pcm", "palrle", "i4", "glyphs", "bin", "bmp", "ico", "cur", "wav", "gif"];
+    &["rgb", "rgba", "pic", "idx", "idx4", "bits", "pcm", "palrle", "i4", "glyphs", "bin", "bmp", "ico", "cur", "wav", "gif", "wlp"];
 
 /// The places allowed to hold such things although they are not in art/: the test pictures that
 /// show them (golden images, and README's pictures made from them), the font fixtures, the
@@ -115,7 +115,7 @@ fn windows_pictures_are_only_in_art() {
 fn runtime_lookup(text: &str) -> Option<String> {
     const CALLS: &[&str] = &[
         "art::rows(", "art::rows_at(", "art::bytes(", "art::bytes_at(", "art::exactly(", "art::colors(",
-        "art::captions(", "art::places(", "ClassicIcon::art(", "Drawing::art(", "Banner::art(", "bevel_art::get(",
+        "art::captions(", "art::places(", "art::text(", "ClassicIcon::art(", "Drawing::art(", "Banner::art(", "bevel_art::get(",
     ];
     let mut in_const_fn = false;
     let mut item_open = false; // a const or static item whose value goes on over more lines

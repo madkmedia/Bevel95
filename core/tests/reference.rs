@@ -605,6 +605,7 @@ fn cases() -> Vec<Case> {
     tray_cases(&mut out, &f95, &f2k);
     desktop_cases(&mut out);
     desktop_icon_cases(&mut out, &f95, &f2k);
+    wallpaper_desktop_cases(&mut out, &f95, &f2k);
     desktop_menu_cases(&mut out, &f95, &f2k);
     desktop_move_cases(&mut out, &f95, &f2k);
     desktop_item_cases(&mut out, &f95, &f2k);
@@ -3894,6 +3895,86 @@ fn desktop_cases(out: &mut Vec<Case>) {
         let area = Rect::new(480, 20, 300, 540);
         let ours = Framebuffer::new(area.w, area.h, theme.colors.desktop);
         out.push(Case { name, file, regions: vec![region((0, 0), area)], ours, masks: vec![], vga: false });
+    }
+}
+
+/// The classic desktop with a wallpaper or a pattern against the Reference PCs' desktops after
+/// Apply (`vm/<pc>-truecolor-display-desk-*`, private/probes/display/survey.md, section 4): the
+/// screen right of the icons (x 100 to 799, down to the taskbar), drawn by `display::background`
+/// over the whole 800x600 screen, and each of Bevel95's own icons in its 75x75 cell where the PC
+/// shows it, label box and selection included, over the same picture. Left out: the PCs' other
+/// icons (Inbox, My Network Places, ...), which Bevel95 does not have.
+fn wallpaper_desktop_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
+    use bevel_core::desktop_icons::Desktop;
+    use bevel_core::display::{self, Choice, Show};
+    // (capture, look, wallpaper, how, pattern, selected icon (ours), focus frame shown)
+    type Shot = (&'static str, Era, Option<&'static str>, Show, Option<&'static str>, Option<usize>);
+    let shots: &[Shot] = &[
+        ("win95-truecolor-display-desk-bubbles-tile", Era::Win95, Some("Bubbles"), Show::Tile, None, None),
+        ("win95-truecolor-display-desk-strawmat-tile", Era::Win95, Some("Straw Mat"), Show::Tile, None, None),
+        ("win95-truecolor-display-desk-setup-tile", Era::Win95, Some("Setup"), Show::Tile, None, None),
+        ("win95-truecolor-display-desk-pattern-plaid", Era::Win95, None, Show::Center, Some("Plaid"), None),
+        ("win95-truecolor-display-desk-pattern-bricks", Era::Win95, None, Show::Center, Some("Bricks"), None),
+        ("win95-truecolor-display-desk-pattern-waffles-revenge", Era::Win95, None, Show::Center, Some("Waffle's Revenge"), None),
+        ("win95-truecolor-display-desk-bubbles-center-pattern-plaid", Era::Win95, Some("Bubbles"), Show::Center, Some("Plaid"), None),
+        ("win95-truecolor-display-desk-setup-center-pattern-plaid", Era::Win95, Some("Setup"), Show::Center, Some("Plaid"), None),
+        ("win98-truecolor-display-desk-bubbles-tile", Era::Win98, Some("Bubbles"), Show::Tile, None, None),
+        ("win98-truecolor-display-desk-clouds-tile", Era::Win98, Some("Clouds"), Show::Tile, None, None),
+        ("win98-truecolor-display-desk-forest-tile", Era::Win98, Some("Forest"), Show::Tile, None, None),
+        ("win98-truecolor-display-desk-forest-tile-selected", Era::Win98, Some("Forest"), Show::Tile, None, Some(0)),
+        ("win98-truecolor-display-desk-clouds-stretch", Era::Win98, Some("Clouds"), Show::Stretch, None, None),
+        ("win98-truecolor-display-desk-pattern-bricks-2", Era::Win98, None, Show::Center, Some("Bricks"), None),
+        ("win98-truecolor-display-desk-pattern-bricks-selected-2", Era::Win98, None, Show::Center, Some("Bricks"), Some(0)),
+        ("win98-truecolor-display-desk-pattern-daisies", Era::Win98, None, Show::Center, Some("Daisies"), None),
+        ("win98-truecolor-display-desk-pattern-tile", Era::Win98, None, Show::Center, Some("Tile"), None),
+        ("win98-truecolor-display-desk-pattern-waffles-revenge", Era::Win98, None, Show::Center, Some("Waffle's Revenge"), None),
+        ("win98-truecolor-display-desk-redblocks-center", Era::Win98, Some("Red Blocks"), Show::Center, None, None),
+        ("win98-truecolor-display-desk-redblocks-center-pattern-waffles-revenge", Era::Win98, Some("Red Blocks"), Show::Center, Some("Waffle's Revenge"), None),
+        ("win98-truecolor-display-desk-redblocks-center-pattern-waffles-revenge-selected", Era::Win98, Some("Red Blocks"), Show::Center, Some("Waffle's Revenge"), Some(0)),
+        ("win98-truecolor-display-desk-redblocks-tile-after-activedesktop-off", Era::Win98, Some("Red Blocks"), Show::Tile, None, None),
+        ("win2000-truecolor-display-desk-pattern-boxes", Era::Win2000, None, Show::Center, Some("Boxes"), None),
+        ("win2000-truecolor-display-desk-pattern-scottie", Era::Win2000, None, Show::Center, Some("Scottie"), None),
+        ("win2000-truecolor-display-desk-pattern-scottie-selected", Era::Win2000, None, Show::Center, Some("Scottie"), Some(0)),
+        ("win2000-truecolor-display-desk-pattern-tulip", Era::Win2000, None, Show::Center, Some("Tulip"), None),
+        ("win2000-truecolor-display-desk-prairiewind-tile", Era::Win2000, Some("Prairie Wind"), Show::Tile, None, None),
+        ("win2000-truecolor-display-desk-zapotec-center", Era::Win2000, Some("Zapotec"), Show::Center, None, None),
+        ("win2000-truecolor-display-desk-zapotec-center-selected", Era::Win2000, Some("Zapotec"), Show::Center, None, Some(0)),
+        ("win2000-truecolor-display-desk-zapotec-center-pattern-tulip", Era::Win2000, Some("Zapotec"), Show::Center, Some("Tulip"), None),
+        ("win2000-truecolor-display-desk-zapotec-center-pattern-tulip-selected", Era::Win2000, Some("Zapotec"), Show::Center, Some("Tulip"), Some(0)),
+        ("win2000-truecolor-display-desk-zapotec-tile", Era::Win2000, Some("Zapotec"), Show::Tile, None, None),
+        ("win2000-truecolor-display-desk-zapotec-tile-selected", Era::Win2000, Some("Zapotec"), Show::Tile, None, Some(0)),
+        ("win2000-truecolor-display-desk-zapotec-stretch-after-activedesktop-off", Era::Win2000, Some("Zapotec"), Show::Stretch, None, None),
+    ];
+    for &(file, era, wallpaper, show, pattern, selected) in shots {
+        let (theme, fonts) = look(era, f95, f2k);
+        let choice = Choice { wallpaper: wallpaper.map(str::to_string), show, pattern: pattern.map(str::to_string) };
+        let background = display::background(theme, &choice, 800, 600).expect("a wallpaper or a pattern");
+        let mut ours = background.clone();
+        let background = std::sync::Arc::new(background);
+        // The row of each of our icons on the Reference PC's desktop.
+        let rows: &[i32] = match era {
+            Era::Win95 => &[0, 2],
+            Era::Win98 => &[0, 1, 2],
+            Era::Win2000 => &[0, 1, 3],
+        };
+        let mut regions = vec![region((100, 0), Rect::new(100, 0, 700, 571))];
+        for (i, &row) in rows.iter().enumerate() {
+            let mut d = Desktop::new(era, Rect::new(0, (row - i as i32) * 75, 800, 572));
+            d.set_background(Some(background.clone()));
+            // 98's desktop kept the keyboard after Display Properties closed: My Computer's focus
+            // frame shows with nothing selected; 95 and 2000 showed none.
+            let focus = if era == Era::Win98 { selected.or(Some(0)) } else { selected };
+            d.active = focus.is_some();
+            d.select_only(selected);
+            d.focus = focus;
+            let cell = d.cell(i);
+            d.paint(&mut ours, theme, fonts, cell);
+            regions.push(region((cell.x, cell.y), cell));
+        }
+        let name = file.replace("-truecolor-display-desk-", "-wallpaper-");
+        // The mouse pointer, left in the screen's top right corner.
+        let masks = vec![Rect::new(799, 0, 1, 17)];
+        out.push(Case { name: name.leak(), file: format!("vm/{file}.png").leak(), regions, ours, masks, vga: false });
     }
 }
 

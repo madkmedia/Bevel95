@@ -686,6 +686,52 @@ fn desktop_icons_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
     screen
 }
 
+/// The classic desktop with a wallpaper or a pattern of the look's own (`display::background`
+/// over the whole screen), the look's icons and two of the owner's items, My Computer selected
+/// with the keyboard.
+fn wallpaper_desktop_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::desktop_icons::{Desktop, Item as DeskItem, Picture};
+    use bevel_core::display::{self, Choice, Show};
+    let (wallpaper, show, pattern) = match (era, which) {
+        (Era::Win95, "desktop-wallpaper-tile") => (Some("Bubbles"), Show::Tile, None),
+        (Era::Win95, "desktop-pattern") => (None, Show::Center, Some("Plaid")),
+        (Era::Win95, _) => (Some("Bubbles"), Show::Center, Some("Waffle's Revenge")),
+        (Era::Win98, "desktop-wallpaper-tile") => (Some("Forest"), Show::Tile, None),
+        (Era::Win98, "desktop-pattern") => (None, Show::Center, Some("Daisies")),
+        (Era::Win98, "desktop-wallpaper-center") => (Some("Red Blocks"), Show::Center, Some("Waffle's Revenge")),
+        (Era::Win98, _) => (Some("Clouds"), Show::Stretch, Some("Bricks")),
+        (_, "desktop-wallpaper-tile") => (Some("Zapotec"), Show::Tile, None),
+        (_, "desktop-pattern") => (None, Show::Center, Some("Scottie")),
+        (_, "desktop-wallpaper-center") => (Some("Zapotec"), Show::Center, Some("Tulip")),
+        _ => (Some("Prairie Wind"), Show::Stretch, None),
+    };
+    let choice = Choice { wallpaper: wallpaper.map(str::to_string), show, pattern: pattern.map(str::to_string) };
+    let background = display::background(theme, &choice, WIDTH, SCREEN_H).expect("a wallpaper or a pattern");
+    let mut screen = background.clone();
+    let bar = bar_image(theme, fonts, false, vec![]);
+    let item = |name: &str, picture: Picture, folder: bool| DeskItem {
+        id: format!("C:\\Users\\Owner\\Desktop\\{name}"),
+        name: name.to_string(),
+        picture,
+        shortcut: false,
+        folder,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    let area = Rect::new(0, 0, WIDTH, SCREEN_H - bar.height);
+    let mut d = Desktop::new(era, area);
+    d.set_background(Some(std::sync::Arc::new(background)));
+    d.set_files(vec![item("Projects", Picture::Folder, true), item("todo.txt", Picture::Own(Some(icon(&MAIL, 2))), false)]);
+    d.active = true;
+    d.keys_used = true;
+    d.select_only(Some(d.index_of("::my-computer").expect("My Computer")));
+    d.focus = d.index_of("::my-computer");
+    d.paint(&mut screen, theme, fonts, area);
+    screen.blit(&bar, 0, SCREEN_H - bar.height);
+    screen
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ItemScene {
     Menu,
@@ -1594,6 +1640,16 @@ fn scenes() -> Vec<Scene> {
             "Bevel95's desktop icons: the look's own (Recycle Bin full), then the owner's items in columns (test pictures); the long name is selected and has the keyboard focus, so it shows in full",
             desktop_icons_scene(theme, era, &fonts),
         );
+        for (state, caption) in [
+            ("desktop-wallpaper-tile", "The classic desktop with a wallpaper tiled from the top-left corner (Display Properties, Background); each name in a box of the desktop color, My Computer selected"),
+            ("desktop-pattern", "The classic desktop with a pattern: its 8x8 bits from the screen's corner, black on the desktop color; My Computer selected"),
+            ("desktop-wallpaper-center", "A small wallpaper centered on the whole screen, the pattern around it; My Computer selected"),
+            ("desktop-wallpaper-stretch", "A wallpaper stretched over the whole screen by Windows' own stepping (98 and 2000: 95 had no Stretch); My Computer selected"),
+        ] {
+            if era != Era::Win95 || state != "desktop-wallpaper-stretch" {
+                add(state, caption, wallpaper_desktop_scene(theme, era, &fonts, state));
+            }
+        }
         add(
             "desktop-menu",
             "Bevel95's desktop (each look's own color) with its right-click menu, pointer on the first entry",

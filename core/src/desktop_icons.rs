@@ -360,6 +360,9 @@ pub struct Desktop {
     right_press: bool,
     /// A Ctrl+press on an icon already selected: it is unselected at the release (no drag came).
     ctrl_off: bool,
+    /// The classic desktop's wallpaper and pattern over its whole area (display::background), in
+    /// its 1x pixels; None: the plain desktop color, drawn as it always was.
+    background: Option<std::sync::Arc<Framebuffer>>,
 }
 
 /// A label's measured size (width with its box, lines), collapsed and in full.
@@ -505,10 +508,18 @@ impl Desktop {
             drop_hover: None,
             right_press: false,
             ctrl_off: false,
+            background: None,
         };
         d.selected = vec![false; d.items.len()];
         d.relayout();
         d
+    }
+
+    /// What the desktop shows under its icons: the wallpaper and pattern drawn over its whole area
+    /// (display::background), or None for the desktop color. The labels keep their box of the
+    /// desktop color over it (the Reference PCs).
+    pub fn set_background(&mut self, background: Option<std::sync::Arc<Framebuffer>>) {
+        self.background = background;
     }
 
     /// The owner's items (unordered), as read from the desktop folders; the look's own icons are
@@ -1769,6 +1780,17 @@ impl Desktop {
         let origin = (region.x + self.dots_origin.0, region.y + self.dots_origin.1);
         let (ground, label_ink) = self.colors(theme);
         let mut tmp = Framebuffer::new(region.w, region.h, ground);
+        if let (Host::Desktop, Some(bg)) = (self.host, &self.background) {
+            // The part of the picture under the region (what lies outside it stays the color).
+            let (x0, x1) = (region.x.max(0), region.right().min(bg.width));
+            for y in region.y.max(0)..region.bottom().min(bg.height) {
+                if x0 < x1 {
+                    let (src, dst) = ((y * bg.width + x0) as usize, ((y - region.y) * region.w + x0 - region.x) as usize);
+                    let n = (x1 - x0) as usize;
+                    tmp.pixels[dst..dst + n].copy_from_slice(&bg.pixels[src..src + n]);
+                }
+            }
+        }
         let renaming = self.renaming();
         if self.mode.small() {
             self.paint_small(&mut tmp, theme, font, region, origin, active);

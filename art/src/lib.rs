@@ -20,6 +20,7 @@ mod colors16;
 mod colors256;
 mod controls;
 mod desktop;
+mod display;
 mod explorer;
 mod folder;
 mod html_help;
@@ -99,6 +100,7 @@ const GROUPS: &[&[Entry]] = &[
     start::ENTRIES,
     banner::ENTRIES,
     desktop::ENTRIES,
+    display::ENTRIES,
     taskbar::ENTRIES,
     quick_launch::ENTRIES,
     tray::ENTRIES,

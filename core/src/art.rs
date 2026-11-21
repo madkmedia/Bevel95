@@ -63,6 +63,14 @@ pub(crate) const fn colors(what: &str, look: Look) -> &'static [u32] {
     }
 }
 
+/// A file of text.
+pub(crate) const fn text(what: &str, look: Look) -> &'static str {
+    match find(what, look, Depth::TrueColor) {
+        Art::Text(t) => t,
+        _ => panic!("not text in bevel-art"),
+    }
+}
+
 /// Captions cut as pixels.
 pub(crate) const fn captions(what: &str, look: Look) -> &'static [Caption] {
     match find(what, look, Depth::TrueColor) {
