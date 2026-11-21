@@ -2169,6 +2169,106 @@ fn draw_quick_launch_sheet() {
     println!("wrote the sheet");
 }
 
+/// The owner's sheet of 256 Colors (not a golden image, and not public): for each look the same
+/// three scenes (the desktop's left part with the bar and an open Start menu; a folder window; Run
+/// with its title bar) in True Color, 256 Colors and 16 Colors side by side, drawn by the real
+/// code, Bevel95's own icons and test items only, labels outside the pictures. Written to the file
+/// named by BEVEL95_SHEET: `BEVEL95_SHEET=<file> cargo test -p bevel-core --test golden --
+/// --ignored --exact draw_colors256_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of 256 Colors to BEVEL95_SHEET; run it on request"]
+fn draw_colors256_sheet() {
+    use bevel_core::desktop_art::Art;
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::{FolderWindow, Space};
+    use bevel_core::kit::Form;
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const GAP: i32 = 12;
+    const LABEL_W: i32 = 130;
+    const HEAD: i32 = 18;
+    // Each scene's crop: the Start menu's lower left, the whole folder window, Run.
+    let (start_w, start_h) = (330, 330);
+    let (folder_w, folder_h) = (560, 360);
+    let (run_w, run_h) = (350, 175);
+    let depths = [(Depth::TrueColor, "True Color"), (Depth::TwoFiftySix, "256 Colors"), (Depth::Sixteen, "16 Colors")];
+    let col_w = folder_w;
+    let rows: [(&str, i32); 3] = [("Start menu", start_h), ("folder window", folder_h), ("Run", run_h)];
+    let block_h: i32 = HEAD + rows.iter().map(|r| r.1 + GAP).sum::<i32>();
+    let width = LABEL_W + 3 * (col_w + GAP);
+    let height = 20 + 3 * block_h;
+    let label_font = load_font(&WIN95, false);
+    let bold = load_font(&WIN95, true);
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    for (c, (_, title)) in depths.iter().enumerate() {
+        bold.draw(&mut sheet, LABEL_W + c as i32 * (col_w + GAP), 4, title, rgb(0x000000));
+    }
+    for (b, era) in Era::ALL.into_iter().enumerate() {
+        let top = 20 + b as i32 * block_h;
+        bold.draw(&mut sheet, 2, top + 2, era.title(), rgb(0x000000));
+        for (c, &(depth, _)) in depths.iter().enumerate() {
+            DEPTH.set(depth);
+            let theme = bevel_core::theme::theme_in(era, depth);
+            let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+            let fonts = Fonts { regular: &regular, bold: &boldf };
+            let x = LABEL_W + c as i32 * (col_w + GAP);
+            let mut y = top + HEAD;
+            // The desktop's left part with the bar and the Start menu open.
+            let screen = start_menu_scene(theme, era, &fonts);
+            let mut crop = Framebuffer::new(start_w, start_h, 0);
+            crop.blit_part(&screen, Rect::new(0, screen.height - start_h, start_w, start_h), 0, 0);
+            sheet.blit(&crop, x, y);
+            y += start_h + GAP;
+            // A folder window: 98's and 2000's with the web view (My Computer, the hard disk
+            // selected), 95's My Computer.
+            let folder = if era == Era::Win95 {
+                let item = |id: &str, name: &str, a: Art| Item { id: id.into(), name: name.into(), picture: Picture::Art(a), shortcut: false, folder: false, type_name: String::new(), size: 0, modified: 0 };
+                let mut w = FolderWindow::new(era, "My Computer", art::small(era, Small::MyComputer), false, (400, 300));
+                w.layout(&fonts);
+                w.set_items(vec![
+                    item("A:\\", "3\u{bd} Floppy (A:)", Art::Drive(DriveKind::Floppy)),
+                    item("C:\\", "Local (C:)", Art::Drive(DriveKind::Fixed)),
+                    item("D:\\", "(D:)", Art::Drive(DriveKind::CdRom)),
+                    item("::control-panel", "Control Panel", Art::ControlPanel),
+                    item("::printers", "Printers", Art::Printers),
+                ]);
+                w.spaces.insert("C:\\".into(), Space { free: 120 << 30, capacity: 476 << 30 });
+                w.view.select_only(Some(1));
+                w.layout(&fonts);
+                let (ww, wh) = w.size_now();
+                let mut fb = Framebuffer::new(ww, wh, 0);
+                w.paint(&mut fb, theme, &fonts);
+                fb
+            } else {
+                web_scene(theme, era, &fonts, "folder-web-drive")
+            };
+            let mut back = Framebuffer::new(folder_w, folder_h, theme.colors.desktop);
+            back.blit(&folder, 0, 0);
+            sheet.blit(&back, x, y);
+            y += folder_h + GAP;
+            // Run, its title bar and its grayed-out OK (an empty line).
+            let mut d = Dialog::new(DialogKind::Run, era);
+            d.show_keys = true;
+            let l = dialog::layout(&d);
+            let mut fb = Framebuffer::new(l.width, l.height, 0);
+            dialog::paint_dialog(&mut fb, theme, &fonts, &d, &l);
+            let mut back = Framebuffer::new(run_w, run_h, theme.colors.desktop);
+            back.blit(&fb, 0, 0);
+            sheet.blit(&back, x, y);
+        }
+        let mut y = top + HEAD;
+        for (name, h) in rows {
+            label_font.draw(&mut sheet, 2, y + 4, name, rgb(0x000000));
+            y += h + GAP;
+        }
+    }
+    DEPTH.set(Depth::TrueColor);
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
+
 /// The README's first picture, `docs/img/start-menus.png`: the three looks side by side, each
 /// showing what a real Bevel95 shows with its Programs menu set to Bevel95's own programs. It
 /// is not a golden image (no test compares it). Run it with

@@ -19,8 +19,8 @@ here is promised, and an issue is the place to say what matters to you.
 
 ## The looks
 - Windows 98 Second Edition, and the first 1995 release of Windows 95.
-- 256 colors as a third choice beside True Color and 16 Colors; in 16 Colors a few pictures are
-  still converted by rule instead of drawn as the Windows drew them.
+- In 16 and 256 Colors a few pictures are still converted by rule instead of drawn as the Windows
+  drew them, and Help's pages at 256 colors are not yet dotted as the browser drew them.
 - Other languages of Windows than English. Names in Latin, Greek and Cyrillic letters show as
   they are; Chinese, Japanese, Korean, Hebrew, Arabic, Thai and right-to-left text still show
   as "?".

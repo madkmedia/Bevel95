@@ -4656,6 +4656,65 @@ it, but write nothing).
   Settings, Taskbar Properties and the Start button photographed, True Color and the look put back,
   settings.txt byte for byte as before).
 
+## 256 Colors (2026-11-20, the owner: "Yes 256 as third")
+- What the owner asked for: "I have a feeling 256 has that navy color from before without being so
+  limited and was likely as low as I went as a kid on my own system." The survey of the three
+  Reference PCs at 256 colors (`private/probes/colors256/survey.md`, captures
+  `private/reference/refs/vm/<pc>-256color-*`, each PC restarted in 256 colors as Windows asked)
+  showed the memory right: the shell drew its 16-color look there (the 16-color drawings of every
+  icon and toolbar picture, the navy checkerboard on a selected icon, plain title bars, the silver
+  light edge of 95 and 98), with a few things richer. Values in theme-spec.md "256 Colors".
+- **The setting**: `colors = true | 256 | 16` (`Depth::TwoFiftySix`, its word "256", its name "256
+  Colors"), offered between the other two wherever they are: Bevel95 > Colors, the Colors group of
+  Bevel95 Settings' General page (a third row, "25&6 Colors": the 2 is the Size group's 2×), Quick
+  Search ("256 Colors", key `bevel95:colors-256`). Setup's first-run page offers no colors.
+  `WM_BAR_COLORS`' wParam is still the index in `Depth::ALL`, which is now 16, 256, True Color (1
+  was True Color before). An older Bevel95 that meets `colors = 256` treats it as any value it does
+  not know: True Color, a warning in the log, the line left as it is (`config::parse`; it writes the
+  line only when its own Colors choice changes).
+- **How it is built**: a 256-color theme is its look's 16-color theme (`WIN95_256`, `WIN98_256`,
+  `WIN2000_256`), and every painter that drew something the 16-color way asks `Depth::reduced`
+  (16 or 256). `core::colors256` holds what 256 colors showed differently; `colors16::fill`,
+  `line`, `shown` and `focus_dot` ask it first:
+  - Windows 2000 keeps its face D4D0C8 and desktop 3A6EA5 (`colors256::kept`; in areas, lines, the
+    Taskbar Properties preview, the web view's legend and pie, and where a True Color toolbar piece
+    shows the face, its Go button). Its dark shadow is black and its selection navy, as in 16 colors.
+  - Dotted areas (`colors256::dotted`), white with two yellow pixels in every 4×4 counted from the
+    area's corner: 2000's FFFFE1 (the web view's infotip; its clock tooltip by the same rule,
+    PROVISIONAL: not caught), 98's tooltip FFFFE1 in another phase than its 16 colors (95's tooltips
+    the same, PROVISIONAL), and 95's Help topic paper FFFFE2 (its WinHelp).
+  - Grayed labels are etched with white on 95 and 98 (Taskbar Properties' Apply, Run's OK), as in
+    True Color and unlike 16 colors; grayed menu entries etched likewise (PROVISIONAL: not seen).
+  - 2000's focus rectangle inverts palette numbers: on its desktop money green C0DCC0, on its face
+    black (the rest as 16 colors).
+  - Pictures cut from the 256-color captures (`private/probes/colors256/cut256.ps1`, into bevel-art):
+    98's web view watercolor and 2000's corner picture (dithered in the browser's halftone colors;
+    where text or the folder's picture covered them, or 98's narrow panel cut the watercolor off,
+    each pixel takes the color its True Color color took most often where shown: PROVISIONAL),
+    98's and 2000's throbbers, 2000's Minesweeper title-bar picture (`colors256::own`). The web
+    view's colored line is True Color's own (its colors are halftone colors); the infotip's edge
+    the browser's gray D7D7D7.
+  - Everything else as 16 Colors: today's programs' icons (by the 16-color rule, as Windows drew
+    icons at this depth), Quick Launch's 16-color drawings (captured: no pixel differs), hot toolbar
+    pictures (98's hot Cut proved; 2000's hot Search not comparable: Bevel95 has no Search button),
+    Calculator, Minesweeper, the Start banners, Shut Down (2000's own 16-color banner).
+  - Help pages (HTML Help) by the 16-color rule: PROVISIONAL. The PCs showed them in the browser's
+    halftone colors with a dither whose rule was not found, and the pages cannot be cut (the shared
+    book's words differ from the originals).
+- **Windows 2000's emulator** showed each channel at 6 bits, an odd step 3 higher (D4D0C8 as D7D0C8,
+  3A6EA5 as 386FA7, CC as CF); 95's and 98's captures show Windows' own values. The cases round our
+  picture the same way for 2000 (`twofiftysix_cases::r6`); a cut picture reads a shown color as the
+  palette entry that shows so (True Color's own pixel first, then the halftone palette, the 20
+  static colors, 2000's face and desktop), else as shown (2000's throbber's 171717).
+- **True Color and 16 Colors unchanged**: every earlier golden picture and comparison case is the
+  same, except the pictures of the choice itself (the three looks' `bevel95-settings` and
+  `16-bevel95-settings`, and `16-colors-menu`).
+- Proof: `colors256` unit tests, config, menus, Quick Search, Bevel95 Settings' keys; golden
+  pictures `<look>-256-<state>` (64, new) and `two_fifty_six_color_scenes_use_the_screens_colors`;
+  `cargo compare-refs` 256-color cases (`core/tests/twofiftysix_cases`, 32 cases, see theme-spec.md
+  for each mask); the full `cargo compare-refs` of 2026-11-20: 825 cases, 0 differing pixels (one skipped for a missing capture, as before). Live: the installed bar switched to 256 Colors by message once for a few seconds (`private/probes/colors256/live.ps1`: the bar and Taskbar Properties photographed, True Color put back, settings.txt byte for byte as before). The owner's sheet: `private/probes/colors256/colors256-built.png` (`draw_colors256_sheet`). `cargo compare-refs` writes its pictures to `BEVEL95_OUT` when set (the captures'
+  folder stays untouched).
+
 ## Groundwork for sharing (2026-11-17, the owner: making Bevel95 public)
 Three small changes before strangers run Bevel95, report problems and send their logs (todo.md,
 "Towards something sharable"). Each its own commit.

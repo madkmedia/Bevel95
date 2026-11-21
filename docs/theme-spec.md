@@ -1519,6 +1519,58 @@ settings; 2000 at 640×480 with its built-in VGA driver, its own driver having n
 - Pictures that are 16-color drawings in every mode stay as they are: all of 95's icons (its shell
   has only 4-bit icons), the three Start banners, Minesweeper's and Solitaire's pictures and card
   backs, the Calculator.
+
+## 256 Colors (2026-11-20)
+
+Measured on the three Reference PCs at 256 colors, 800×600, each restarted in 256 colors
+(`private/probes/colors256/survey.md`, captures `private/reference/refs/vm/<pc>-256color-*`, the
+pictures cut by `private/probes/colors256/cut256.ps1`, its report `cut256-report.txt`).
+
+- **The emulator's values.** 95 and 98: Windows' own. 2000: each channel at 6 bits, an odd step 3
+  higher (v → (v div 4) × 4, + 3 when v div 4 is odd): D4D0C8 shows D7D0C8, 3A6EA5 386FA7, C0DCC0
+  C0DFC0, the halftone 66 / 99 / CC as 67 / 98 / CF; 80 and FF as they are.
+- **The looks' colors** (`theme::WIN95_256`, `WIN98_256`, `WIN2000_256`): each look's 16-color theme
+  and
+
+  | | 256 colors | 16 colors | source |
+  |---|---|---|---|
+  | 95, 98: grayed label | gray etched with white (as True Color) | plain gray | Taskbar Properties' Apply, Run's OK |
+  | 2000: face and light | D4D0C8 (kept) | C0C0C0 | every window |
+  | 2000: desktop | 3A6EA5 (kept) | 008080 | desktop |
+  | 2000: dark shadow, selection | 000000, 000080 | the same | Run, the message boxes |
+  | 2000: captions | 000080 / 808080, plain | the same | Run, My Computer |
+  | 2000: tooltip, infotip FFFFE1 | white, yellow at (0, 0) and (2, 2) of every 4×4 from the area's corner | white | the web view's infotip (`-folder-mycomputer-2`); the clock tooltip not caught: PROVISIONAL |
+  | 98: tooltip FFFFE1 | white, yellow at (1, 1) and (3, 3) from the tooltip's corner | white, yellow at (0, 2) and (2, 0) | `win98-256color-tooltip-clock`; 95's: PROVISIONAL, the same |
+  | 95: Help topic paper FFFFE2 | white, yellow at (0, 1) and (2, 3) from the topic area's corner | (16 Colors keeps FFFFE2: not built, though its PC dotted it the same) | `win95-256color-calc-help-topic` |
+  | 2000: focus rectangle | on 3A6EA5 C0DCC0, on D4D0C8 000000, else as 16 colors | by i → 15 − i | `-desktop-2`, `-msgbox-not-found` |
+  | 98: web view line | True Color's (FF3300, FFCC00, 66CC33, 0099FF) | each pixel by 98's rule | `-folder-mc-sel-drive` row 227 |
+  | 98: pie and legend | DFDFDF → C0C0C0 (as 16 colors) | | the same capture |
+  | 2000: web view line | 6699CC (True Color's) | nearest | `-folder-mycomputer-2` |
+  | 2000: infotip edge | D7D7D7 (the browser's gray) | silver | the same |
+
+- **Pictures cut from the captures**: 98's watercolor (182×237 at the panel's corner, 6,120 of
+  `win98-256color-folder-mc-sel-drive`: 28,988 pixels shown, 14,146 filled, mostly the 48 columns
+  right of the 134 the panel showed, nearly all white: PROVISIONAL); 2000's corner picture (127×56
+  at 6,102 of `win2000-256color-folder-mycomputer-2`: 6,196 shown, 916 filled under the folder's
+  picture and the title: PROVISIONAL); the throbbers (38×22: 98's at 468,25, 2000's at 636,25);
+  2000's Minesweeper title-bar picture (16×16 at 85,84 of `-mine-new`).
+- **As 16 colors**: every icon and toolbar picture's 16-color drawing (hot ones too: 98's hot Cut
+  compared, 0 pixels), 2000's Go button (line art, its face D4D0C8), the Start menus and banners,
+  Run, Shut Down (2000's own 16-color banner), Calculator, Minesweeper (98), Date/Time, Taskbar
+  Properties (its preview's face and desktop kept on 2000), Quick Launch.
+- **PROVISIONAL**: the HTML Help pages (each pixel by the 16-color rule; the PCs dithered them in the
+  browser's halftone colors by a rule not found), the filled pixels of the two web view pictures,
+  grayed menu entries etched on 95 and 98, the tooltips named above, 2000's throbber's dark gray
+  171717 (as shown; Windows' own value lies between 141414 and 171717).
+- **Comparison cases** (`core/tests/twofiftysix_cases`), masks and why: 98's web panel: the pie,
+  the folder's picture in the panel (the PC's), and the panel's bottom (98 gave it a horizontal
+  scroll bar there and a shorter thumb; Bevel95's panel has none, a layout matter of True Color as
+  well); 2000's web panel: the folder's picture; the folder toolbars: what Bevel95 leaves out, as in
+  the True Color cases; 98's hot Cut: the pointer; Run: inside the command line; the bars: the
+  clock's time; 2000's Taskbar Properties: "Use Personalized Menus" (alive on its PC, always grayed
+  in Bevel95); 95's Taskbar Properties: "Show clock" (as in 16 colors); 2000's Shut Down: the
+  question's underline; 95's Help topic: compared down to the five steps (the shared book's lines
+  reflow below), its glossary link "operators" and step 5's "=." (CALC.HLP's own text).
 ## Reference screenshots
 
 None of these files are in the repository (they are Microsoft's pictures).
