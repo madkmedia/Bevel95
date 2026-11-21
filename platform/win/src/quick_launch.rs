@@ -546,46 +546,116 @@ pub fn open_folder() {
 
 /// Delete on the person's shortcut `path`: the desktop icons' own Delete (the look's question
 /// window, then the Recycle Bin, the same code). At Yes the file is checked once more (the
-/// question may have waited; the review before 0.1.2, C1): only if it is still there and still
-/// the same file (`file_identity`) does it go to the Recycle Bin; otherwise nothing is deleted
-/// and nothing more is said (the log notes it).
+/// question may have waited; the review before 0.1.2, C1): when its identity was read at the menu,
+/// only the very same file goes to the Recycle Bin; one that went or was replaced meanwhile is left
+/// alone and nothing more is said (the log says which). When its identity cannot be read at the
+/// menu but the file is there (the second review before 0.1.2, B1: its rights deny even that, the
+/// file system gives no file information), the question is asked as the desktop's Delete asks, and
+/// Yes deletes the file if it is still there. Only a file that is really gone is not asked about.
 pub fn delete_shortcut(path: &Path, by_keyboard: bool) {
     let name = path.file_name().map(|n| quick_launch::shortcut_tooltip(&n.to_string_lossy()).to_string()).unwrap_or_default();
-    let Some(asked) = file_identity(path) else {
-        log("quick launch: Delete: the shortcut is no longer there; nothing was asked");
-        read_again();
-        return;
-    };
+    let asked = file_identity(path);
+    match asked {
+        Identity::Gone => {
+            log("quick launch: Delete: the shortcut is no longer there; nothing was asked");
+            read_again();
+            return;
+        }
+        Identity::Unread(code) => log(&format!(
+            "quick launch: Delete: the shortcut is there but what file it is could not be read (error {}); asked without that check",
+            code.map_or_else(|| "none".to_string(), |c| c.to_string())
+        )),
+        Identity::Known(_) => {}
+    }
     let target = crate::file_ops::Target { id: path.to_string_lossy().into_owned(), name: name.clone(), kind: bevel_core::desktop::ItemKind::File };
     let path = path.to_path_buf();
     let yes = move || {
-        if file_identity(&path) == Some(asked) {
-            crate::file_ops::delete(vec![target]);
-        } else {
-            log("quick launch: Delete: the shortcut went or changed while the question waited; nothing was deleted");
+        match at_yes(asked, file_identity(&path)) {
+            AtYes::Delete => crate::file_ops::delete(vec![target]),
+            AtYes::Gone => log("quick launch: Delete: the shortcut was gone when Yes was chosen; nothing was deleted"),
+            AtYes::Replaced => {
+                log("quick launch: Delete: another file had taken the shortcut's place while the question waited; nothing was deleted")
+            }
+            AtYes::Unchecked => log(
+                "quick launch: Delete: at Yes it could no longer be read what file the shortcut is, so it could not be shown to be the one asked about; nothing was deleted",
+            ),
         }
         read_again();
     };
     crate::confirm_window::ask_then(bevel_core::delete_confirm::Question::File(name), by_keyboard, Box::new(yes));
 }
 
-/// What makes a file this very file: its volume and file index (another file put in its name has
-/// another index), its size and time of change. None when it is not there or cannot be opened.
-fn file_identity(path: &Path) -> Option<(u32, u64, u64, u64)> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
-    let meta = path.symlink_metadata().ok()?;
-    if !meta.is_file() {
-        return None;
+/// What a file in the shortcut's name is, as far as can be read (`file_identity`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Identity {
+    /// What makes it this very file: its volume and file index (another file put in its name has
+    /// another index), its size and time of change.
+    Known((u32, u64, u64, u64)),
+    /// No file in that name (also: a folder there now).
+    Gone,
+    /// Something is there, but what file it is cannot be read (the error code, if Windows gave one).
+    Unread(Option<i32>),
+}
+
+/// What Yes does, from what the file was at the menu and what it is now.
+#[derive(Debug, PartialEq, Eq)]
+enum AtYes {
+    Delete,
+    Gone,
+    Replaced,
+    /// Known at the menu, unreadable now: it cannot be shown to be the same file.
+    Unchecked,
+}
+
+fn at_yes(asked: Identity, now: Identity) -> AtYes {
+    match (asked, now) {
+        (_, Identity::Gone) => AtYes::Gone,
+        (Identity::Known(a), Identity::Known(b)) if a == b => AtYes::Delete,
+        (Identity::Known(_), Identity::Known(_)) => AtYes::Replaced,
+        (Identity::Known(_), Identity::Unread(_)) => AtYes::Unchecked,
+        // Not known at the menu (asked as the desktop asks): deleted if it is still there.
+        (Identity::Unread(_) | Identity::Gone, _) => AtYes::Delete,
     }
-    let file = std::fs::File::open(path).ok()?;
+}
+
+/// What file is in `path` now. Read without asking for the file's contents (no data access, the
+/// file's information only, which Windows gives also when its rights deny reading it or another
+/// program holds it without sharing) and without following a link: a link to a file is a file
+/// here, as it was deleted like any file before the check existed.
+fn file_identity(path: &Path) -> Identity {
+    use std::os::windows::fs::{FileTypeExt, OpenOptionsExt};
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
+    };
+    let meta = match path.symlink_metadata() {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Identity::Gone,
+        Err(e) => return Identity::Unread(e.raw_os_error()),
+    };
+    let kind = meta.file_type();
+    if !(kind.is_file() || kind.is_symlink_file()) {
+        return Identity::Gone;
+    }
+    // No data access (0): only the file's information; every sharing is allowed (the default).
+    let file = match std::fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Identity::Gone,
+        Err(e) => return Identity::Unread(e.raw_os_error()),
+    };
     let mut info = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: an open file's handle and a correctly sized out-struct.
-    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } != 0;
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } == 0 {
+        return Identity::Unread(std::io::Error::last_os_error().raw_os_error());
+    }
     let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
     let written = (u64::from(info.ftLastWriteTime.dwHighDateTime) << 32) | u64::from(info.ftLastWriteTime.dwLowDateTime);
     let size = (u64::from(info.nFileSizeHigh) << 32) | u64::from(info.nFileSizeLow);
-    ok.then_some((info.dwVolumeSerialNumber, index, size, written))
+    Identity::Known((info.dwVolumeSerialNumber, index, size, written))
 }
 
 /// Windows' own Properties window for the person's shortcut `path` (the desktop's Properties).
@@ -593,4 +663,116 @@ pub fn shortcut_properties(path: &Path) {
     let name = path.file_name().map(|n| quick_launch::shortcut_tooltip(&n.to_string_lossy()).to_string()).unwrap_or_default();
     let target = crate::file_ops::Target { id: path.to_string_lossy().into_owned(), name, kind: bevel_core::desktop::ItemKind::File };
     crate::file_ops::properties(&[target]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch folder of this test's own (never the person's Quick Launch folder).
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("bevel95-ql-identity-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn known(path: &Path) -> (u32, u64, u64, u64) {
+        match file_identity(path) {
+            Identity::Known(id) => id,
+            other => panic!("expected the file's identity, got {other:?}"),
+        }
+    }
+
+    /// The second review before 0.1.2, B1: a plain file, one held open without sharing, one whose
+    /// rights deny reading its contents, one replaced, one removed, a folder in its name.
+    #[test]
+    fn a_shortcuts_identity_is_read_without_its_contents() {
+        let dir = scratch("cases");
+        let file = dir.join("Plain.lnk");
+        std::fs::write(&file, b"shortcut").unwrap();
+        let first = known(&file);
+        assert_eq!(at_yes(Identity::Known(first), file_identity(&file)), AtYes::Delete, "an unchanged file is deleted");
+
+        // Held open by another program that shares nothing: still read, still the same file.
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let _held = std::fs::OpenOptions::new().read(true).write(true).share_mode(0).open(&file).unwrap();
+            assert!(std::fs::File::open(&file).is_err(), "the file is really held without sharing");
+            assert_eq!(file_identity(&file), Identity::Known(first), "a held file is read and is the same");
+        }
+
+        // Its rights deny reading its contents (icacls, in the scratch folder only).
+        let deny = |args: &[&str]| {
+            bevel_winkit::quiet::command(bevel_winkit::shell::system_program("icacls.exe"))
+                .arg(&file)
+                .args(args)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        };
+        let everyone = "*S-1-1-0:(RD)";
+        if deny(&["/deny", everyone]) {
+            let unreadable = std::fs::read(&file).is_err();
+            let id = file_identity(&file);
+            assert!(deny(&["/remove:d", "*S-1-1-0"]), "the scratch file's rights are put back");
+            assert!(unreadable, "the denial took hold");
+            assert_eq!(id, Identity::Known(first), "a file whose contents cannot be read is still known");
+        } else {
+            eprintln!("icacls could not deny reading: that case was not tried");
+        }
+
+        // Replaced by another file in the same name, with the same contents.
+        std::fs::remove_file(&file).unwrap();
+        std::fs::write(&file, b"shortcut").unwrap();
+        let second = known(&file);
+        assert_ne!(second, first, "another file in the same name is another file");
+        assert_eq!(at_yes(Identity::Known(first), Identity::Known(second)), AtYes::Replaced);
+
+        // Removed.
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(file_identity(&file), Identity::Gone);
+        assert_eq!(at_yes(Identity::Known(second), file_identity(&file)), AtYes::Gone);
+
+        // A folder in its name is no shortcut.
+        std::fs::create_dir(&file).unwrap();
+        assert_eq!(file_identity(&file), Identity::Gone);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A link to a file is a file here (it was deleted like any file before the check existed): its
+    /// own identity, not its target's.
+    #[test]
+    fn a_link_to_a_file_is_a_file() {
+        let dir = scratch("link");
+        let target = dir.join("Target.exe");
+        std::fs::write(&target, b"target").unwrap();
+        let link = dir.join("Link.lnk");
+        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+            eprintln!("this account may not make symbolic links: the link case was not tried");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let id = known(&link);
+        assert_ne!(id, known(&target), "the link itself, not the file it points to");
+        std::fs::remove_file(&target).unwrap();
+        assert_eq!(file_identity(&link), Identity::Known(id), "a link whose target went is still there");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// What Yes does in every case.
+    #[test]
+    fn yes_deletes_only_what_it_can_show() {
+        let a = Identity::Known((1, 2, 3, 4));
+        let b = Identity::Known((1, 9, 3, 4));
+        let unread = Identity::Unread(Some(5));
+        assert_eq!(at_yes(a, a), AtYes::Delete);
+        assert_eq!(at_yes(a, b), AtYes::Replaced);
+        assert_eq!(at_yes(a, Identity::Gone), AtYes::Gone);
+        assert_eq!(at_yes(a, unread), AtYes::Unchecked);
+        // Not known at the menu: asked as the desktop asks; deleted if it is still there.
+        assert_eq!(at_yes(unread, unread), AtYes::Delete);
+        assert_eq!(at_yes(unread, a), AtYes::Delete);
+        assert_eq!(at_yes(unread, Identity::Gone), AtYes::Gone);
+    }
 }

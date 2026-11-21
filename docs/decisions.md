@@ -5182,7 +5182,19 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   what the file was when the question opened (its volume, file index, size and time of change:
   `quick_launch::file_identity`) and checks it once more at Yes: only the very same file goes to
   the Recycle Bin; one that went or was replaced meanwhile is left alone and nothing more is said
-  (the log notes it), as the question's window just closes. A menu acts on the icon it opened on
+  (the log says which), as the question's window just closes. **Since the second review before
+  0.1.2, B1** (the identity was read by opening the file for reading, so a shortcut whose rights
+  deny reading, one another program held without sharing, a link to a file or a file system that
+  gives no file information was never asked about, and the log said it was gone): the identity is
+  read with no data access and without following a link (`OpenOptions` with access 0,
+  `FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS`; a link to a file is a file, as it
+  was deleted like any file before the check). When it still cannot be read at the menu but the
+  file is there, the question is asked as the desktop's Delete asks and Yes deletes the file if it
+  is still there; only a file really gone is not asked about (`quick_launch::Identity`, `at_yes`).
+  Known at the menu and unreadable at Yes: nothing is deleted (it cannot be shown to be the same).
+  Tests on a scratch folder: `quick_launch::tests` (a plain file, one held open without sharing,
+  one whose rights deny reading its contents, one replaced, one removed, a folder in its name, a
+  link to a file). A menu acts on the icon it opened on
   (`quick_launch::Target`: a built-in icon, or the shortcut by its file) and only while that icon
   is still on the band ("Remembered by what it is, never by where it is").
 - **The bar without the band** (step 6, its own commit, after steps 1 to 5 had proved with
