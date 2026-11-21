@@ -936,6 +936,17 @@ it, but write nothing).
     up the PCI bus (QEMU's PnP BIOS is misdetected, a known issue), so a new
     display driver goes onto the old "Cirrus Logic" entry (Device Manager,
     Update Driver, list, Have Disk); 95 the same through Advanced Properties.
+  - **Restarting without losing what was changed** (found by the Large Fonts survey,
+    2026-11-21): a PC started without `-Keep` keeps every change in a layer that QEMU throws
+    away when it quits, and a shut-down quits it, so a change that needs a restart to take
+    effect (the font size, a display setting) is lost by "shut down and start instead". What
+    keeps it: before the shut-down, tell QEMU through its control port to pause instead of
+    quitting when the PC switches itself off; let Windows shut down (answer No to its "restart
+    now?"); when QEMU has paused, reset the PC and let it continue: the PC switches on again with
+    the changes kept, and the disk file is still never written. 98 hung at "Windows is now
+    restarting..." here too: after a few minutes a reset brought it up in Safe Mode, and a
+    shut-down from there, the pause and a reset again brought it up normally with the change.
+    2000's own restarts worked every time.
   - 2000: a display change reverts unless confirmed within 15 seconds.
   - 2000: on the normal PC, GUI setup always died at "Completing configuration of
     Distributed Transaction Coordinator" (Windows 2000's IDE driver racing its DMA
@@ -5553,6 +5564,21 @@ exact, the default left to us (even, the mock-ups' B1).
   changes keep the size they opened at (the next opening is right); with an automatic size, a
   change of Windows' display scale while Bevel95 Settings is open, then Apply of anything, saves
   the old automatic size as a fixed one. Each was so at whole sizes before.
+- **The old Windows' own way: Large Fonts (measured 2026-11-21, not built)**. Windows 95, 98 and
+  2000 grew through a setting of their own (Display Properties: Small Fonts, Large Fonts at 125%,
+  and any percentage through "Other..."), measured on the Reference PCs at 125%, 150%, 175% and
+  200% (95 at 125% and 150% only). They never enlarged the picture: they drew the same kind of picture with larger letters
+  and more room. Every 3D edge stayed one pixel per line, icons stayed 16 and 32 pixels (never
+  stretched), check boxes and option buttons 13 pixels, and the letters were sharp at every size;
+  what grew was everything Windows derives from the font (title bars and their buttons, menu
+  rows, the taskbar's height, the Start button, push buttons, edit fields, and every dialog,
+  which is laid out in dialog units of the font's letter size). It was never uniform: 95 and 98
+  had only a few fixed sizes of MS Sans Serif (98's 200% looks like its 175%), 2000's Tahoma grew
+  smoothly, and each had odd things of its own beyond 125%. Only 125% is clean in all three.
+  Bevel95 does not have it yet. It is the planned exact way to sizes between whole numbers: the
+  look at 125% enlarged by a whole number, so 1.25, 2.5 and 3.75 (the 120-dpi letters and layout
+  doubled at 2.5) with every edge a whole-pixel line, and something real to measure for each
+  look; the quarter sizes above stay the simple way to any size.
 - **Not done or not tried**: the bar's own windows (menus, tooltips, dialogs, the desktop) were
   not tried live at a quarter size: a second bar cannot run, and the owner's bar was switched only
   once, by its own message, for its Start corner. Shut Down's dimmed screen takes its 1x checker
