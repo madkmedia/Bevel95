@@ -227,10 +227,13 @@ impl<H: Hosted> Host<H> {
     fn message(&mut self, msg: u32, wparam: WPARAM, lparam: LPARAM) -> (Option<LRESULT>, Todo<H>) {
         let s = self.look.scale;
         let (ox, oy) = self.origin;
-        // The pointer in the form's 1× coordinates.
+        // The pointer in the form's 1× coordinates; a point on the window's picture (`extent`
+        // 1× pixels) stays on it, also on its last screen column and row between whole sizes.
+        let (ew, eh) = self.extent;
+        let on_form = move |x: i32, y: i32| (s.old_in(x, ew) - ox, s.old_in(y, eh) - oy);
         let at = |lparam: LPARAM| {
             let (x, y) = point(lparam);
-            (s.old(x) - ox, s.old(y) - oy)
+            on_form(x, y)
         };
         let form = self.hosted.form_mut();
         let (answer, effects, changed) = match msg {
@@ -278,7 +281,8 @@ impl<H: Hosted> Host<H> {
                     windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) != 0
                         && windows_sys::Win32::Graphics::Gdi::ScreenToClient(self.hwnd, &mut p) != 0
                 };
-                if ok && crate::pointer::show(form.pointer(s.old(p.x) - ox, s.old(p.y) - oy)) {
+                let (x, y) = on_form(p.x, p.y);
+                if ok && crate::pointer::show(form.pointer(x, y)) {
                     return (Some(1), Vec::new());
                 }
                 return (None, Vec::new());

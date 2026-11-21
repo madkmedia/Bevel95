@@ -466,6 +466,18 @@ impl Properties {
         }
     }
 
+    /// The entry of drop-down list `list` nearest to what is chosen now: the chosen one, or for
+    /// a size the list does not offer (4.25 to 8 in settings.txt) the nearest size it offers.
+    fn list_near(&self, list: Part) -> usize {
+        self.list_chosen(list).unwrap_or_else(|| match list {
+            Part::SizeList => {
+                let q = self.values.scale.quarters();
+                (0..MENU_SCALES.len()).min_by_key(|&i| (MENU_SCALES[i].quarters() - q).abs()).unwrap_or(0)
+            }
+            _ => 0,
+        })
+    }
+
     /// What drop-down list `list` shows in its field.
     pub fn list_text(&self, list: Part) -> String {
         match list {
@@ -497,13 +509,14 @@ impl Properties {
     pub fn toggle_list(&mut self, list: Part) {
         self.drop = match self.drop {
             Some(_) => None,
-            None if self.enabled(list) => Some((list, self.list_chosen(list).unwrap_or(0))),
+            None if self.enabled(list) => Some((list, self.list_near(list))),
             None => None,
         };
     }
 
     /// The Up and Down keys (Left and Right too while it is closed) in drop-down list `list`:
     /// the open list's highlight moves; a closed list's choice moves at once, as Windows' did.
+    /// A size the list does not offer goes to the nearest one it offers.
     pub fn step_list(&mut self, list: Part, forward: bool) {
         let n = list_choices(list).len();
         if n == 0 {
@@ -513,7 +526,7 @@ impl Properties {
         match self.drop {
             Some((open, hover)) if open == list => self.drop = Some((open, step(hover))),
             _ => {
-                let next = self.list_chosen(list).map_or(0, step);
+                let next = self.list_chosen(list).map_or_else(|| self.list_near(list), step);
                 self.choose_entry(list, next);
             }
         }
@@ -1947,6 +1960,9 @@ impl kit::Form for PropertiesWindow {
     }
     fn access(&mut self, ch: char) -> Vec<Effect<Part>> {
         let p = &mut self.props;
+        // An open drop-down list closes first (as it was: nothing taken from it), so that
+        // what the key reaches is not hidden under it and Enter and Esc mean OK and Cancel.
+        p.drop = None;
         match p.access_key(ch) {
             Some(part @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_))) => {
                 p.focus = part;
@@ -1954,7 +1970,6 @@ impl kit::Form for PropertiesWindow {
             }
             Some(part @ (Part::List | Part::SizeList | Part::WayList)) => {
                 p.focus = part;
-                p.drop = None;
             }
             Some(part) => {
                 p.focus = part;
@@ -2366,6 +2381,51 @@ mod tests {
         assert_eq!(w.props.values.scale.quarters(), 12);
         // Back at a whole size the way stays as chosen, grayed.
         assert!(!w.props.enabled(Part::WayList) && w.props.values.scale.way == Way::Smooth);
+    }
+
+    #[test]
+    fn a_key_for_another_control_closes_the_open_list_first() {
+        let font = one_glyph_font();
+        let fonts = Fonts { regular: &font, bold: &font };
+        let mut w = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win95, values()), &fonts);
+        let size = w.props.values.scale;
+        // A letter or digit no size begins with ("8" is Windows 98's access key).
+        w.props.focus = Part::SizeList;
+        kit::Form::key(&mut w, Key::F4, Mods::default());
+        assert!(w.props.drop.is_some());
+        kit::Form::typed(&mut w, '8');
+        assert_eq!((w.props.drop, w.props.focus, w.props.values.scale), (None, Part::Look(Era::Win98), size));
+        // Enter is the window's again (OK), not the list's.
+        assert!(kit::Form::key(&mut w, Key::Enter, Mods::default()).is_none());
+        // Alt and a letter.
+        w.props.focus = Part::SizeList;
+        kit::Form::key(&mut w, Key::F4, Mods::default());
+        kit::Form::access(&mut w, '9');
+        assert_eq!((w.props.drop, w.props.focus, w.props.values.scale), (None, Part::Look(Era::Win95), size));
+        assert!(kit::Form::key(&mut w, Key::Escape, Mods::default()).is_none(), "Esc is Cancel again");
+    }
+
+    #[test]
+    fn a_size_the_list_does_not_offer_steps_to_the_nearest_it_does() {
+        let font = one_glyph_font();
+        let fonts = Fonts { regular: &font, bold: &font };
+        let largest = MENU_SCALES.len() - 1;
+        for (forward, key) in [(true, Key::Down), (false, Key::Up)] {
+            let mut v = values();
+            v.scale = Scale::whole(5);
+            let mut w = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win98, v), &fonts);
+            assert_eq!(w.props.list_chosen(Part::SizeList), None);
+            w.props.focus = Part::SizeList;
+            kit::Form::key(&mut w, key, Mods::default());
+            assert_eq!(w.props.values.scale, MENU_SCALES[largest], "forward {forward}");
+        }
+        // Opened, the list shows the nearest size highlighted.
+        let mut v = values();
+        v.scale = Scale::from_quarters(17);
+        let mut w = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win98, v), &fonts);
+        w.props.focus = Part::SizeList;
+        kit::Form::key(&mut w, Key::F4, Mods::default());
+        assert_eq!(w.props.drop, Some((Part::SizeList, largest)));
     }
 
     #[test]

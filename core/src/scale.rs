@@ -178,6 +178,16 @@ impl Scale {
         (4 * x + 2).div_euclid(self.quarters)
     }
 
+    /// The 1× pixel a window's screen pixel `x` belongs to, the window's picture `w` 1× pixels
+    /// long: as `old`, but a screen pixel on the picture (0 ≤ x < len(w)) never gives a 1× pixel
+    /// past its last one. Between whole numbers the last screen pixel can lie mostly past it (a
+    /// 137-pixel menu at 1.25 is 172 screen pixels, `old(171)` = 137); at a whole size this is
+    /// `old`. A point outside the picture (a held button dragged out) is `old` as always.
+    pub const fn old_in(self, x: i32, w: i32) -> i32 {
+        let o = self.old(x);
+        if x >= 0 && x < self.len(w) && o >= w { w - 1 } else { o }
+    }
+
     /// The fewest 1× pixels whose picture covers `screen` screen pixels: ceil(screen / f).
     pub const fn old_cover(self, screen: i32) -> i32 {
         (4 * screen + self.quarters - 1).div_euclid(self.quarters)
@@ -215,8 +225,14 @@ impl Scale {
 
     /// Reads a size from settings.txt or a command line: a number from 1 to 8. Another number
     /// than a quarter step goes to the nearest one; the flag says whether it was one already.
+    /// One comma and no point is read as the decimal point ("1,75"), as many people write it.
     pub fn parse(text: &str) -> Option<(Scale, bool)> {
-        let value: f64 = text.trim().parse().ok()?;
+        let text = text.trim();
+        let value: f64 = if text.matches(',').count() == 1 && !text.contains('.') {
+            text.replacen(',', ".", 1).parse().ok()?
+        } else {
+            text.parse().ok()?
+        };
         if !value.is_finite() {
             return None;
         }
@@ -239,6 +255,15 @@ impl Scale {
             Some(n) => upscale(src, n),
             None => self.enlarge_part(src, Rect::new(0, 0, self.len(src.width), self.len(src.height))),
         }
+    }
+
+    /// A premultiplied picture (every color already times its see-through value, as Windows'
+    /// see-through windows want it) enlarged as `enlarge` does, but never mixed by light: that
+    /// way mixes the colors in linear light and the see-through value plainly, so a color could
+    /// come out larger than its see-through value (a bright rim). Even-light is drawn as even.
+    pub fn enlarge_premultiplied(self, src: &Framebuffer) -> Framebuffer {
+        let way = if self.way == Way::EvenLight { Way::Even } else { self.way };
+        self.with_way(way).enlarge(src)
     }
 
     /// The screen pixels `part` (screen coordinates of the enlarged picture) of `src` enlarged:
@@ -518,12 +543,44 @@ mod tests {
     }
 
     #[test]
+    fn a_point_on_a_window_stays_on_its_picture() {
+        for q in MIN_QUARTERS..=MAX_QUARTERS {
+            let s = Scale::from_quarters(q);
+            for w in 1..300 {
+                for x in -20..s.len(w) + 20 {
+                    let o = s.old_in(x, w);
+                    if (0..s.len(w)).contains(&x) {
+                        assert!((0..w).contains(&o), "q {q} w {w} x {x}: {o}");
+                        // Only the last screen pixel can be moved, and only onto the last 1× pixel.
+                        assert!(o == s.old(x) || (x == s.len(w) - 1 && o == w - 1), "q {q} w {w} x {x}");
+                    } else {
+                        assert_eq!(o, s.old(x), "q {q} w {w} x {x}");
+                    }
+                    if s.is_whole() {
+                        assert_eq!(o, s.old(x), "whole q {q} w {w} x {x}");
+                    }
+                }
+            }
+        }
+        // The review's example: a 137-pixel menu at 1.25.
+        let s = Scale::from_quarters(5);
+        assert_eq!((s.len(137), s.old(171), s.old_in(171, 137)), (172, 137, 136));
+    }
+
+    #[test]
     fn sizes_read_and_written() {
         assert_eq!(Scale::parse("1.75"), Some((Scale::from_quarters(7), true)));
         assert_eq!(Scale::parse(" 3 "), Some((Scale::whole(3), true)));
         assert_eq!(Scale::parse("2.2"), Some((Scale::from_quarters(9), false)));
         assert_eq!(Scale::parse("8"), Some((Scale::whole(8), true)));
         for bad in ["0.5", "9", "8.2", "", "two", "NaN", "inf", "-1"] {
+            assert_eq!(Scale::parse(bad), None, "{bad}");
+        }
+        // A decimal comma is read as the point; everything else refused before stays refused.
+        assert_eq!(Scale::parse("1,75"), Some((Scale::from_quarters(7), true)));
+        assert_eq!(Scale::parse(" 2,5 "), Some((Scale::from_quarters(10), true)));
+        assert_eq!(Scale::parse("2,2"), Some((Scale::from_quarters(9), false)));
+        for bad in ["175%", "0", "0,5", "9,0", "1,75,", "1,7,5", "1.5,0", ",", "1 ,75", "1,75%"] {
             assert_eq!(Scale::parse(bad), None, "{bad}");
         }
         for q in MIN_QUARTERS..=MAX_QUARTERS {
@@ -587,5 +644,44 @@ mod tests {
                 assert!(big.pixels.iter().all(|&p| p == 0xFFC0_C0C0), "q {q} {way:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_see_through_picture_keeps_every_color_within_its_see_through_value() {
+        // A small icon-like picture: a see-through border, white and colored opaque pixels,
+        // and half see-through ones, premultiplied as the drag picture is.
+        #[rustfmt::skip]
+        let straight: [u32; 25] = [
+            0x00FF_FFFF, 0x0000_0000, 0x00FF_FFFF, 0x0000_0000, 0x00FF_FFFF,
+            0x0000_0000, 0xFFFF_FFFF, 0xFFFF_FFFF, 0x80FF_FFFF, 0x0000_0000,
+            0x00FF_FFFF, 0xFFFF_FFFF, 0xFF00_0080, 0xFFFF_FF00, 0x00FF_FFFF,
+            0x0000_0000, 0x40FF_FFFF, 0xFFFF_FFFF, 0xC0C0_C0C0, 0x0000_0000,
+            0x00FF_FFFF, 0x0000_0000, 0x00FF_FFFF, 0x0000_0000, 0x00FF_FFFF,
+        ];
+        let pre = straight.map(|p| {
+            let a = p >> 24;
+            let ch = |sh: u32| (((p >> sh) & 0xFF) * a / 255) << sh;
+            (a << 24) | ch(16) | ch(8) | ch(0)
+        });
+        let src = Framebuffer { width: 5, height: 5, pixels: pre.to_vec() };
+        for q in MIN_QUARTERS..=MAX_QUARTERS {
+            for way in Way::ALL {
+                let s = Scale::from_quarters(q).with_way(way);
+                let big = s.enlarge_premultiplied(&src);
+                assert_eq!((big.width, big.height), (s.len(5), s.len(5)));
+                for &p in &big.pixels {
+                    let a = p >> 24;
+                    for sh in [16, 8, 0] {
+                        assert!((p >> sh) & 0xFF <= a, "q {q} {way:?}: {p:08X}");
+                    }
+                }
+                // Lighter edges draws such a picture as even pixels; the other ways as always.
+                let as_drawn = if way == Way::EvenLight { s.with_way(Way::Even) } else { s };
+                assert_eq!(big, as_drawn.enlarge(&src), "q {q} {way:?}");
+            }
+        }
+        // Without the repair: lighter edges would brighten the rim (shows the test can fail).
+        let light = Scale::from_quarters(7).with_way(Way::EvenLight).enlarge(&src);
+        assert!(light.pixels.iter().any(|&p| (p >> 16 & 0xFF) > p >> 24));
     }
 }

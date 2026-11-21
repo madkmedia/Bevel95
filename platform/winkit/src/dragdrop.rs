@@ -993,14 +993,15 @@ impl Ghost {
     fn new(pic: &Framebuffer, dx: i32, dy: i32, scale: Scale) -> Option<Ghost> {
         let s = scale;
         // Premultiplied, as UpdateLayeredWindow wants it, before it is enlarged: a size between
-        // whole numbers then mixes the edges' colors by how much of each shows.
+        // whole numbers then mixes the edges' colors by how much of each shows (never by light:
+        // `enlarge_premultiplied`).
         let mut pre = pic.clone();
         for p in &mut pre.pixels {
             let a = *p >> 24;
             let ch = |sh: u32| (((*p >> sh) & 0xFF) * a / 255) << sh;
             *p = (a << 24) | ch(16) | ch(8) | ch(0);
         }
-        let big = s.enlarge(&pre);
+        let big = s.enlarge_premultiplied(&pre);
         let (w, h) = (big.width, big.height);
         if w <= 0 || h <= 0 {
             return None;

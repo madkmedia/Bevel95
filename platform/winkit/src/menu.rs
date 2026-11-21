@@ -402,7 +402,7 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             let (x, y) = point(lparam);
             let arm = tracking(hwnd, |t| {
                 let s = t.look.scale;
-                let entry = t.layout.hit(&t.menu, t.style, s.old(x), s.old(y));
+                let entry = t.layout.hit(&t.menu, t.style, s.old_in(x, t.layout.width), s.old_in(y, t.layout.height));
                 let changed = entry != t.menu.hover;
                 t.menu.hover = entry;
                 (changed, !std::mem::replace(&mut t.leave_armed, true))
@@ -450,7 +450,7 @@ unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam
             let (x, y) = point(lparam);
             tracking(hwnd, |t| {
                 let s = t.look.scale;
-                if let Some(i) = t.layout.hit(&t.menu, t.style, s.old(x), s.old(y))
+                if let Some(i) = t.layout.hit(&t.menu, t.style, s.old_in(x, t.layout.width), s.old_in(y, t.layout.height))
                     && t.menu.entries[i].choosable()
                 {
                     t.outcome = Some(Outcome::Chosen(i));

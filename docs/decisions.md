@@ -5320,7 +5320,12 @@ exact, the default left to us (even, the mock-ups' B1).
   order, so even its floating point sums are the same. A screen pixel that lies wholly on one 1x
   pixel takes it as it is (even, nearest, smooth) or from a table made by the same additions
   (even-light). The alpha channel (the drag picture's) is mixed as the stored values; the drag
-  picture is premultiplied before it is enlarged.
+  picture is premultiplied before it is enlarged. A picture with see-through pixels is never mixed
+  by light (the review of 2026-11-21): even-light mixes the colors in linear light but the
+  see-through value plainly, so a premultiplied color could come out larger than its see-through
+  value, a bright rim around a dragged icon. With even-light chosen the drag picture is enlarged as
+  even (`Scale::enlarge_premultiplied`; `scale::tests` checks every quarter size and way on a small
+  picture with a see-through edge: no color above its see-through value).
 - **Where it is chosen**: the bar's Bevel95 > Size menu (all 13 sizes: the menu stays well inside
   a screen's height); Quick Search ("size", "scale", ...; the sizes in their own order); Bevel95
   Settings, General page, Size group: two drop-down lists, "Size:" with every size and "Drawn as:"
@@ -5332,12 +5337,31 @@ exact, the default left to us (even, the mock-ups' B1).
   Enter takes, Esc closes as it was, a first letter or digit) and the mouse. Option buttons did not
   fit: 13 sizes and 4 ways need more than the group's 68 pixels, and the page is full. OK and Apply
   save only what changed: the way alone saves only `scaling`, so an automatic size stays automatic.
+  A key that reaches another control while a list is open (Alt and a letter, or a letter or digit
+  no entry begins with) closes the list first, as it was, so Enter and Esc are OK and Cancel again.
+  A size the list does not offer (4.25 to 8, written in settings.txt) is shown in the field; the
+  arrows, and the opened list's highlight, go to the nearest size the list offers (4x).
+  settings.txt's `scale` also takes a decimal comma ("1,75", one comma and no point), as many
+  people write it; everything else refused before ("175%", "0", "9", ...) stays refused.
   `WM_BAR_SIZE` takes wParam / lParam: lParam 0 a whole size (as before), 4 quarters.
 - **Everything follows the size**: the bar, its menus and tooltips, the volume control, Run, Shut
   Down and every kit window, the classic desktop (it repaints the 1x rectangle that changed and one
   1x pixel more all round, `Scale::dirty`, since a mixed screen pixel reaches its neighbours), the
   drag picture, the programs (they read the size and the way from settings.txt), Help (told
   `--scale 1.75 --scaling even`). Setup always opens at the automatic, whole size.
+- **A window's last screen column and row**: a picture w 1x pixels wide takes `len(w)` screen
+  pixels, and between whole numbers its last one can lie mostly past the picture (a 137-pixel menu
+  at 1.25 is 172 screen pixels; `old(171)` = 137, one past it), so a click there counted as
+  outside. Where a window's mouse point becomes a 1x point (the kit's windows, the program menus,
+  the bar's menus, the volume control) it goes through `Scale::old_in(x, w)`: a point on the
+  window's picture never gives a 1x point past its last one; a point outside (the button held and
+  dragged out) is `old` as always. At a whole size `old_in` is `old` (tested for every size).
+  Tooltips take no clicks.
+- **An older Bevel95 reading a quarter size** (0.1.2 and before; also an old program still
+  running after an update, a game or folders.exe finishing a file job): it refuses "scale = 1.75"
+  (its parser takes whole numbers only), logs "scale must be auto or a whole number from 1 to 8",
+  draws at the default 2x and writes nothing because of it; "scaling = ..." is an unknown setting
+  to it (a warning). Its own Size menu would later write a whole size. Nothing to repair.
 - **Remembered places**: the desktop's icon places (desktop.txt) are 1x pixels; the folder
   windows' places and sizes (folders.txt) are screen pixels; a game's window place is screen pixels.
   None of them changes with a change of size beyond what a change between whole sizes does today.
@@ -5354,7 +5378,15 @@ exact, the default left to us (even, the mock-ups' B1).
   repaint over today's; even-light about 12. What would cure it if it matters: enlarge only the
   part Windows asks to repaint (`enlarge_part` exists; the kit enlarges the whole window), and for
   even-light keep the mixed results of a pair of colors and a weight (exact, since the sums are the
-  same) instead of computing the light again.
+  same) instead of computing the light again. With even-light every repaint of a kit window, the
+  blinking text cursor's too, enlarges the whole window: about 23 ms for a full-screen folder
+  window (slower, not a hang); the same two cures apply.
+- **Older things the quarter sizes did not make worse** (the review of 2026-11-21): kit windows do
+  not handle `WM_DPICHANGED` (a window moved to a screen with another Windows scale keeps its
+  size); a tooltip, the volume control, Run, Shut Down or Date/Time already open when the size
+  changes keep the size they opened at (the next opening is right); with an automatic size, a
+  change of Windows' display scale while Bevel95 Settings is open, then Apply of anything, saves
+  the old automatic size as a fixed one. Each was so at whole sizes before.
 - **Not done or not tried**: the bar's own windows (menus, tooltips, dialogs, the desktop) were
   not tried live at a quarter size: a second bar cannot run, and the owner's bar was switched only
   once, by its own message, for its Start corner. Shut Down's dimmed screen takes its 1x checker

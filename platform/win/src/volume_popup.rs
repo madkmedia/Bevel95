@@ -175,7 +175,11 @@ fn toggle_mute(hwnd: HWND) {
 /// The part of the window under a point (screen pixels from its corner).
 fn part_at(x: i32, y: i32) -> Option<Part> {
     let v = with_open(|o| o.v)?;
-    with_app(|app| volume::part_at(&v, &app.shell_font, app.scale.old(x), app.scale.old(y))).flatten()
+    with_app(|app| {
+        let s = app.scale;
+        volume::part_at(&v, &app.shell_font, s.old_in(x, volume::SIZE.0), s.old_in(y, volume::SIZE.1))
+    })
+    .flatten()
 }
 
 fn scale() -> Scale {

@@ -860,7 +860,8 @@ fn first_entry(menu: &Menu, style: MenuStyle, from_top: bool) -> Option<usize> {
 fn entry_at(hwnd: HWND, x: i32, y: i32) -> Option<usize> {
     with_app(|app| {
         let popup = app.menus.iter().find(|p| p.hwnd == hwnd)?;
-        popup.layout.hit(&popup.menu, popup.style, app.scale.old(x), app.scale.old(y))
+        let (s, l) = (app.scale, &popup.layout);
+        l.hit(&popup.menu, popup.style, s.old_in(x, l.width), s.old_in(y, l.height))
     })
     .flatten()
 }

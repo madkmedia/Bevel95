@@ -551,11 +551,14 @@ mod tests {
     fn reads_sizes_in_quarter_steps() {
         let (c, w) = parse("scale = 1.75\n");
         assert_eq!((c.scale, w.len()), (Some(Scale::from_quarters(7)), 0));
+        // A decimal comma, as many people write it.
+        let (c, w) = parse("scale = 1,75\n");
+        assert_eq!((c.scale, w.len()), (Some(Scale::from_quarters(7)), 0));
         // Another number goes to the nearest quarter, and the warning (which the log keeps) says so.
         let (c, w) = parse("scale = 2.2\n");
         assert_eq!(c.scale, Some(Scale::from_quarters(9)));
         assert_eq!(w, ["line 1: scale 2.2 is not a quarter step: using 2.25"]);
-        for bad in ["0.75", "8.5", "big"] {
+        for bad in ["0.75", "8.5", "big", "175%", "0", "-1", "9", "1,7,5"] {
             let (c, w) = parse(&format!("scale = {bad}\n"));
             assert_eq!((c.scale, w.len()), (Config::default().scale, 1), "{bad}");
         }

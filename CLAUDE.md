@@ -20,8 +20,9 @@ pixels and their sources in [docs/theme-spec.md](docs/theme-spec.md), what is no
   and `programs/`, each block with a `// SAFETY:` comment.
 - Never: `SetSysColors`, DLL injection, shell replacement, hooking Explorer. Registry: only the
   Run entry ("Start with Windows") and the installed-apps entry.
-- Rendering: paint at 1x, enlarge by a whole number nearest-neighbour, copy 1:1; no smoothing.
-  Per-monitor-v2 DPI aware. Text from glyph atlases filled by GDI at 96 DPI, not antialiased:
+- Rendering: paint at 1x first. A whole size is enlarged by a whole number nearest-neighbour and
+  copied 1:1, with no smoothing; a size between whole numbers (quarter steps) is the person's own
+  choice, drawn the way they chose (`scaling`), and is not pixel-exact. Per-monitor-v2 DPI aware. Text from glyph atlases filled by GDI at 96 DPI, not antialiased:
   MS Sans Serif 8pt (95, 98), Tahoma 8pt (2000).
 - Each look stays pure: never mix one Windows' pictures or behaviour into another's look.
 - Log Win32 calls that can fail silently (`%LOCALAPPDATA%\Bevel95\bevel95.log`), but never
