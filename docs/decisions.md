@@ -5037,7 +5037,16 @@ looked for on the Reference PCs themselves, and since then every picture in `art
 - **The folder is read on a thread of its own** ("quick launch", `platform/win/src/quick_launch.rs`),
   never on the bar's: every 2 s a listing (names, attributes, times), and when anything changed
   (or the band's Refresh, or a Delete) the pictures are read and the bar is repainted; the bar
-  takes the new list at its next paint (`State::refresh`). This is the classic desktop's way of
+  takes the new list at its next paint (`State::refresh`). Since the review before 0.1.2 (B5, B6,
+  C3, C4): the browser and the mail program are asked on this thread only, at its first look and
+  every 30 s (never on the bar's thread at its start, where a program on an unreachable network
+  place held the bar up; their icons join the band a moment after it shows); the bar is given a
+  new list whenever the folder, quick-launch.txt, the pictures or the browser and mail program
+  changed, so a new default browser is learnt within 30 s whether or not the folder changed;
+  pictures are read only for the shortcuts that show (the bar says how many after each paint,
+  `State::shown`; none while the band is off), never for every file of a big folder; and the
+  thread waits on a condition variable between looks (woken at once by Refresh, a Delete, more
+  pictures wanted or the bar's end) instead of waking every 50 ms. This is the classic desktop's way of
   learning of changes (`desktop_items.rs`); the Programs menu, which the brief named, has none:
   it reads its folders afresh at each opening.
 - **A held icon** (the review before 0.1.2, B2): the press remembers the icon by what it is
@@ -5110,7 +5119,11 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   the reading thread looks at quick-launch.txt's size and time with every look at the folder and
   reads it again when it changed, so a file deleted or edited by hand is what holds at the next
   reading (within 2 s, no restart). No golden picture was added for the new question (it is the
-  one-file window with other words). A menu acts on the icon it opened on
+  one-file window with other words). **Delete on the person's shortcut** (C1 of that review) keeps
+  what the file was when the question opened (its volume, file index, size and time of change:
+  `quick_launch::file_identity`) and checks it once more at Yes: only the very same file goes to
+  the Recycle Bin; one that went or was replaced meanwhile is left alone and nothing more is said
+  (the log notes it), as the question's window just closes. A menu acts on the icon it opened on
   (`quick_launch::Target`: a built-in icon, or the shortcut by its file) and only while that icon
   is still on the band ("Remembered by what it is, never by where it is").
 - **The bar without the band** (step 6, its own commit, after steps 1 to 5 had proved with
@@ -5124,6 +5137,15 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   look keeps 95's bar (it had no bands). The golden pictures of the 98 and 2000 bar changed on
   purpose in that commit (listed in it); cases `vm-<pc>-quick-launch-off-0/1/6`; the older
   `vm-<pc>-tasks-<n>` cases now narrow their task area from Bevel95's new end of it.
+- **Known and left as they are** (the review before 0.1.2, written down, not repaired): the bar's
+  commands (`Bevel95.Bar.Command`, also 15 to 18: Quick Launch on and off, which write
+  `quick_launch` into settings.txt, and Open) can be sent by any program of the same user, as the
+  older commands could before; a mail or browser registration whose program is a packaged app's
+  file under `Program Files\WindowsApps` is started by that file's path, which may fail or start
+  it without its package (the AppUserModelID way would avoid it); a shortcut whose picture or
+  target the person changes keeps its old picture until the bar restarts (`start_menu::file_icon`
+  keeps every picture it read by path); the Delete question names a shortcut without its ending
+  ("Foo.lnk" and "Foo.url" both ask about "Foo", and "report.docx" is asked about as "report").
 - **New BarCommands** (at the end, so the old codes stay): `QuickLaunch` 15 (toggle),
   `QuickLaunchOpen` 16, `QuickLaunchClose` 17, `QuickLaunchRefresh` 18. **New message**
   `Bevel95.Bar.QuickLaunch` (for live tests; listed with the bar's messages): only wParam 100,

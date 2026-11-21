@@ -2308,10 +2308,9 @@ fn paint_bar(bar: HWND) {
         if moved {
             app.stand_in = Some((app.placed, well));
         }
-        // How many of the band's icons the bar had room for (the others are left out).
-        if let Some(band) = &layout.quick {
-            app.ql.shown(band.buttons.len());
-        }
+        // How many of the band's icons the bar had room for (the others are left out; only the
+        // shortcuts shown get their pictures read).
+        app.ql.shown(layout.quick.as_ref().map(|band| band.buttons.len()));
         app.layout = Some(layout);
         (rects, well, moved.then_some(app.placed))
     });

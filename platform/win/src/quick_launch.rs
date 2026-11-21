@@ -8,7 +8,7 @@
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -53,6 +53,12 @@ static STOP: AtomicBool = AtomicBool::new(false);
 static AGAIN: AtomicBool = AtomicBool::new(false);
 /// The bar, for a repaint when something new was read.
 static BAR: AtomicUsize = AtomicUsize::new(0);
+/// How many of the person's shortcuts show on the band (the bar says after each paint): only these
+/// get their pictures read (none while the band is off or before the bar's first paint; a paint
+/// that shows more wakes the thread at once).
+static WANTED: AtomicUsize = AtomicUsize::new(0);
+/// Wakes the reading thread from its wait (the band's Refresh, more pictures wanted, the bar's end).
+static WAKE: (Mutex<()>, Condvar) = (Mutex::new(()), Condvar::new());
 
 /// How often the folder is looked at (a listing of a few files: cheap), and every how many looks
 /// the browser and mail program are asked for again.
@@ -79,12 +85,28 @@ pub fn start(bar: HWND) {
 }
 
 pub fn stop() {
-    STOP.store(true, Ordering::SeqCst);
+    wake(|| STOP.store(true, Ordering::SeqCst));
 }
 
 /// Reads the folder (and the programs) again at once.
 pub fn read_again() {
-    AGAIN.store(true, Ordering::SeqCst);
+    wake(|| AGAIN.store(true, Ordering::SeqCst));
+}
+
+/// `change` made under the wait's lock, then the reading thread woken (so it can never miss it
+/// between looking and starting to wait).
+fn wake(change: impl FnOnce()) {
+    let guard = WAKE.0.lock();
+    change();
+    WAKE.1.notify_all();
+    drop(guard);
+}
+
+/// The bar now shows `n` of the person's shortcuts; more than before have their pictures read.
+fn want_pictures(n: usize) {
+    if WANTED.swap(n, Ordering::SeqCst) < n {
+        wake(|| {});
+    }
 }
 
 /// Windows' own Quick Launch folder (the known folder "Quick Launch"; still there in today's
@@ -114,7 +136,14 @@ fn run() {
     bevel_winkit::com::init();
     let mut last: Option<Vec<(FolderEntry, u64)>> = None;
     let mut shortcuts: Vec<Shortcut> = Vec::new();
+    // How many of `shortcuts` (from the first) have their pictures read.
+    let mut pictured = 0;
+    // The browser and the mail program: asked here only, never on the bar's thread (a program on
+    // an unreachable network place must not hold up the bar's start: the review before 0.1.2, B5).
     let mut programs: (Option<String>, Option<String>) = (None, None);
+    // What the bar was last given of them (None: nothing yet), so a change is passed on whether or
+    // not the folder changed (B6).
+    let mut published_programs: Option<(Option<String>, Option<String>)> = None;
     // quick-launch.txt as last looked at (its size and time; None: not there) and what it said.
     let mut removed_seen: Option<Option<(u64, u64)>> = None;
     let mut removed: Vec<Builtin> = Vec::new();
@@ -125,6 +154,7 @@ fn run() {
         if again || looks.is_multiple_of(PROGRAMS_EVERY) {
             programs = (registered("http"), registered("mailto"));
         }
+        let programs_changed = published_programs.as_ref() != Some(&programs);
         looks = looks.wrapping_add(1);
         // The built-in icons taken off: read again whenever the file changed (also by hand, or
         // deleted), so that the band and the file never disagree.
@@ -137,25 +167,17 @@ fn run() {
         let dir = folder();
         let seen = dir.as_deref().and_then(list).unwrap_or_default();
         let folder_changed = again || last.as_ref() != Some(&seen);
+        let started = Instant::now();
         if folder_changed {
-            let started = Instant::now();
             let entries: Vec<FolderEntry> = seen.iter().map(|(e, _)| e.clone()).collect();
-            let era = crate::start_menu::era_now();
             shortcuts = match &dir {
                 Some(dir) => quick_launch::shown_files(&entries)
                     .into_iter()
-                    .map(|name| {
-                        let path = dir.join(&name);
-                        let icon = crate::start_menu::file_icon(era, &path.to_string_lossy());
-                        Shortcut { path, name, icon }
-                    })
+                    .map(|name| Shortcut { path: dir.join(&name), name, icon: None })
                     .collect(),
                 None => Vec::new(),
             };
-            let took = started.elapsed().as_millis();
-            if took > 500 {
-                log(&format!("quick launch: reading its folder took {took} ms"));
-            }
+            pictured = 0;
             if logged_count != Some(shortcuts.len()) {
                 logged_count = Some(shortcuts.len());
                 let place = if dir.is_some() { "" } else { " (Windows names no Quick Launch folder)" };
@@ -163,7 +185,22 @@ fn run() {
             }
             last = Some(seen);
         }
-        if folder_changed || removed_changed {
+        // Pictures only for the shortcuts that show (the review before 0.1.2, C3): never for a
+        // folder's thousands of files.
+        let wanted = WANTED.load(Ordering::SeqCst).min(shortcuts.len());
+        let pictures_read = wanted > pictured;
+        if pictures_read {
+            let era = crate::start_menu::era_now();
+            for s in &mut shortcuts[pictured..wanted] {
+                s.icon = crate::start_menu::file_icon(era, &s.path.to_string_lossy());
+            }
+            pictured = wanted;
+        }
+        let took = started.elapsed().as_millis();
+        if took > 500 {
+            log(&format!("quick launch: reading its folder took {took} ms"));
+        }
+        if folder_changed || removed_changed || pictures_read || programs_changed {
             if let Ok(mut latest) = LATEST.lock() {
                 *latest = Some(Snapshot {
                     shortcuts: shortcuts.clone(),
@@ -172,11 +209,15 @@ fn run() {
                     removed: removed.clone(),
                 });
             }
+            published_programs = Some(programs.clone());
             repaint();
         }
-        let wait = Instant::now();
-        while wait.elapsed() < EVERY && !STOP.load(Ordering::SeqCst) && !AGAIN.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(50));
+        // Waits for the next look (EVERY), or until woken: Refresh, more pictures, the end.
+        if let Ok(guard) = WAKE.0.lock() {
+            let keep_waiting = |_: &mut ()| {
+                !STOP.load(Ordering::SeqCst) && !AGAIN.load(Ordering::SeqCst) && WANTED.load(Ordering::SeqCst).min(shortcuts.len()) <= pictured
+            };
+            drop(WAKE.1.wait_timeout_while(guard, EVERY, keep_waiting));
         }
     }
     RUNNING.store(false, Ordering::SeqCst);
@@ -316,11 +357,12 @@ pub struct State {
 }
 
 impl State {
-    /// The state at the bar's start: the setting, the icons taken off, and the browser and mail
-    /// program Windows has registered (asked at once, so the band does not grow a moment later;
-    /// the folder comes from the reading thread).
+    /// The state at the bar's start: the setting and the icons taken off. The browser and the mail
+    /// program come from the reading thread's first look, as the folder does (never asked on the
+    /// bar's thread, where a program on an unreachable network place would hold up the bar's
+    /// start: the review before 0.1.2, B5), so their icons join the band a moment after it shows.
     pub fn new(setting: Option<bool>) -> State {
-        State { setting, removed: load_removed(), browser: registered("http"), mail: registered("mailto"), ..State::default() }
+        State { setting, removed: load_removed(), ..State::default() }
     }
 
     pub fn on(&self, era: Era) -> bool {
@@ -367,7 +409,14 @@ impl State {
     /// After a paint: the bar had room for `shown` of the band's icons (`quick_launch::fitting`:
     /// the task area keeps room for one whole task button and its arrows); the others are left
     /// out, and the log says how many, once per change.
-    pub fn shown(&mut self, shown: usize) {
+    /// `None`: the band is off (no picture is wanted).
+    pub fn shown(&mut self, shown: Option<usize>) {
+        let Some(shown) = shown else {
+            want_pictures(0);
+            return;
+        };
+        // Only the shortcuts shown get their pictures read.
+        want_pictures(self.items.iter().take(shown).filter(|i| matches!(i, Item::Shortcut(_))).count());
         let narrow = self.items.len().saturating_sub(shown);
         if self.logged_narrow != Some(narrow) {
             self.logged_narrow = Some(narrow);
@@ -496,12 +545,47 @@ pub fn open_folder() {
 }
 
 /// Delete on the person's shortcut `path`: the desktop icons' own Delete (the look's question
-/// window, then the Recycle Bin), with the same code.
+/// window, then the Recycle Bin, the same code). At Yes the file is checked once more (the
+/// question may have waited; the review before 0.1.2, C1): only if it is still there and still
+/// the same file (`file_identity`) does it go to the Recycle Bin; otherwise nothing is deleted
+/// and nothing more is said (the log notes it).
 pub fn delete_shortcut(path: &Path, by_keyboard: bool) {
     let name = path.file_name().map(|n| quick_launch::shortcut_tooltip(&n.to_string_lossy()).to_string()).unwrap_or_default();
-    let target = crate::file_ops::Target { id: path.to_string_lossy().into_owned(), name, kind: bevel_core::desktop::ItemKind::File };
-    crate::confirm_window::ask_delete(vec![target], by_keyboard);
-    read_again();
+    let Some(asked) = file_identity(path) else {
+        log("quick launch: Delete: the shortcut is no longer there; nothing was asked");
+        read_again();
+        return;
+    };
+    let target = crate::file_ops::Target { id: path.to_string_lossy().into_owned(), name: name.clone(), kind: bevel_core::desktop::ItemKind::File };
+    let path = path.to_path_buf();
+    let yes = move || {
+        if file_identity(&path) == Some(asked) {
+            crate::file_ops::delete(vec![target]);
+        } else {
+            log("quick launch: Delete: the shortcut went or changed while the question waited; nothing was deleted");
+        }
+        read_again();
+    };
+    crate::confirm_window::ask_then(bevel_core::delete_confirm::Question::File(name), by_keyboard, Box::new(yes));
+}
+
+/// What makes a file this very file: its volume and file index (another file put in its name has
+/// another index), its size and time of change. None when it is not there or cannot be opened.
+fn file_identity(path: &Path) -> Option<(u32, u64, u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle};
+    let meta = path.symlink_metadata().ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: an open file's handle and a correctly sized out-struct.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, &mut info) } != 0;
+    let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+    let written = (u64::from(info.ftLastWriteTime.dwHighDateTime) << 32) | u64::from(info.ftLastWriteTime.dwLowDateTime);
+    let size = (u64::from(info.nFileSizeHigh) << 32) | u64::from(info.nFileSizeLow);
+    ok.then_some((info.dwVolumeSerialNumber, index, size, written))
 }
 
 /// Windows' own Properties window for the person's shortcut `path` (the desktop's Properties).
