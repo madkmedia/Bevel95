@@ -1006,7 +1006,7 @@ fn explore_arg(target: &Target) -> Option<String> {
     match target.kind {
         ItemKind::System(System::MyComputer) => Some("::my-computer".into()),
         ItemKind::System(System::MyDocuments) => Some("::my-documents".into()),
-        ItemKind::Folder | ItemKind::Drive => Some(target.id.clone()),
+        ItemKind::Folder | ItemKind::Drive | ItemKind::LockedDrive => Some(target.id.clone()),
         _ => None,
     }
 }

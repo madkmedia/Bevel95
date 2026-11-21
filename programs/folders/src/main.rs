@@ -47,7 +47,7 @@ use bevel_winkit::menu::{self, Outcome, Request};
 use bevel_winkit::shell::{self, Seen};
 use bevel_winkit::util::{Private, point, rect_h, rect_w, wide};
 use bevel_winkit::{font, look, shortcut_wizard};
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect, MonitorFromWindow,
 };
@@ -137,8 +137,10 @@ const SLOW_READING_MS: u64 = 1500;
 static SLOW_READING: AtomicBool = AtomicBool::new(false);
 /// A tree reader has rows for a window's tree.
 static WM_TREE_ROWS: Private = Private::new("Bevel95.Folders.TreeRows");
-/// A drive a window went to could not be read (wparam: the window's id; lparam: the letter).
+/// A drive a window went to could not be read (wparam: the window's id; lparam: the letter, with
+/// `LOCKED_FLAG` when it is locked by BitLocker).
 static WM_UNREADABLE: Private = Private::new("Bevel95.Folders.Unreadable");
+const LOCKED_FLAG: isize = 0x1_0000;
 /// A reader has files' own pictures for window `wparam` (`PICTURES`).
 static WM_PICTURES: Private = Private::new("Bevel95.Folders.Pictures");
 /// The resource watch's timer.
@@ -380,6 +382,10 @@ fn read_my_computer(era: Era) -> Snapshot {
             if ok != 0 {
                 let len = label.iter().position(|&c| c == 0).unwrap_or(0);
                 label_text = String::from_utf16_lossy(&label[..len]);
+                note_lock(letter, false);
+            } else {
+                // SAFETY: a plain query, right after the call that failed.
+                lock_after_failed_read(letter, unsafe { GetLastError() });
             }
             let (mut free, mut total) = (0u64, 0u64);
             // SAFETY: a null-terminated root and valid out-pointers.
@@ -464,8 +470,16 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
                         {
                             told = true;
                             let letter = dir.to_string_lossy().chars().next().unwrap_or('A');
+                            // Locked by BitLocker (asked here, on the reader's thread): Windows'
+                            // unlock window instead of the look's message (`LOCKED_FLAG`).
+                            let locked = root_letter(&dir.to_string_lossy()).is_some_and(|l| {
+                                let locked = bevel_winkit::bitlocker::drive_locked(l);
+                                note_lock(l, locked);
+                                locked
+                            });
+                            let flag = if locked { LOCKED_FLAG } else { 0 };
                             // SAFETY: posting to the program's own window.
-                            unsafe { PostMessageW(hub as HWND, WM_UNREADABLE.id(), id, letter as isize) };
+                            unsafe { PostMessageW(hub as HWND, WM_UNREADABLE.id(), id, letter as isize | flag) };
                         }
                         None
                     }
@@ -581,6 +595,79 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
     if let Err(e) = spawned {
         log(&format!("folders: could not start reading a folder: {e}"));
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Drives locked by BitLocker (`bevel_core::bitlocker`, `bevel_winkit::bitlocker`).
+
+/// What each drive's last reading found: locked or not, and when. Written by the threads that read
+/// drives (My Computer's reader, a place's facts, the tree's reader, a folder reader), read by the
+/// window's thread, which never asks a drive itself.
+static LOCKED: Mutex<Option<HashMap<char, (bool, std::time::Instant)>>> = Mutex::new(None);
+
+/// How long a reading that found a drive locked is believed, for Open: My Computer's reader reads
+/// its drives every second, so a drive unlocked meanwhile is known within that time.
+const LOCK_BELIEVED: Duration = Duration::from_secs(3);
+
+fn note_lock(letter: char, locked: bool) {
+    if let Ok(mut all) = LOCKED.lock() {
+        all.get_or_insert_with(HashMap::new).insert(letter.to_ascii_uppercase(), (locked, std::time::Instant::now()));
+    }
+}
+
+/// A drive's lock as its last reading found it (`fresh`: only if that reading is recent).
+fn known_locked(letter: char, fresh: bool) -> bool {
+    LOCKED.lock().ok().and_then(|all| all.as_ref()?.get(&letter.to_ascii_uppercase()).copied()).is_some_and(|(locked, at)| locked && (!fresh || at.elapsed() < LOCK_BELIEVED))
+}
+
+/// The drive letter of a drive's root ("E:\"), if `id` is one.
+fn root_letter(id: &str) -> Option<char> {
+    let b = id.as_bytes();
+    (b.len() == 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\').then(|| (b[0] as char).to_ascii_uppercase())
+}
+
+/// The drive a place is, if it is a drive's root.
+fn drive_letter_of(shows: &Shows) -> Option<char> {
+    match shows {
+        Shows::Folder(p) => root_letter(&p.to_string_lossy()),
+        _ => None,
+    }
+}
+
+/// An item's kind for its menu and commands: a drive whose last reading found it locked is a
+/// `LockedDrive` (its menu has Unlock Drive..., its Open starts Windows' unlock window).
+fn kind_of(item: &Item) -> ItemKind {
+    match ItemKind::of(item) {
+        ItemKind::Drive if root_letter(&item.id).is_some_and(|l| known_locked(l, false)) => ItemKind::LockedDrive,
+        kind => kind,
+    }
+}
+
+/// Reads drive `letter`'s lock after a call on it failed (`error`: `GetLastError` right after it)
+/// and keeps what was found. On a reading thread only.
+fn lock_after_failed_read(letter: char, error: u32) -> bool {
+    let locked = bevel_winkit::bitlocker::locked_after_failed_read(letter, error);
+    note_lock(letter, locked);
+    locked
+}
+
+/// A start's or a hand-over's argument naming a drive's root that cannot be read because it is
+/// locked by BitLocker: the place it names (on a reading thread only: it asks the drive).
+fn locked_root(arg: &str) -> Option<Shows> {
+    let shows = named_place(arg)?;
+    let letter = drive_letter_of(&shows)?;
+    let locked = bevel_winkit::bitlocker::drive_locked(letter);
+    note_lock(letter, locked);
+    locked.then_some(shows)
+}
+
+/// Open or Explore on a place that is a drive found locked just now: Windows' own unlock window
+/// for it instead, and nothing else (true). The window's thread asks no drive here.
+fn unlock_instead(shows: &Shows) -> bool {
+    let Some(letter) = drive_letter_of(shows).filter(|&l| known_locked(l, true)) else { return false };
+    log(&format!("folders: {letter}: is locked by BitLocker; Windows' unlock window instead"));
+    bevel_winkit::bitlocker::start_unlock(letter);
+    true
 }
 
 /// The free space of the drive `dir` is on.
@@ -705,6 +792,8 @@ struct Facts {
     /// The items: a folder's or the Desktop's (with the look's three icons), My Computer's drives.
     items: usize,
     my_computer: bool,
+    /// The place is a drive found locked by BitLocker by this reading (its letter).
+    locked: Option<char>,
 }
 
 impl Facts {
@@ -748,12 +837,16 @@ fn drive_of(root: &Path) -> Option<(DriveKind, String)> {
     };
     let mut label = [0u16; 261];
     let mut text = String::new();
-    // SAFETY: a null-terminated root and a buffer of the length given.
-    if kind != DriveKind::Floppy
-        && unsafe { GetVolumeInformationW(w.as_ptr(), label.as_mut_ptr(), label.len() as u32, null_mut(), null_mut(), null_mut(), null_mut(), 0) } != 0
-    {
-        let len = label.iter().position(|&c| c == 0).unwrap_or(0);
-        text = String::from_utf16_lossy(&label[..len]);
+    if kind != DriveKind::Floppy {
+        // SAFETY: a null-terminated root and a buffer of the length given.
+        if unsafe { GetVolumeInformationW(w.as_ptr(), label.as_mut_ptr(), label.len() as u32, null_mut(), null_mut(), null_mut(), null_mut(), 0) } != 0 {
+            let len = label.iter().position(|&c| c == 0).unwrap_or(0);
+            text = String::from_utf16_lossy(&label[..len]);
+            note_lock(letter, false);
+        } else {
+            // SAFETY: a plain query, right after the call that failed.
+            lock_after_failed_read(letter, unsafe { GetLastError() });
+        }
     }
     Some((kind, text))
 }
@@ -802,7 +895,8 @@ fn read_facts(shows: &Shows) -> Facts {
         Shows::Desktop => (read_desktop(Era::Win95).map_or(0, |(seen, ..)| seen.len() + 3), false),
         Shows::Folder(p) => (shell::list_folder(p).map_or(0, |(seen, _)| seen.len()), false),
     };
-    Facts { names, space, documents, desktops, items, my_computer }
+    let locked = drive_letter_of(shows).filter(|&l| known_locked(l, true));
+    Facts { names, space, documents, desktops, items, my_computer, locked }
 }
 
 /// What a folder window is called in `era`, from what is known of its place: My Computer, the
@@ -1118,6 +1212,9 @@ fn bring_forward(shows: &Shows, exploring: bool) -> bool {
 /// first (`ask`), and the window opens as soon as that is known, or after `PATIENCE` with what is
 /// known without asking (its title then follows).
 fn open_window(shows: Shows, exploring: bool) {
+    if unlock_instead(&shows) {
+        return;
+    }
     if !bring_forward(&shows, exploring) {
         ask(Ask::Shows(shows, exploring));
     }
@@ -1191,13 +1288,13 @@ fn resolve(what: &Ask, era: Era) -> Option<(Shows, bool)> {
         Ask::Arg(arg) => {
             if let Some(place) = arg.strip_prefix(EXPLORE) {
                 let place = if place == "::my-documents" { shell::documents_folder().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default() } else { place.to_string() };
-                let found = shows_of(&place).map(|s| (s, true));
+                let found = shows_of(&place).or_else(|| locked_root(&place)).map(|s| (s, true));
                 if found.is_none() {
                     log("folders: asked to explore something that is not a folder");
                 }
                 return found;
             }
-            let found = shows_of(arg).map(|s| (s, false));
+            let found = shows_of(arg).or_else(|| locked_root(arg)).map(|s| (s, false));
             if found.is_none() {
                 log("folders: asked to open something that is not a folder");
             }
@@ -1280,7 +1377,11 @@ fn prepared_ready() {
             OnReading::Apply { hwnd, id } => apply_facts(hwnd, id, facts),
             OnReading::Nothing => {}
             OnReading::Open(shows, exploring) => {
-                if !bring_forward(&shows, exploring) {
+                if let Some(letter) = facts.locked {
+                    // A drive locked by BitLocker: Windows' own unlock window, and no window of ours.
+                    log(&format!("folders: {letter}: is locked by BitLocker; Windows' unlock window instead"));
+                    bevel_winkit::bitlocker::start_unlock(letter);
+                } else if !bring_forward(&shows, exploring) {
                     create_window(shows, exploring, facts);
                 }
             }
@@ -1523,6 +1624,9 @@ enum Go {
 /// 95 opens a window of its own instead.
 fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
     let Some((era, _)) = the_look() else { return };
+    if to.as_ref().is_some_and(unlock_instead) {
+        return;
+    }
     // Windows 95 opened a window per folder; its Explorer went to the folder in the same window.
     let with_tree = kit::with::<FolderHost, _>(|h| h.form.tree_shown || h.form.exploring).unwrap_or(false);
     if era == Era::Win95 && !with_tree {
@@ -1743,8 +1847,9 @@ fn tree_rows(era: Era, id: &str) -> Option<Vec<NodeSpec>> {
     }
 }
 
-/// Rows read for a window's tree: (the window, the row, its rows or `None`).
-type TreeRows = (usize, String, Option<Vec<NodeSpec>>);
+/// Rows read for a window's tree: (the window, the row, its rows or `None`, and whether the row
+/// is a drive that could not be read because it is locked by BitLocker).
+type TreeRows = (usize, String, Option<Vec<NodeSpec>>, bool);
 static TREE_ROWS: Mutex<Vec<TreeRows>> = Mutex::new(Vec::new());
 
 /// Reads the rows of `ids` for window `hwnd`'s tree on a thread of its own (a slow drive never
@@ -1758,7 +1863,14 @@ fn read_tree_rows(hwnd: HWND, era: Era, ids: Vec<String>) {
         bevel_winkit::com::init();
         for id in ids {
             let rows = tree_rows(era, &id);
-            TREE_ROWS.lock().map(|mut r| r.push((w, id, rows))).ok();
+            // A drive that could not be read: is it locked? (asked here, off the window's thread)
+            let locked = rows.is_none()
+                && root_letter(&id).is_some_and(|l| {
+                    let locked = bevel_winkit::bitlocker::drive_locked(l);
+                    note_lock(l, locked);
+                    locked
+                });
+            TREE_ROWS.lock().map(|mut r| r.push((w, id, rows, locked))).ok();
             // SAFETY: posting to the program's own window.
             unsafe { PostMessageW(hub as HWND, WM_TREE_ROWS.id(), 0, 0) };
         }
@@ -1773,7 +1885,8 @@ fn read_tree_rows(hwnd: HWND, era: Era, ids: Vec<String>) {
 fn tree_rows_ready() {
     let all = TREE_ROWS.lock().map(|mut r| std::mem::take(&mut *r)).unwrap_or_default();
     let mut unreadable_drive: Vec<(HWND, char, Option<String>)> = Vec::new();
-    for (w, id, rows) in all {
+    let mut locked_drive: Vec<char> = Vec::new();
+    for (w, id, rows, locked) in all {
         let hwnd = w as HWND;
         if !kit::windows::<FolderHost>().contains(&hwnd) {
             continue;
@@ -1785,8 +1898,11 @@ fn tree_rows_ready() {
                     None => {
                         log("folders: a folder of the tree could not be read");
                         h.form.tree.unreadable(&id);
-                        // A drive opened in the tree: the look's message (Retry opens it again).
-                        if id.len() == 3 && id.ends_with(":\\") {
+                        // A drive opened in the tree: the look's message (Retry opens it again);
+                        // one locked by BitLocker: Windows' own unlock window instead.
+                        if let Some(letter) = root_letter(&id).filter(|_| locked) {
+                            locked_drive.push(letter);
+                        } else if id.len() == 3 && id.ends_with(":\\") {
                             unreadable_drive.push((hwnd, id.chars().next().unwrap_or('A'), Some(id.clone())));
                         }
                     }
@@ -1797,6 +1913,10 @@ fn tree_rows_ready() {
     }
     for (hwnd, letter, node) in unreadable_drive {
         ask_drive(hwnd, letter, node);
+    }
+    for letter in locked_drive {
+        log(&format!("folders: {letter}: is locked by BitLocker; Windows' unlock window instead"));
+        bevel_winkit::bitlocker::start_unlock(letter);
     }
 }
 
@@ -1950,7 +2070,7 @@ fn drag_out(hwnd: HWND) {
 /// The folder a tree row or an icon stands for, as a drop place.
 fn dest_of_item(item: &Item) -> Dest {
     match ItemKind::of(item) {
-        ItemKind::Folder | ItemKind::Drive => Dest::Folder(PathBuf::from(&item.id)),
+        ItemKind::Folder | ItemKind::Drive | ItemKind::LockedDrive => Dest::Folder(PathBuf::from(&item.id)),
         ItemKind::System(bevel_core::desktop_icons::System::RecycleBin) => Dest::RecycleBin,
         ItemKind::System(bevel_core::desktop_icons::System::MyDocuments) => shell::documents_folder().map_or(Dest::Refuse, Dest::Folder),
         _ => Dest::Refuse,
@@ -2172,6 +2292,28 @@ impl Hosted for DiskBoxHost {
         // SAFETY: posting to our own window.
         unsafe { PostMessageW(hub, WM_ITEMS.id(), 0, 3) };
     }
+}
+
+/// A window went to a drive that its reading found locked by BitLocker (the lock was not known
+/// before the window went there): Windows' own unlock window for it, and the window goes back to
+/// where it was, or closes if it was opened on that drive, as if it had never gone there.
+fn locked_found(owner: HWND, letter: char) {
+    log(&format!("folders: {letter}: is locked by BitLocker; Windows' unlock window instead"));
+    bevel_winkit::bitlocker::start_unlock(letter);
+    if !kit::windows::<FolderHost>().contains(&owner) {
+        return;
+    }
+    kit::scope::<FolderHost, _>(owner, || {
+        let still_there = kit::with::<FolderHost, _>(|h| drive_letter_of(&h.shows) == Some(letter.to_ascii_uppercase())).unwrap_or(false);
+        if !still_there {
+            return;
+        }
+        if kit::with::<FolderHost, _>(|h| h.history.can_back()).unwrap_or(false) {
+            navigate(owner, None, Go::Back(1));
+        } else {
+            kit::close::<FolderHost>();
+        }
+    });
 }
 
 fn ask_drive(owner: HWND, letter: char, node: Option<String>) {
@@ -2730,7 +2872,7 @@ impl Hosted for FolderHost {
 fn targets() -> Vec<Target> {
     kit::with::<FolderHost, _>(|h| {
         let v = &h.form.view;
-        v.selection().into_iter().map(|i| Target { id: v.items[i].id.clone(), name: v.items[i].name.clone(), kind: ItemKind::of(&v.items[i]) }).collect()
+        v.selection().into_iter().map(|i| Target { id: v.items[i].id.clone(), name: v.items[i].name.clone(), kind: kind_of(&v.items[i]) }).collect()
     })
     .unwrap_or_default()
 }
@@ -2750,6 +2892,9 @@ fn folder() -> Option<PathBuf> {
 fn place_of(t: &Target) -> Option<Shows> {
     match t.kind {
         ItemKind::Folder | ItemKind::Drive => shows_of(&t.id),
+        // Not a folder that can be read now, but the place it is: going there starts Windows'
+        // unlock window (`unlock_instead`), or the reading finds it locked (`locked_found`).
+        ItemKind::LockedDrive => named_place(&t.id),
         ItemKind::System(bevel_core::desktop_icons::System::MyComputer) => Some(Shows::MyComputer),
         ItemKind::System(bevel_core::desktop_icons::System::MyDocuments) => shell::documents_folder().map(Shows::Folder),
         _ => None,
@@ -2911,6 +3056,13 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
                         Some(s) => open_explorer(s),
                         None => file_ops::explore(std::slice::from_ref(t)),
                     }
+                }
+            }
+            // Windows' own unlock window; it asks for the password itself.
+            D::UnlockDrive if offered(D::UnlockDrive) => {
+                for letter in selection.iter().filter_map(|t| root_letter(&t.id)) {
+                    log(&format!("folders: Unlock Drive... on {letter}:"));
+                    bevel_winkit::bitlocker::start_unlock(letter);
                 }
             }
             D::ItemProperties if offered(D::ItemProperties) => file_ops::properties(&selection),
@@ -3229,7 +3381,7 @@ fn list_chosen(hwnd: HWND, i: usize) {
         Some(id) => {
             let era = the_look().map_or(Era::Win95, |(e, _)| e);
             if let Some(item) = read_my_computer(era).items.iter().find(|it| it.id == id) {
-                open_target(Target { id: item.id.clone(), name: item.name.clone(), kind: ItemKind::of(item) });
+                open_target(Target { id: item.id.clone(), name: item.name.clone(), kind: kind_of(item) });
             }
         }
         None => {}
@@ -3400,7 +3552,7 @@ fn end_rename(hwnd: HWND) {
     let ended = kit::with::<FolderHost, _>(|h| {
         let target = h.form.view.renaming().map(|i| {
             let item = &h.form.view.items[i];
-            Target { id: item.id.clone(), name: item.name.clone(), kind: ItemKind::of(item) }
+            Target { id: item.id.clone(), name: item.name.clone(), kind: kind_of(item) }
         });
         (h.form.view.end_rename(), target)
     });
@@ -3613,7 +3765,7 @@ fn reselect(held: &[String]) -> bool {
 fn item_menu(hwnd: HWND) {
     let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
     let Some((kinds, at, era)) = kit::with::<FolderHost, _>(|h| {
-        let kinds: Vec<ItemKind> = h.form.view.selection().into_iter().map(|i| ItemKind::of(&h.form.view.items[i])).collect();
+        let kinds: Vec<ItemKind> = h.form.view.selection().into_iter().map(|i| kind_of(&h.form.view.items[i])).collect();
         (kinds, h.form.menu_at, h.form.era)
     }) else {
         return;
@@ -3765,7 +3917,12 @@ unsafe extern "system" fn hub_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
         }
         m if m == WM_UNREADABLE.id() => {
             if let Some(hwnd) = window_of(wparam) {
-                ask_drive(hwnd, char::from_u32(lparam as u32).unwrap_or('A'), None);
+                let letter = char::from_u32((lparam & 0xFFFF) as u32).unwrap_or('A');
+                if lparam & LOCKED_FLAG != 0 {
+                    locked_found(hwnd, letter);
+                } else {
+                    ask_drive(hwnd, letter, None);
+                }
             }
             0
         }
@@ -4310,6 +4467,47 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// A drive whose last reading found it locked by BitLocker gets Unlock Drive... on its menu,
+    /// and only while that is so; for Open the reading must be recent. (Letters no PC here has, so
+    /// no real drive is asked; nothing is started.)
+    #[test]
+    fn a_drive_found_locked_has_unlock_drive_until_it_is_found_unlocked() {
+        use super::{Shows, drive_letter_of, kind_of, known_locked, note_lock, root_letter};
+        use bevel_core::desktop::{DesktopCommand, ItemKind, item_entries};
+        use bevel_core::desktop_art::Art;
+        use bevel_core::folder::art::DriveKind;
+        use bevel_core::desktop_icons::{Item, Picture};
+        let drive = |id: &str| Item {
+            id: id.into(),
+            name: String::new(),
+            picture: Picture::Art(Art::Drive(DriveKind::Fixed)),
+            shortcut: false,
+            folder: false,
+            type_name: String::new(),
+            size: 0,
+            modified: 0,
+        };
+        assert_eq!(root_letter("q:\\"), Some('Q'));
+        assert_eq!(root_letter("Q:\\x"), None);
+        assert_eq!(root_letter("::my-computer"), None);
+        assert_eq!(drive_letter_of(&Shows::Folder("R:\\".into())), Some('R'));
+        assert_eq!(drive_letter_of(&Shows::Folder("R:\\a".into())), None);
+        assert_eq!(drive_letter_of(&Shows::MyComputer), None);
+        // Never read: a drive like any other.
+        assert_eq!(kind_of(&drive("Q:\\")), ItemKind::Drive);
+        assert!(!known_locked('Q', true));
+        note_lock('Q', true);
+        assert_eq!(kind_of(&drive("Q:\\")), ItemKind::LockedDrive);
+        assert!(known_locked('q', true), "just read: Open starts the unlock window");
+        assert!(item_entries(&[kind_of(&drive("Q:\\"))]).contains(&Some(DesktopCommand::UnlockDrive)));
+        // Another drive is not affected; a folder on the locked drive is a folder.
+        assert_eq!(kind_of(&drive("R:\\")), ItemKind::Drive);
+        // Unlocked (the next reading reads it): a drive again, its menu as before.
+        note_lock('Q', false);
+        assert_eq!(kind_of(&drive("Q:\\")), ItemKind::Drive);
+        assert!(!known_locked('Q', false));
+    }
+
     /// The folder windows' private messages are registered by name, each its own number: none is
     /// a fixed WM_APP number that another program's broadcast could hit (the third safety review
     /// of 2026-11-18, C4).

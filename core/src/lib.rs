@@ -10,6 +10,7 @@ pub mod calculator;
 pub mod bar_menu;
 mod best_fit;
 pub mod bevel_icon;
+pub mod bitlocker;
 pub mod colors16;
 pub mod colors256;
 mod colors16_art;

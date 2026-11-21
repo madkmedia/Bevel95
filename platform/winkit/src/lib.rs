@@ -26,6 +26,7 @@ pub static STAMP: &str = concat!(
     "\0"
 );
 
+pub mod bitlocker;
 pub mod com;
 pub mod confirm;
 pub mod copy;

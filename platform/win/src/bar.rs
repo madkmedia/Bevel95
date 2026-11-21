@@ -1055,7 +1055,8 @@ fn run_desktop_command_now(code: usize, by_keyboard: bool, ticket: u32) {
         Some(DesktopCommand::NewTextDocument) => desktop::new_item(false),
         Some(DesktopCommand::Undo) => crate::confirm_window::undo(),
         Some(DesktopCommand::QuickSearch) => open_find(),
-        None => {}
+        // Only a drive in a folder window has it (the desktop shows no drives).
+        Some(DesktopCommand::UnlockDrive) | None => {}
     }
 }
 

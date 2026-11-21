@@ -3767,6 +3767,59 @@ it, but write nothing).
     colors, which drew the separate 16-color set (halved, its Cut matches the 16-color capture pixel
     for pixel). Nothing changed; the question is in todo.md, both sets cut in
     `private/probes/measure17/toolbar98`.
+- **A drive locked by BitLocker** (2026-11-21, a user's report: "Bitlocker locked drives won't
+  open btw. it should have those options in the context menu imo."). A locked drive cannot be read
+  until the person gives Windows its password; before, Bevel95 opened a window on it that stayed
+  empty (or showed the look's "not accessible" message) and offered no way to unlock it. None of
+  the three Windows had BitLocker, so the folder windows do what today's Windows does:
+  - **How Windows says so** (`core::bitlocker`, no guess): a read of the drive fails with
+    `FVE_E_LOCKED_VOLUME` (0x80310000, windows-sys `Foundation::FVE_E_LOCKED_VOLUME`; Microsoft's
+    text "This drive is locked by BitLocker Drive Encryption"), or, after another error, the
+    shell's `System.Volume.BitLockerProtection` is 6, "Locked": Windows' own list of that
+    property's values, read on this PC (1 On, 2 Off, 3 Encrypting, 4 Decrypting, 5 Suspended,
+    6 Locked, 7 Not encryptable, 8 Waiting for activation), and the very condition Windows
+    registers for its own entry (`HKCR\Drive\shell\unlock-bde`: `AppliesTo =
+    System.Volume.BitLockerProtection:=6`, command `%SystemRoot%\System32\bdeunlock.exe %1`,
+    `MultiSelectModel = Single`, name `@bdeunlock.exe,-100` = "&Unlock Drive..."). A drive that
+    reads is never locked; "no disk" (`ERROR_NOT_READY`) does not ask the shell. The property is
+    read through `SHGetPropertyStoreFromParsingName` and IPropertyStore's GetValue
+    (`winkit::bitlocker::protection`; IPropertyStore's interface id written out, windows-sys has
+    none): new windows-sys features `Win32_UI_Shell_PropertiesSystem` and `Win32_System_Variant`
+    in bevel-winkit.
+  - **Where it is read**: only where drives are read already (My Computer's reader every second,
+    a place's facts, the tree's reader, a folder reader whose drive did not read), and only after a
+    read failed. What was found is kept with its time (`LOCKED` in folders.exe); the window's
+    thread asks no drive for it.
+  - **Open and Explore** (a double-click, the menu, the File menu's Open, the tree's row, a typed
+    address, `folders.exe E:\`) on a drive found locked in the last 3 seconds start Windows' own
+    unlock window for it and nothing else (`unlock_instead` in `navigate` and `open_window`):
+    `bdeunlock.exe` by its whole path (`shell::system_program`) with the drive's root, as Windows'
+    entry starts it (`winkit::bitlocker::start_unlock`). The password goes to Windows' window
+    only. When the lock was not known yet, the reading finds it: a window being opened does not
+    open (`Facts::locked`), a window that went there goes back, or closes if it was opened on that
+    drive (`locked_found`), a tree row that was opened closes as an unreadable one does, and the
+    unlock window comes instead of the look's "not accessible" message. A drive that cannot be read
+    for any other reason behaves as before.
+  - **Unlock Drive...** on a locked drive's menu (`ItemKind::LockedDrive`, which only the folder
+    windows give, from the last reading: `kind_of`), in all three looks, after Open and Explore in
+    the first group, one drive at a time. PROVISIONAL: the place is where today's Windows lists its
+    registered drive entries, not seen on a locked drive (this PC has none); its status-bar words
+    are empty (Windows' are not known). Not in the 98 and 2000 File menu (`FolderWindow`'s state
+    has no lock), not on the tree's row menu.
+  - **After unlocking**: My Computer's reader reads every drive each second, so the next reading
+    finds the drive readable (its label shows as its name changes), the menu loses Unlock Drive...,
+    and Open opens it as any drive.
+  - Proof: unit tests on the plain values (`core::bitlocker`: 0x80310000 and the shell's 6 mean
+    locked, every other answer and every readable drive not), the menus in each look
+    (`a_locked_drive_has_unlock_drive_after_open_and_explore`), folders'
+    `a_drive_found_locked_has_unlock_drive_until_it_is_found_unlocked`; on this PC (winkit's
+    `each_drive_is_found_as_windows_says`): C: to G: all read, none locked, the shell said 2 (Off)
+    for C:, E:, F:, G: and 7 (Not encryptable) for D:; `windows_own_unlock_program_is_the_one_started`:
+    bdeunlock.exe exists and is what the registry's unlock-bde command names (nothing started).
+    Not tried: a real locked drive (none here; none was made, no BitLocker setting was changed,
+    no virtual disk attached), the unlock window itself; the real try is the reporting user's.
+    Windows' other entries on a drive (Format, Eject, sharing, turning BitLocker on) are not built
+    (todo.md).
 
 ## Dragging files (2026-11-16, the owner: "Fine to work on remaining faults and dragging files")
 - **Measured first** on the three Reference PCs by a measuring helper (snapshot mode, each PC

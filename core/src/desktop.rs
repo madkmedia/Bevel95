@@ -71,10 +71,12 @@ pub enum DesktopCommand {
     Undo,
     /// Open Quick Search (the Bevel95 submenu).
     QuickSearch,
+    /// Windows' own unlock window for a drive locked by BitLocker (`bitlocker`).
+    UnlockDrive,
 }
 
 impl DesktopCommand {
-    const ALL: [DesktopCommand; 26] = [
+    const ALL: [DesktopCommand; 27] = [
         DesktopCommand::Arrange(Arrange::Name),
         DesktopCommand::Arrange(Arrange::Type),
         DesktopCommand::Arrange(Arrange::Size),
@@ -101,6 +103,7 @@ impl DesktopCommand {
         DesktopCommand::EmptyRecycleBin,
         DesktopCommand::Undo,
         DesktopCommand::QuickSearch,
+        DesktopCommand::UnlockDrive,
     ];
 
     /// A number standing for the command in a window message (`from_code` reads it back).
@@ -207,6 +210,10 @@ pub enum ItemKind {
     File,
     /// A drive in My Computer's window (Find and Format are left out).
     Drive,
+    /// A drive locked by BitLocker (`crate::bitlocker`): a drive's entries and Unlock Drive...
+    /// `of` never gives it (an item does not say it is locked); the folder windows do, from what
+    /// the drive's last reading found.
+    LockedDrive,
     /// Control Panel or Printers in My Computer's window.
     Place,
 }
@@ -231,6 +238,7 @@ impl ItemKind {
             ItemKind::Folder => &[Open, Explore, Cut, Copy, CreateShortcut, Delete, Rename, ItemProperties],
             ItemKind::File => &[Open, Cut, Copy, CreateShortcut, Delete, Rename, ItemProperties],
             ItemKind::Drive => &[Open, Explore, CreateShortcut, ItemProperties],
+            ItemKind::LockedDrive => &[Open, Explore, UnlockDrive, CreateShortcut, ItemProperties],
             ItemKind::Place => &[Open, Explore, CreateShortcut],
         }
     }
@@ -238,8 +246,11 @@ impl ItemKind {
 
 /// Windows' order of an icon's entries, in groups between separators (the Reference PCs): Open,
 /// Explore and Empty Recycle Bin; Cut and Copy; Create Shortcut, Delete and Rename; Properties.
+/// Unlock Drive... (none of the three Windows had BitLocker) goes where today's Windows lists its
+/// registered drive entries: in the first group, after Open and Explore (PROVISIONAL: not seen on
+/// a locked drive, this PC has none).
 const ITEM_GROUPS: [&[DesktopCommand]; 4] = [
-    &[DesktopCommand::Open, DesktopCommand::Explore, DesktopCommand::EmptyRecycleBin],
+    &[DesktopCommand::Open, DesktopCommand::Explore, DesktopCommand::UnlockDrive, DesktopCommand::EmptyRecycleBin],
     &[DesktopCommand::Cut, DesktopCommand::Copy],
     &[DesktopCommand::CreateShortcut, DesktopCommand::Delete, DesktopCommand::Rename],
     &[DesktopCommand::ItemProperties],
@@ -254,6 +265,7 @@ fn item_label(era: Era, command: DesktopCommand) -> &'static str {
         Explore if era == Era::Win2000 => "E&xplore",
         Explore => "&Explore",
         EmptyRecycleBin => "Empty Recycle &Bin",
+        UnlockDrive => crate::bitlocker::UNLOCK_LABEL,
         Cut => "Cu&t",
         Copy => "&Copy",
         CreateShortcut => "Create &Shortcut",
@@ -268,7 +280,9 @@ fn item_label(era: Era, command: DesktopCommand) -> &'static str {
 /// several are selected.
 pub fn item_entries(kinds: &[ItemKind]) -> Vec<Option<DesktopCommand>> {
     let has = |c: DesktopCommand| {
-        !kinds.is_empty() && kinds.iter().all(|k| k.commands().contains(&c)) && !(c == DesktopCommand::Rename && kinds.len() > 1)
+        // Rename, and Unlock Drive (Windows registers it `MultiSelectModel = Single`), for one icon.
+        let one_only = matches!(c, DesktopCommand::Rename | DesktopCommand::UnlockDrive);
+        !kinds.is_empty() && kinds.iter().all(|k| k.commands().contains(&c)) && !(one_only && kinds.len() > 1)
     };
     let mut out: Vec<Option<DesktopCommand>> = Vec::new();
     for group in ITEM_GROUPS {
@@ -546,6 +560,31 @@ mod tests {
         assert!(item_menu(Era::Win2000, &bin, false).entries[0].bold, "Open is the default");
         assert_eq!(item_at(&bin, 2), Some(DesktopCommand::EmptyRecycleBin));
         assert_eq!(item_at(&bin, 3), None);
+    }
+
+    #[test]
+    fn a_locked_drive_has_unlock_drive_after_open_and_explore() {
+        for era in Era::ALL {
+            let explore = if era == Era::Win2000 { "E&xplore" } else { "&Explore" };
+            assert_eq!(labels(era, &[ItemKind::Drive]), ["&Open", explore, "-", "Create &Shortcut", "-", "P&roperties"], "{era:?}");
+            assert_eq!(
+                labels(era, &[ItemKind::LockedDrive]),
+                ["&Open", explore, "&Unlock Drive...", "-", "Create &Shortcut", "-", "P&roperties"],
+                "{era:?}"
+            );
+            assert_eq!(item_at(&[ItemKind::LockedDrive], 2), Some(DesktopCommand::UnlockDrive));
+            assert!(item_menu(era, &[ItemKind::LockedDrive], false).entries[0].bold, "Open stays the default");
+        }
+        // Only a locked drive has it, also among several selected.
+        for kind in [ItemKind::Drive, ItemKind::Folder, ItemKind::File, ItemKind::Place, ItemKind::System(System::MyComputer)] {
+            assert!(!kind.commands().contains(&DesktopCommand::UnlockDrive), "{kind:?}");
+        }
+        assert!(!item_entries(&[ItemKind::LockedDrive, ItemKind::Drive]).contains(&Some(DesktopCommand::UnlockDrive)));
+        assert!(
+            !item_entries(&[ItemKind::LockedDrive, ItemKind::LockedDrive]).contains(&Some(DesktopCommand::UnlockDrive)),
+            "one drive at a time (MultiSelectModel = Single)"
+        );
+        assert_eq!(DesktopCommand::from_code(DesktopCommand::UnlockDrive.code()), Some(DesktopCommand::UnlockDrive));
     }
 
     #[test]
