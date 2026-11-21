@@ -25,7 +25,10 @@ look you choose.
 - **Three looks**: Windows 95, Windows 98 and Windows 2000, each with its own pictures, fonts and
   behaviour, never mixed. Each can also be shown as on a 16-color screen.
 - **Sizes**: drawn at the original size and enlarged by a whole number (2x on a 150% screen),
-  every pixel a square, never blurred.
+  every pixel a square, never blurred. Sizes between whole numbers can be chosen too, in quarter
+  steps (1.25x, 1.5x, 1.75x, ...); such a size is not pixel-exact, and Bevel95 Settings lets you
+  choose how it is drawn: even pixels with mixed edges (the default), the same mixed by light,
+  sharp but uneven pixels, or smooth.
 - **A classic desktop** with its icons (it can be switched off), **folder windows** and **Windows
   Explorer** with the tree of folders, in each look.
 - **Minesweeper, Solitaire and the Calculator**, each in the look you use, with their Help.

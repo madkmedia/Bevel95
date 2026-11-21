@@ -5285,6 +5285,89 @@ looked for on the Reference PCs themselves, and since then every picture in `art
   screen it could not have been judged either. Whether Show Desktop hides and brings back windows
   stays the owner's checklist.
 
+## Sizes in quarter steps (2026-11-21, the owner: "an option so they can pick from all")
+Someone asked for 2.2x; the owner wanted about 1.75x. The owner saw mock-ups of four ways of
+drawing a size between whole numbers (made by hand, every way computed pixel by pixel from three
+golden pictures) and chose: all four as a choice, quarter steps, a warning that such a size is not
+exact, the default left to us (even, the mock-ups' B1).
+- **The sizes**: besides the whole sizes, every quarter step up to 8 (`bevel_core::scale::Scale`,
+  kept in quarters: 4 = 1x, 7 = 1.75x). settings.txt's `scale` takes them ("1.75"); another number
+  goes to the nearest quarter and the log says so at the bar's start ("scale 2.2 is not a quarter
+  step: using 2.25"). The automatic size stays a whole number; a quarter size is only ever the
+  person's own choice. The menus offer 1x to 4x in quarter steps (`config::MENU_SCALES`, 13).
+- **Whole sizes do not change at all**: at 1, 2, 3, ... every 1x pixel is an n x n block by the
+  same `upscale` as before, and every length and point is the old x * n, w * n, x / n. Every golden
+  picture and comparison case is drawn at 1x and stays exact.
+- **The one rule for lengths and points** (`Scale::at`, `len`, `old`, `rect`, `old_cover`,
+  `old_fit`): a screen pixel belongs to the 1x pixel under its centre, which is the one that covers
+  most of it (`old(X) = floor((X + 1/2) / f)`); every click, drag and hover goes through it. A 1x
+  position is the first screen pixel that belongs to it (`at(x) = ceil(x·f - 1/2)`), so the two are
+  each other's inverse and the screen pixels from `at(x)` to `at(x + 1)` all belong to x. A picture
+  w pixels wide takes `len(w) = ceil(w·f)` screen pixels, never fewer than it needs; its last
+  part-pixel is drawn as if the picture's last row and column went on. A screen length becomes 1x
+  pixels by `old_cover` (rounded up: a bar or a resizable window covers its whole screen strip) or
+  `old_fit` (rounded down: how much fits). Tested for every quarter size, both ways, at the edges
+  (`scale::tests`).
+- **The four ways** (`scaling` in settings.txt; `Way`): `even` (every 1x pixel covers exactly f x f
+  screen pixels; a screen pixel lying across 1x pixels gets their mix by area, the stored values
+  mixed), `even-light` (the same in linear light), `nearest` (the 1x pixel under the centre) and
+  `smooth` (ordinary bilinear). Each gives exactly what the mock-ups' definition gives (a C# file
+  kept with the private mock-ups): `core/tests/scaling.rs` compares two small pictures at every
+  quarter size from 1.25 to 3.75 and at 7.75 with pictures that definition computed
+  (`core/tests/fixtures/scaling`), every pixel, 0 differ; the owner's sheet built from the real code
+  equals the mock-up's 1.75 sheet pixel for pixel. The definition works in reduced fractions (1.5 is
+  3/2): Bevel95 does too, and even-light adds the m x m enlarged pixels in the definition's own
+  order, so even its floating point sums are the same. A screen pixel that lies wholly on one 1x
+  pixel takes it as it is (even, nearest, smooth) or from a table made by the same additions
+  (even-light). The alpha channel (the drag picture's) is mixed as the stored values; the drag
+  picture is premultiplied before it is enlarged.
+- **Where it is chosen**: the bar's Bevel95 > Size menu (all 13 sizes: the menu stays well inside
+  a screen's height); Quick Search ("size", "scale", ...; the sizes in their own order); Bevel95
+  Settings, General page, Size group: two drop-down lists, "Size:" with every size and "Drawn as:"
+  with the four ways ("Even pixels", "Even pixels, lighter edges", "Sharp, uneven pixels", "Smooth";
+  usable only at a size between whole numbers), and a line under them that says what a size does,
+  or at such a size "A size between whole numbers is not pixel-exact." (all PROVISIONAL). The lists
+  are Windows 2000 Shut Down's kind (`Part::SizeList`, `WayList`, `DropRow`): the field, its button,
+  the list over what is under it; the keyboard (arrows step the closed list, F4 or Alt+Down opens,
+  Enter takes, Esc closes as it was, a first letter or digit) and the mouse. Option buttons did not
+  fit: 13 sizes and 4 ways need more than the group's 68 pixels, and the page is full. OK and Apply
+  save only what changed: the way alone saves only `scaling`, so an automatic size stays automatic.
+  `WM_BAR_SIZE` takes wParam / lParam: lParam 0 a whole size (as before), 4 quarters.
+- **Everything follows the size**: the bar, its menus and tooltips, the volume control, Run, Shut
+  Down and every kit window, the classic desktop (it repaints the 1x rectangle that changed and one
+  1x pixel more all round, `Scale::dirty`, since a mixed screen pixel reaches its neighbours), the
+  drag picture, the programs (they read the size and the way from settings.txt), Help (told
+  `--scale 1.75 --scaling even`). Setup always opens at the automatic, whole size.
+- **Remembered places**: the desktop's icon places (desktop.txt) are 1x pixels; the folder
+  windows' places and sizes (folders.txt) are screen pixels; a game's window place is screen pixels.
+  None of them changes with a change of size beyond what a change between whole sizes does today.
+- **Resizable windows** (folder windows, Help): between whole numbers the form's picture is a
+  part-pixel wider than the window, and fitting the window to it grew it again at every step (a
+  maximized folder window ended 2 pixels past the work area, found live). Between whole numbers the
+  window keeps the size Windows gives it (`kit`, `WM_SIZE`); at a whole size nothing changed.
+- **Speed** (this PC, a 2560x1440 screen at 144 DPI; release build): enlarging a maximized folder
+  window's picture (1463x796 1x pixels at 1.75; 1280x696 at 2) took 2.8 ms at 2, at 1.75 2.7 ms
+  nearest, 9.4 ms even, 9.6 ms smooth, 23 ms even-light (`how_long_enlarging_takes`, a busy golden
+  picture repeated); the bar 0.05, 0.05, 0.33, 0.31, 0.74 ms. A whole repaint of a maximized scratch
+  folder window measured from outside (RedrawWindow ... UPDATENOW, 20 times): 13.1 ms mean at 2,
+  13.8 nearest, 16.4 even, 15.8 smooth, 25.1 even-light at 1.75. Even costs about 3 ms per full
+  repaint over today's; even-light about 12. What would cure it if it matters: enlarge only the
+  part Windows asks to repaint (`enlarge_part` exists; the kit enlarges the whole window), and for
+  even-light keep the mixed results of a pair of colors and a weight (exact, since the sums are the
+  same) instead of computing the light again.
+- **Not done or not tried**: the bar's own windows (menus, tooltips, dialogs, the desktop) were
+  not tried live at a quarter size: a second bar cannot run, and the owner's bar was switched only
+  once, by its own message, for its Start corner. Shut Down's dimmed screen takes its 1x checker
+  by the centre rule in every way (not mixed). An open drop-down list that reaches left or above a
+  kit window's form moves the form's pixel grid at a quarter size (the form may look a part-pixel
+  different while such a list is open; Run's list opens below). Points left of or above a window
+  (the mouse held and dragged out) now round down (`old`), where `x / scale` rounded toward zero:
+  only such points outside the window are told differently at a whole size.
+- Probes (private): `private/probes/scaling/live.ps1` (a built program from a scratch copy at a
+  size and a way, its own windows photographed, its repaint timed), `bar-switch.ps1` (the one switch
+  of the owner's bar, settings.txt compared after), `make-fixtures.ps1` (the test pictures from the
+  definition), `make-built-sheet.ps1` (the owner's sheet, compared with the mock-up).
+
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean
 copy, for the owner to publish when they decide (a fresh history, todo.md "Towards something

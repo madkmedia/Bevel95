@@ -144,6 +144,40 @@ fn how_long_enlarging_takes() {
     }
 }
 
+/// Writes Bevel95's own enlarging of three golden pictures at 1.75 in the four ways, 220×140 1×
+/// pixels of each (the crops the mock-ups were made from), as PNG files into the folder
+/// BEVEL95_SHEET_OUT names: `<n>-<way>.png`. Run:
+/// set BEVEL95_SHEET_OUT=<folder>, then cargo test -p bevel-core --release --test scaling -- --ignored writes_the_sheet_pictures
+#[test]
+#[ignore]
+fn writes_the_sheet_pictures() {
+    let out = PathBuf::from(std::env::var("BEVEL95_SHEET_OUT").expect("BEVEL95_SHEET_OUT names the folder"));
+    std::fs::create_dir_all(&out).unwrap();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("golden");
+    let crops = [("win98-start-menu.png", 30, 340), ("win98-properties.png", 20, 160), ("win98-folder-explorer.png", 22, 40)];
+    for (n, (file, x0, y0)) in crops.into_iter().enumerate() {
+        let src = read(&golden.join(file));
+        let mut crop = Framebuffer::new(220, 140, 0);
+        for y in 0..140 {
+            for x in 0..220 {
+                crop.set(x, y, src.get(x0 + x, y0 + y));
+            }
+        }
+        for way in Way::ALL {
+            let big = Scale::from_quarters(7).with_way(way).enlarge(&crop);
+            let mut encoder_bytes = Vec::new();
+            let mut encoder = png::Encoder::new(&mut encoder_bytes, big.width as u32, big.height as u32);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            let data: Vec<u8> = big.pixels.iter().flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8]).collect();
+            writer.write_image_data(&data).unwrap();
+            writer.finish().unwrap();
+            std::fs::write(out.join(format!("{n}-{}.png", way.setting())), encoder_bytes).unwrap();
+        }
+    }
+}
+
 #[test]
 fn whole_sizes_are_byte_for_byte_as_today() {
     for name in ["dots", "menu"] {
