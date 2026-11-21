@@ -18,7 +18,7 @@ body:
     id: bevel95
     attributes:
       label: Bevel95 version
-      description: "Right-click the taskbar > Bevel95 > About Bevel95 (for example: 0.1.1, build 1a2b3c4)"
+      description: "Right-click the taskbar > Bevel95 > About Bevel95 (for example: 0.1.2, build 1a2b3c4)"
   - type: dropdown
     id: look
     attributes:
