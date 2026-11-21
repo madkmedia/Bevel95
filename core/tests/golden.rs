@@ -606,7 +606,7 @@ fn quick_launch_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) 
     let show_keys = era.always_shows_keys();
     let band = {
         let icons = quick_launch::builtins(era).iter().map(|&b| quick_launch::picture(era, b)).collect();
-        let state = Bar { tasks: three_groups(), clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), quick_launch: Some(quick_launch::Band { icons, hot: None, pressed: None }), ..Bar::default() };
+        let state = Bar { tasks: three_groups(), clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), quick_launch: Some(quick_launch::Band { icons, ..Default::default() }), ..Bar::default() };
         paint::bar_layout(theme, fonts, WIDTH, &state).quick.expect("the band")
     };
     match which {
@@ -1347,7 +1347,7 @@ fn quick_launch_scene(theme: &Theme, era: Era, fonts: &Fonts, hot: Option<usize>
         tasks: three_groups(),
         clock: CLOCK.to_string(),
         clock_widest: WIDEST.to_string(),
-        quick_launch: Some(quick_launch::Band { icons, hot, pressed }),
+        quick_launch: Some(quick_launch::Band { icons, hot, pressed, ..Default::default() }),
         ..Bar::default()
     };
     paint::paint_bar(&mut bar, theme, fonts, &state);
@@ -1357,6 +1357,100 @@ fn quick_launch_scene(theme: &Theme, era: Era, fonts: &Fonts, hot: Option<usize>
     let mut out = Framebuffer::new(width, bar.height, 0);
     out.blit(&bar, 0, 0);
     out
+}
+
+/// The band made narrower and wider (brief 70): what `quick_launch_sized` draws.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BandSize {
+    /// The look's own icons, the band dragged 40 wider: empty face after them.
+    Widened,
+    /// Nine icons (the look's own, then Bevel95's own window pictures as test shortcuts), the band
+    /// dragged to its narrowest: 98's right arrow (the pointer on it) and the fifth icon cut; 2000's
+    /// "»" (the pointer on it) with four icons.
+    Narrowed,
+    /// 98 (and the 95 look): the same, scrolled by two presses of the right arrow, the pointer on
+    /// the left arrow.
+    Scrolled,
+    /// 98's right arrow held down at the end: grayed until the release.
+    HeldAtEnd,
+    /// 2000: the "»" clicked, its list of the icons left out open above it, the pointer on its
+    /// second row.
+    List,
+}
+
+/// Bevel95's own test icons for the sized band: the look's built-in icons, then window pictures.
+fn sized_icons(era: Era) -> (Vec<Option<bevel_core::fb::Icon>>, Vec<String>) {
+    use bevel_core::quick_launch;
+    use bevel_core::window_icons::{self, ClassicWindow::*};
+    let mut icons: Vec<Option<bevel_core::fb::Icon>> = quick_launch::builtins(era).iter().map(|&b| quick_launch::picture(era, b)).collect();
+    let mut names: Vec<String> = quick_launch::builtins(era).iter().map(|&b| quick_launch::item_name(era, quick_launch::Item::Builtin(b), &[])).collect();
+    for (kind, name) in [(Notepad, "Notepad"), (MyComputer, "My Computer"), (RecycleBin, "Recycle Bin"), (ControlPanel, "Control Panel"), (Folder, "Temp"), (MyDocuments, "My Documents")] {
+        icons.push(Some(window_icons::icon(era, kind)));
+        names.push(name.to_string());
+    }
+    icons.truncate(9);
+    names.truncate(9);
+    (icons, names)
+}
+
+/// The left end of the bar (240 wide; the list scene: the desktop's lower left with the bar) with
+/// the band made narrower or wider (`BandSize`).
+fn quick_launch_sized(theme: &Theme, era: Era, fonts: &Fonts, which: BandSize) -> Framebuffer {
+    use bevel_core::quick_launch::{self, Control};
+    let (icons, names) = match which {
+        BandSize::Widened => {
+            let (mut i, mut n) = sized_icons(era);
+            let k = quick_launch::builtins(era).len();
+            i.truncate(k);
+            n.truncate(k);
+            (i, n)
+        }
+        _ => sized_icons(era),
+    };
+    let count = icons.len();
+    let mut band = quick_launch::Band { icons, ..Default::default() };
+    match which {
+        BandSize::Widened => band.width = Some(quick_launch::natural_width(count) + 40),
+        BandSize::Narrowed => {
+            band.width = Some(quick_launch::min_width(era, count));
+            band.hot_control = Some(if era == Era::Win2000 { Control::Chevron } else { Control::Right });
+        }
+        BandSize::Scrolled => {
+            band.width = Some(quick_launch::min_width(era, count));
+            band.scroll = quick_launch::scroll_right(quick_launch::scroll_right(0, i32::MAX), i32::MAX);
+            band.hot_control = Some(Control::Left);
+        }
+        BandSize::HeldAtEnd => {
+            band.width = Some(quick_launch::min_width(era, count));
+            band.scroll = i32::MAX;
+            band.pressed_control = Some(Control::Right);
+        }
+        BandSize::List => {
+            band.width = Some(quick_launch::min_width(era, count));
+            band.list_open = true;
+        }
+    }
+    let state = Bar { tasks: three_groups(), clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), quick_launch: Some(band.clone()), ..Bar::default() };
+    let mut bar = Framebuffer::new(WIDTH, theme.bar.height, 0);
+    let layout = paint::paint_bar(&mut bar, theme, fonts, &state);
+    if which != BandSize::List {
+        let mut out = Framebuffer::new(240, bar.height, 0);
+        out.blit(&bar, 0, 0);
+        return out;
+    }
+    // The list over the desktop's lower left, above the "»".
+    const H: i32 = 140;
+    let mut screen = Framebuffer::new(320, H, desktop(era));
+    let bar_top = H - bar.height;
+    screen.blit(&bar, 0, bar_top);
+    let q = layout.quick.expect("the band");
+    let chevron = q.chevron.expect("the chevron");
+    let rows = q.hidden.iter().map(|&i| (names[i].clone(), band.icons[i].clone())).collect();
+    let menu = Menu { hover: Some(1), ..quick_launch::list_menu(rows, &names) };
+    let (fb, _) = menu_image(theme, fonts, &menu, MenuStyle::Cascade);
+    let (x, y) = quick_launch::place_list(Rect::new(chevron.x, bar_top + chevron.y, chevron.w, chevron.h), fb.width, fb.height, Rect::new(0, 0, 320, H));
+    screen.blit(&fb, x, y);
+    screen
 }
 
 thread_local! {
@@ -1658,6 +1752,39 @@ fn scenes() -> Vec<Scene> {
             "Quick Launch: the menu on an icon (first pass: Open and Delete)",
             quick_launch_menu_scene(theme, era, &fonts, "icon"),
         );
+        add(
+            "quick-launch-widened",
+            "Quick Launch dragged 40 wider by the grip before the task buttons: empty face after the icons",
+            quick_launch_sized(theme, era, &fonts, BandSize::Widened),
+        );
+        if era == Era::Win2000 {
+            add(
+                "quick-launch-narrowed",
+                "Quick Launch with nine icons (test pictures) dragged to its narrowest: four icons and the \"»\", the pointer on it",
+                quick_launch_sized(theme, era, &fonts, BandSize::Narrowed),
+            );
+            add(
+                "quick-launch-list",
+                "The \"»\" clicked: the list of the icons left out, above it, as wide as the longest name on the band; the pointer on the second row",
+                quick_launch_sized(theme, era, &fonts, BandSize::List),
+            );
+        } else {
+            add(
+                "quick-launch-narrowed",
+                "Quick Launch with nine icons (test pictures) dragged to its narrowest: four icons, the fifth cut, the right arrow under the pointer",
+                quick_launch_sized(theme, era, &fonts, BandSize::Narrowed),
+            );
+            add(
+                "quick-launch-scrolled",
+                "The same after two presses of the right arrow: the left arrow (under the pointer) and the icons moved on",
+                quick_launch_sized(theme, era, &fonts, BandSize::Scrolled),
+            );
+            add(
+                "quick-launch-held-at-end",
+                "The right arrow held down at the end: grayed until the release, then gone",
+                quick_launch_sized(theme, era, &fonts, BandSize::HeldAtEnd),
+            );
+        }
         if era != Era::Win95 {
             add(
                 "toolbars-menu",

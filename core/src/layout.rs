@@ -91,8 +91,9 @@ pub fn bar(
     bar_with(theme, fonts, width, task_count, tray_count, number, clock, widest, row, None)
 }
 
-/// `bar`, with the Quick Launch band of `quick` icons when it is `Some`: the band goes right of
-/// the Start button and the task buttons start after it (`quick_launch::layout`).
+/// `bar`, with the Quick Launch band of `quick` (its icons, width and scroll position) when it is
+/// `Some`: the band goes right of the Start button and the task buttons start after it
+/// (`quick_launch::layout_shape`).
 #[allow(clippy::too_many_arguments)]
 pub fn bar_with(
     theme: &Theme,
@@ -104,14 +105,13 @@ pub fn bar_with(
     clock: &str,
     widest: &str,
     row: usize,
-    quick: Option<usize>,
+    quick: Option<quick_launch::Shape>,
 ) -> BarLayout {
     let start = start_button(theme, fonts);
     let w = tray_well(theme, fonts, width, tray_count, number, clock, widest);
-    // Only as many icons as leave the task area room for one whole task button and its arrows.
-    let quick = quick.map(|n| {
-        let n = quick_launch::fitting(theme.era, start, w.well, n, &theme.task);
-        quick_launch::layout(theme.era, start, w.well, n, theme.bar.item_y(), theme.bar.item_h())
+    // Never wider than leaves the task area room for one whole task button and its arrows.
+    let quick = quick.map(|shape| {
+        quick_launch::layout_shape(theme.era, start, w.well, &shape, Some(&theme.task), theme.bar.item_y(), theme.bar.item_h())
     });
     let task_band = if quick.is_none() { quick_launch::task_band(theme.era, start, w.well) } else { None };
     let (tasks, first_task, scroll) = match (&quick, &task_band) {
@@ -412,34 +412,45 @@ mod tests {
         };
         // The reviewer's case: the 98 look, 10 icons (the 4 built-in ones and 6 shortcuts), Size 3
         // on a 1280-wide screen (427 pixels at 1x), six windows, two notification icons.
-        let l = bar_with(theme, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        let ten = Some(quick_launch::Shape::all(10));
+        let l = bar_with(theme, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, ten);
         sane(&l);
         let band = l.quick.as_ref().unwrap();
-        let shown = band.buttons.len();
-        // Two of the ten: the task area keeps 194 (one button and its arrows need 160 + 3 + 16).
-        assert_eq!(shown, 2, "{shown} icons on a 427-wide bar");
+        // The band as wide as leaves the task area exactly the room one button and its arrows
+        // need (160 + 3 + 16); the icons beyond it reached by 98's arrows (brief 70; before, two
+        // icons showed and the other eight were left out).
         let room = band.tasks_right - band.rect.right();
-        assert!(room >= need, "the task area keeps {room}, one button and its arrows need {need}");
-        assert!(room - quick_launch::BUTTON_W < need, "one more icon would have fitted ({room})");
+        assert_eq!(room, need, "the task area keeps {room}, one button and its arrows need {need}");
+        assert_eq!(band.width, band.max_width);
+        assert!(band.right.is_some() && band.left.is_none(), "the right arrow: {band:?}");
+        assert_eq!(band.buttons.len(), 10);
+        assert!(band.hidden.is_empty(), "every icon can be scrolled to");
         // With one window it gets the look's full width.
-        let one = bar_with(theme, &fonts, 1280 / 3, 1, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        let one = bar_with(theme, &fonts, 1280 / 3, 1, 2, None, "12:00 PM", "12:00 PM", 0, ten);
         assert_eq!(one.tasks[0].w, t.width);
         // With twenty, the rows' arrows sit at the task area's end, right of the band.
-        let many = bar_with(theme, &fonts, 1280 / 3, 20, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
+        let many = bar_with(theme, &fonts, 1280 / 3, 20, 2, None, "12:00 PM", "12:00 PM", 0, ten);
         sane(&many);
         assert!(many.scroll.is_some());
         // Fewer icons than fit: all shown, the layout as before.
-        let l = bar_with(theme, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(2));
-        assert_eq!(l.quick.as_ref().unwrap().buttons.len(), 2);
+        let l = bar_with(theme, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(quick_launch::Shape::all(2)));
+        let band = l.quick.as_ref().unwrap();
+        assert_eq!((band.buttons.len(), band.right, band.end_line - band.line), (2, None, quick_launch::natural_width(2)));
         sane(&l);
-        // A wide bar: all ten.
-        let l = bar_with(theme, &fonts, 1280, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
-        assert_eq!(l.quick.as_ref().unwrap().buttons.len(), 10);
+        // A wide bar: all ten, no arrows.
+        let l = bar_with(theme, &fonts, 1280, 6, 2, None, "12:00 PM", "12:00 PM", 0, ten);
+        assert_eq!((l.quick.as_ref().unwrap().buttons.len(), l.quick.as_ref().unwrap().right), (10, None));
+        // The 2000 look on the same narrow bar: whole icons and the "»".
+        let l = bar_with(&crate::theme::WIN2000, &fonts, 1280 / 3, 6, 2, None, "12:00 PM", "12:00 PM", 0, ten);
+        let band = l.quick.as_ref().unwrap();
+        assert!(band.chevron.is_some());
+        assert_eq!(band.buttons.len() + band.hidden.len(), 10);
         // A bar so narrow that no icon fits: the band keeps its lines and grips, no icon, and
         // nothing has a negative width; the arrows stay inside the task area.
         for width in [300, 250, 200, 120, 60] {
-            let l = bar_with(theme, &fonts, width, 6, 2, None, "12:00 PM", "12:00 PM", 0, Some(10));
-            assert_eq!(l.quick.as_ref().unwrap().buttons.len(), 0, "width {width}");
+            let l = bar_with(theme, &fonts, width, 6, 2, None, "12:00 PM", "12:00 PM", 0, ten);
+            let band = l.quick.as_ref().unwrap();
+            assert_eq!((band.buttons.len(), band.right, band.hidden.len()), (0, None, 10), "width {width}");
             sane(&l);
         }
     }

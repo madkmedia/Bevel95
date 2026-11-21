@@ -65,7 +65,7 @@ pub struct Bar {
 /// Where everything of `bar` goes on a bar `width` wide, as `paint_bar` lays it out.
 pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
     let number = bar.tray_number.as_ref().filter(|(_, text)| !text.is_empty()).map(|&(i, _)| i);
-    let quick = bar.quick_launch.as_ref().map(|q| q.icons.len());
+    let quick = bar.quick_launch.as_ref().map(quick_launch::Band::shape);
     layout::bar_with(theme, fonts, width, bar.tasks.len(), bar.tray.len(), number, &bar.clock, &bar.clock_widest, bar.row, quick)
 }
 
@@ -127,26 +127,124 @@ fn paint_quick_launch(fb: &mut Framebuffer, theme: &Theme, band: &quick_launch::
     let grip = |fb: &mut Framebuffer, x: i32| grip(fb, c, x, y);
     etched(fb, band.line);
     grip(fb, band.grip);
-    for (i, r) in band.buttons.iter().enumerate() {
-        let pressed = q.pressed == Some(i);
-        let shift = if pressed {
-            fb.frame(*r, c.shadow, c.highlight);
-            1
-        } else {
-            if q.hot == Some(i) {
-                fb.frame(*r, c.highlight, c.shadow);
-            }
-            0
-        };
-        if let Some(Some(icon)) = q.icons.get(i) {
-            let at = quick_launch::ICON_IN + shift;
-            colors16::draw_picture(fb, theme, icon, r.x + at, r.y + at);
+    if band.left.is_none() && band.right.is_none() {
+        // Every icon drawn whole where it is (also Windows 2000's with its "»").
+        for (i, r) in band.buttons.iter().enumerate() {
+            quick_button(fb, theme, *r, q, i);
         }
+    } else {
+        // Windows 98's pager: the icons drawn on a strip of their own and only the part that can be
+        // seen copied to the bar, so the icon at an edge is cut (resize.md, 2).
+        let (x0, x1) = band.view;
+        if x1 > x0 {
+            let mut strip = Framebuffer::new(x1 - x0, fb.height, c.face);
+            for (i, r) in band.buttons.iter().enumerate() {
+                if r.right() > x0 && r.x < x1 {
+                    quick_button(&mut strip, theme, Rect { x: r.x - x0, ..*r }, q, i);
+                }
+            }
+            fb.blit_part(&strip, Rect::new(0, y, x1 - x0, h), x0, y);
+        }
+    }
+    let control = |c: quick_launch::Control| {
+        let pressed = q.pressed_control == Some(c);
+        let state = if pressed || (c == quick_launch::Control::Chevron && q.list_open) {
+            ControlState::Pressed
+        } else if q.hot_control == Some(c) {
+            ControlState::Hot
+        } else {
+            ControlState::Flat
+        };
+        // A 98 arrow held down once the end is reached: grayed until the release (resize.md,
+        // `12icons-left-arrow-held-down-b`).
+        let at_end = match c {
+            quick_launch::Control::Left => band.scroll == 0,
+            quick_launch::Control::Right => band.scroll >= band.max_scroll,
+            quick_launch::Control::Chevron => false,
+        };
+        if pressed && at_end { ControlState::Grayed } else { state }
+    };
+    if let Some(r) = band.left {
+        overflow_control(fb, theme, r, quick_launch::Control::Left, control(quick_launch::Control::Left));
+    }
+    if let Some(r) = band.right {
+        overflow_control(fb, theme, r, quick_launch::Control::Right, control(quick_launch::Control::Right));
+    }
+    if let Some(r) = band.chevron {
+        overflow_control(fb, theme, r, quick_launch::Control::Chevron, control(quick_launch::Control::Chevron));
     }
     etched(fb, band.end_line);
     grip(fb, band.end_grip);
     if let Some(x) = band.tray_line {
         etched(fb, x);
+    }
+}
+
+/// Icon `i`'s button at `r`: flat, raised under the pointer, sunk while held down (its picture 1
+/// pixel right and down).
+fn quick_button(fb: &mut Framebuffer, theme: &Theme, r: Rect, q: &quick_launch::Band, i: usize) {
+    let c = &theme.colors;
+    let pressed = q.pressed == Some(i);
+    let shift = if pressed {
+        fb.frame(r, c.shadow, c.highlight);
+        1
+    } else {
+        if q.hot == Some(i) {
+            fb.frame(r, c.highlight, c.shadow);
+        }
+        0
+    };
+    if let Some(Some(icon)) = q.icons.get(i) {
+        let at = quick_launch::ICON_IN + shift;
+        colors16::draw_picture(fb, theme, icon, r.x + at, r.y + at);
+    }
+}
+
+/// How an overflow control is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControlState {
+    Flat,
+    Hot,
+    Pressed,
+    Grayed,
+}
+
+/// An overflow control of the band (resize.md, 2): flat when idle (only its glyph); under the
+/// pointer a one-pixel ring, highlight top and left, shadow right and bottom; held down Windows
+/// 98's arrow has a dark-shadow and light ring (black and DFDFDF), Windows 2000's "»" (also while
+/// its list is open) a shadow and highlight one, and the glyph moves 1 pixel right and down; a 98
+/// arrow held down at the end is grayed (etched, no ring).
+fn overflow_control(fb: &mut Framebuffer, theme: &Theme, r: Rect, which: quick_launch::Control, state: ControlState) {
+    use crate::art::{Look, rows};
+    use quick_launch::Control;
+    const RIGHT: &[&str] = rows("quick-launch/pager-right", Look::Win98).rows;
+    const LEFT: &[&str] = rows("quick-launch/pager-left", Look::Win98).rows;
+    const CHEVRON: &[&str] = rows("quick-launch/chevron", Look::Win2000).rows;
+    let c = &theme.colors;
+    let (shape, dx, dy): (&[&str], i32, i32) = match which {
+        Control::Right => (RIGHT, 5, 8),
+        Control::Left => (LEFT, 4, 8),
+        Control::Chevron => (CHEVRON, 2, 5),
+    };
+    let (x, y) = (r.x + dx, r.y + dy);
+    match state {
+        ControlState::Flat => art(fb, shape, x, y, c.text),
+        ControlState::Hot => {
+            fb.frame(r, c.highlight, c.shadow);
+            art(fb, shape, x, y, c.text);
+        }
+        ControlState::Pressed => {
+            if which == Control::Chevron {
+                fb.frame(r, c.shadow, c.highlight);
+            } else {
+                fb.frame(r, c.dark_shadow, c.light);
+            }
+            art(fb, shape, x + 1, y + 1, c.text);
+        }
+        ControlState::Grayed => {
+            art(fb, shape, x + 1, y + 1, c.etch);
+            art(fb, shape, x, y, c.shadow);
+        }
     }
 }
 
@@ -454,6 +552,9 @@ pub struct Menu {
     /// Explorer's own menu (a desktop icon's): Windows 2000 drew its bold entry in a bold whose
     /// "O" and "e" differ from today's Tahoma Bold (`Font::explorer_bold`).
     pub explorer_bold: bool,
+    /// Labels the menu is made wide enough for although they are not among its entries (Windows
+    /// 2000's Quick Launch list: as wide as the longest name on the band, shown or not).
+    pub width_labels: Vec<String>,
 }
 
 /// Runs `f` with the fonts `menu` is drawn with: Explorer's bold for an Explorer menu.
@@ -572,6 +673,7 @@ fn item_width(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle) -> i3
     let raw = style == MenuStyle::Cascade && theme.start_menu.cascade_counts_ampersands;
     let measure = |e: &MenuEntry| if raw { e.font(fonts).measure(&e.label) } else { e.font(fonts).measure_label(&e.label) };
     let widest = labels.map(measure).max().unwrap_or(0);
+    let widest = menu.width_labels.iter().map(|l| fonts.regular.measure_label(l)).fold(widest, i32::max);
     match style {
         MenuStyle::Popup => popup_columns(theme, fonts, menu).2,
         MenuStyle::Start | MenuStyle::StartSmall | MenuStyle::Cascade => {

@@ -2882,7 +2882,7 @@ fn quick_launch_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 quick_launch::picture(era, Builtin::OutlookExpress),
             ],
         };
-        Band { icons, hot, pressed: None }
+        Band { icons, hot, ..Band::default() }
     };
     let draw = |theme: &Theme, fonts: &Fonts, width: i32, tasks: Vec<Task>, tray: usize, band: Band| {
         let mut fb = Framebuffer::new(width, theme.bar.height, 0);

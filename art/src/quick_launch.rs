@@ -282,7 +282,31 @@ const W2K_OUTLOOK_16: Rows = Rows { w: 16, h: 16, palette: &[], rows: &[
     "......C4CC......",
 ]};
 
+// The band's overflow controls (brief 70; private/probes/quick-launch/resize.md), "#" ink, read
+// pixel by pixel from the Reference PCs' captures. Windows 98's pager arrows, 3x5, drawn 8 rows
+// below the button's top, the right one 5 in (`win98-truecolor-qlsize-8icons-3windows-band-kept-
+// width-arrow`: x 154..156, y 584..588), the left one 4 in (`-12icons-left-arrow-hot-b`: x
+// 563..565). Windows 2000's chevron "»", 8x5, 2 in and 5 rows down (`win2000-truecolor-qlsize-
+// 7icons-released-after-left-115`: x 169..176, y 581..585).
+#[rustfmt::skip]
+const W98_PAGER_RIGHT: Rows = Rows { w: 3, h: 5, palette: &[], rows: &[
+    "#..", "##.", "###", "##.", "#..",
+] };
+
+#[rustfmt::skip]
+const W98_PAGER_LEFT: Rows = Rows { w: 3, h: 5, palette: &[], rows: &[
+    "..#", ".##", "###", ".##", "..#",
+] };
+
+#[rustfmt::skip]
+const W2K_CHEVRON: Rows = Rows { w: 8, h: 5, palette: &[], rows: &[
+    "##..##..", ".##..##.", "..##..##", ".##..##.", "##..##..",
+] };
+
 pub(crate) const ENTRIES: &[Entry] = &[
+    Entry { what: "quick-launch/pager-right", looks: &[Look::Win95, Look::Win98], depth: Depth::TrueColor, art: Art::Rows(&W98_PAGER_RIGHT) },
+    Entry { what: "quick-launch/pager-left", looks: &[Look::Win95, Look::Win98], depth: Depth::TrueColor, art: Art::Rows(&W98_PAGER_LEFT) },
+    Entry { what: "quick-launch/chevron", looks: &[Look::Win2000], depth: Depth::TrueColor, art: Art::Rows(&W2K_CHEVRON) },
     Entry { what: "quick-launch/internet-explorer", looks: &[Look::Win98], depth: Depth::TrueColor, art: Art::Rows(&W98_INTERNET) },
     Entry { what: "quick-launch/outlook-express", looks: &[Look::Win98], depth: Depth::TrueColor, art: Art::Rows(&W98_OUTLOOK) },
     Entry { what: "quick-launch/show-desktop", looks: &[Look::Win98], depth: Depth::TrueColor, art: Art::Rows(&W98_SHOW_DESKTOP) },

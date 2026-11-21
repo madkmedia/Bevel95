@@ -359,8 +359,7 @@ pub struct State {
     pub items: Vec<Item>,
     pub hot: Option<usize>,
     pub held: Option<Held<Target>>,
-    /// What the log said last: how many icons were left out, whether there was a mail program.
-    logged_left_out: Option<usize>,
+    /// What the log said last: whether there was a browser and a mail program.
     logged_programs: Option<(bool, bool)>,
     /// How many icons the bar had room for at the last paint, as the log said last.
     logged_narrow: Option<usize>,
@@ -402,13 +401,7 @@ impl State {
             Builtin::OutlookExpress => mail,
             _ => true,
         };
-        let (items, left_out) = quick_launch::items(era, &self.removed, available, self.shortcuts.len());
-        if self.logged_left_out != Some(left_out) {
-            self.logged_left_out = Some(left_out);
-            if left_out > 0 {
-                log(&format!("quick launch: {left_out} icons do not fit and are left out (at most {})", quick_launch::MAX_ICONS));
-            }
-        }
+        let items = quick_launch::items(era, &self.removed, available, self.shortcuts.len());
         // A held icon is left to its release (`Held`): it decides by what the icon is.
         if items != self.items {
             self.hot = None;
@@ -447,7 +440,7 @@ impl State {
             })
             .collect();
         let pressed = self.held.as_ref().and_then(|h| h.sunk(|i| self.target(i)));
-        Band { icons, hot: self.hot, pressed }
+        Band { icons, hot: self.hot, pressed, ..Band::default() }
     }
 
     /// What icon `index` is.
@@ -532,7 +525,13 @@ pub fn put_back_all() {
 /// (the reason is logged: here, or already by `state_file`).
 pub fn save_removed(removed: &[Builtin]) -> bool {
     let path = state_path();
-    match state_file::save(&path, &quick_launch::removed_text(removed)) {
+    // The band's width the file holds is kept as it is.
+    let width = match state_file::load(&path) {
+        state_file::Read::Text(text) => quick_launch::parse_state(&text).width,
+        _ => None,
+    };
+    let saved = quick_launch::Saved { removed: removed.to_vec(), width };
+    match state_file::save(&path, &quick_launch::state_text(&saved)) {
         Ok(()) => true,
         Err(e) => {
             if !state_file::already_logged(&e) {
