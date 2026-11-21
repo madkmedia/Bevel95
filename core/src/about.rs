@@ -45,7 +45,7 @@ pub const SUPPORT_URL: &str = "https://github.com/madkmedia/Bevel95#supporting-b
 /// The About window's button that opens `SUPPORT_URL` (PROVISIONAL words).
 pub const SUPPORT_LABEL: &str = concat!("&Support ", product_name!(), "...");
 
-/// "Version 0.1.2 (build 1a2b3c4)"; `build` is "unknown" for a build made without git.
+/// "Version 0.1.3 (build 1a2b3c4)"; `build` is "unknown" for a build made without git.
 pub fn version_line(build: &str) -> String {
     format!("Version {VERSION} (build {build})")
 }
@@ -242,10 +242,10 @@ mod tests {
     #[test]
     fn the_name_and_version_come_from_one_place() {
         assert_eq!(NAME, "Bevel95");
-        assert_eq!(VERSION, "0.1.2", "the workspace's version");
-        assert_eq!(version_line("1a2b3c4"), "Version 0.1.2 (build 1a2b3c4)");
-        assert_eq!(version_line("unknown"), "Version 0.1.2 (build unknown)");
-        assert_eq!(log_line("bevel95.exe", "1a2b3c4"), "Bevel95 0.1.2 (build 1a2b3c4): bevel95.exe starting");
+        assert_eq!(VERSION, "0.1.3", "the workspace's version");
+        assert_eq!(version_line("1a2b3c4"), "Version 0.1.3 (build 1a2b3c4)");
+        assert_eq!(version_line("unknown"), "Version 0.1.3 (build unknown)");
+        assert_eq!(log_line("bevel95.exe", "1a2b3c4"), "Bevel95 0.1.3 (build 1a2b3c4): bevel95.exe starting");
         assert_eq!(AboutWindow::new(Era::Win98, "x").title(), "About Bevel95");
     }
 
