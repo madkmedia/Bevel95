@@ -182,18 +182,18 @@ fn stretch_steps_as_windows_did() {
     // 98's Clouds, 640x480 to 800x600 (survey.md, section 4): the doubled columns are 1, 5, 9, ...
     // and the doubled rows 2, 6, 10, ... (counted from the top; from the bottom they are 1, 5, ...).
     let count = |map: &[i32], s: i32| map.iter().filter(|&&m| m == s).count();
-    let cols = steps(640, 800, false);
+    let cols = steps(Era::Win98, 640, 800, false);
     for s in 0..640 {
         assert_eq!(count(&cols, s), if s % 4 == 1 { 2 } else { 1 }, "column {s}");
     }
-    let rows = steps(480, 600, true);
+    let rows = steps(Era::Win98, 480, 600, true);
     for s in 0..480 {
         assert_eq!(count(&rows, s), if s % 4 == 2 { 2 } else { 1 }, "row {s}");
     }
     assert_eq!((rows[0], rows[599]), (0, 479));
     // 2000's Zapotec, 96x96 to 800x600: each source pixel covers 8 or 9 columns and 6 or 7 rows.
-    let cols = steps(96, 800, false);
-    let rows = steps(96, 600, true);
+    let cols = steps(Era::Win2000, 96, 800, false);
+    let rows = steps(Era::Win2000, 96, 600, true);
     for s in 0..96 {
         assert!((8..=9).contains(&count(&cols, s)), "column {s}");
         assert!((6..=7).contains(&count(&rows, s)), "row {s}");

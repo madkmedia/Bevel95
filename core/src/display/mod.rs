@@ -299,25 +299,30 @@ impl Wallpaper {
 }
 
 /// Which source pixel each of `dst` pixels shows when `src` pixels are stretched (or squeezed) to
-/// `dst`, by Windows' own stepping: source pixel s covers the pixels from round(s * dst / src)
-/// (halves up) to where the next one starts. Measured on the Reference PCs: 98's Clouds 640x480
-/// and 2000's Zapotec 96x96 stretched to 800x600, the columns counted from the left and the rows
-/// from the bottom (`from_end`; a BMP lies bottom-up), every pixel equal; a plain nearest rule
-/// differs by one source pixel in about 15% of them.
-pub fn steps(src: i32, dst: i32, from_end: bool) -> Vec<i32> {
+/// `dst`, by `era`'s own stepping. Stretched (the desktop's Stretch, measured on 98's Clouds
+/// 640x480 and 2000's Zapotec 96x96 stretched to 800x600, every pixel equal): source pixel s covers
+/// the pixels from round(s * dst / src) (halves up) to where the next one starts, the columns
+/// counted from the left and the rows from the bottom (`from_end`; a BMP lies bottom-up); a plain
+/// nearest rule differs by one source pixel in about 15% of them. Squeezed (the little monitor,
+/// every centered close-up of the Reference PCs equal): 95 and 98 show the last source pixel of
+/// each span, its end rounded with halves and a little less going up (98's Forest, Clouds, Metal
+/// Links, 1stboot, 95's Bubbles); 2000 the source pixel under each pixel's centre (its Blue Lace
+/// 16, Zapotec, Prairie Wind).
+pub fn steps(era: Era, src: i32, dst: i32, from_end: bool) -> Vec<i32> {
     let (src, dst) = (i64::from(src.max(1)), i64::from(dst.max(0)));
     let mut map = vec![0i32; dst as usize];
     if dst < src {
-        // Squeezed: each pixel shows the source pixel whose span holds its centre.
         for (d, m) in map.iter_mut().enumerate() {
-            *m = (((2 * d as i64 + 1) * src) / (2 * dst)).min(src - 1) as i32;
+            let d = d as i64;
+            let s = if era == Era::Win2000 { (2 * d + 1) * src / (2 * dst) } else { (2 * (d + 1) * src + dst + 1) / (2 * dst) - 1 };
+            *m = s.clamp(0, src - 1) as i32;
         }
-    } else {
-        for s in 0..src {
-            let (a, b) = ((2 * s * dst + src) / (2 * src), (2 * (s + 1) * dst + src) / (2 * src));
-            for d in a..b.min(dst) {
-                map[d as usize] = s as i32;
-            }
+        return map;
+    }
+    for s in 0..src {
+        let (a, b) = ((2 * s * dst + src) / (2 * src), (2 * (s + 1) * dst + src) / (2 * src));
+        for d in a..b.min(dst) {
+            map[d as usize] = s as i32;
         }
     }
     if from_end {
@@ -331,9 +336,11 @@ pub fn steps(src: i32, dst: i32, from_end: bool) -> Vec<i32> {
     map
 }
 
-/// `picture` stretched (or squeezed) to `w` x `h` by Windows' stepping.
-pub fn stretched(picture: &Picture, w: i32, h: i32) -> Picture {
-    let (mx, my) = (steps(picture.width, w, false), steps(picture.height, h, true));
+/// `picture` stretched (or squeezed) to `w` x `h` by `era`'s stepping.
+pub fn stretched(era: Era, picture: &Picture, w: i32, h: i32) -> Picture {
+    // 2000 counts the columns from the right too (its monitor's Zapotec stretched to 152x112; on the
+    // desktop both ways give the same 800 columns).
+    let (mx, my) = (steps(era, picture.width, w, era == Era::Win2000), steps(era, picture.height, h, true));
     let mut pixels = Vec::with_capacity((w.max(0) * h.max(0)) as usize);
     for &sy in &my {
         for &sx in &mx {
@@ -342,7 +349,6 @@ pub fn stretched(picture: &Picture, w: i32, h: i32) -> Picture {
     }
     Picture { width: w, height: h, pixels }
 }
-
 /// Where a picture `w` x `h` is centered in an area `area_w` x `area_h`: half the difference, cut
 /// toward zero as Windows' C did (a picture larger than the area is cut equally on all sides).
 pub fn centered(area_w: i32, area_h: i32, w: i32, h: i32) -> (i32, i32) {
@@ -425,7 +431,7 @@ pub fn draw(fb: &mut Framebuffer, theme: &Theme, choice: &Choice) {
             let (x, y) = centered(w, h, picture.width, picture.height);
             lay(fb, theme, &picture, x, y);
         }
-        Show::Stretch => lay(fb, theme, &stretched(&picture, w, h), 0, 0),
+        Show::Stretch => lay(fb, theme, &stretched(era, &picture, w, h), 0, 0),
     }
 }
 
@@ -473,9 +479,9 @@ pub fn paint_monitor(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice
         let picture = wallpaper.picture();
         let (w, h) = in_monitor(picture.width, picture.height);
         match choice.show {
-            Show::Stretch if era != Era::Win95 => lay(&mut screen, theme, &stretched(&picture, s.w, s.h), 0, 0),
+            Show::Stretch if era != Era::Win95 => lay(&mut screen, theme, &stretched(era, &picture, s.w, s.h), 0, 0),
             Show::Tile => {
-                let small = stretched(&picture, w, h);
+                let small = stretched(era, &picture, w, h);
                 for ty in (0..s.h).step_by(h as usize) {
                     for tx in (0..s.w).step_by(w as usize) {
                         lay(&mut screen, theme, &small, tx, ty);
@@ -483,7 +489,7 @@ pub fn paint_monitor(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice
                 }
             }
             _ => {
-                let small = stretched(&picture, w, h);
+                let small = stretched(era, &picture, w, h);
                 let (cx, cy) = centered(s.w, s.h, w, h);
                 lay(&mut screen, theme, &small, cx, cy);
             }

@@ -65,10 +65,16 @@ impl ScrollBar {
 
     /// Paints it: the track's checkerboard, the buttons (each pushed in while held), the thumb.
     pub fn paint(self, fb: &mut Framebuffer, c: &Colors, top: usize, up_held: bool, down_held: bool) {
+        self.paint_from(fb, c, top, up_held, down_held, (0, 0));
+    }
+
+    /// paint with the track's checkerboard counted from origin (Windows lines it up with the
+    /// list's own window: Display Properties' lists, measured on the Reference PCs).
+    pub fn paint_from(self, fb: &mut Framebuffer, c: &Colors, top: usize, up_held: bool, down_held: bool, origin: (i32, i32)) {
         let bar = self.bar;
         for y in bar.y + 16..bar.bottom() - 16 {
             for x in bar.x..bar.right() {
-                fb.set(x, y, if (x + y) % 2 == 1 { c.highlight } else { c.face });
+                fb.set(x, y, if (x - origin.0 + y - origin.1).rem_euclid(2) == 1 { c.highlight } else { c.face });
             }
         }
         scroll_arrow(fb, c, Rect::new(bar.x, bar.y, 16, 16), true, up_held);

@@ -606,6 +606,7 @@ fn cases() -> Vec<Case> {
     desktop_cases(&mut out);
     desktop_icon_cases(&mut out, &f95, &f2k);
     wallpaper_desktop_cases(&mut out, &f95, &f2k);
+    display_window_cases(&mut out, &f95, &f2k);
     desktop_menu_cases(&mut out, &f95, &f2k);
     desktop_move_cases(&mut out, &f95, &f2k);
     desktop_item_cases(&mut out, &f95, &f2k);
@@ -3975,6 +3976,98 @@ fn wallpaper_desktop_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         // The mouse pointer, left in the screen's top right corner.
         let masks = vec![Rect::new(799, 0, 1, 17)];
         out.push(Case { name: name.leak(), file: format!("vm/{file}.png").leak(), regions, ours, masks, vga: false });
+    }
+}
+
+/// Display Properties' Background page and the Pattern window against the Reference PCs
+/// (`vm/<pc>-truecolor-display-background`, `-bg-*`, `-pattern-window*`; survey.md, sections 1 to
+/// 3): the whole window where the PC shows it. Masked, each for its reason: the other tabs
+/// (Bevel95 shows only Background for now); Browse... (grayed for now, usable on the PCs); in 98
+/// the list's scroll bar (the PC's list has the HTML page as a 22nd entry, so its thumb differs);
+/// in 2000 the list from its third row on and its scroll bar (the PC's list has 13 JPEG pictures
+/// between, which Bevel95 leaves out for now).
+fn display_window_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
+    use bevel_core::display::form::{DisplayProperties, Part, Which};
+    use bevel_core::display::pattern::PatternWindow;
+    use bevel_core::display::{Choice, Show};
+    // (case, capture, look, window's place, wallpaper, how, pattern, focus)
+    type Shot = (&'static str, &'static str, Era, (i32, i32), Option<&'static str>, Show, Option<&'static str>, Option<Part>);
+    let list = Some(Part::List(Which::Wallpaper));
+    let shots: &[Shot] = &[
+        ("display-win95-background", "win95-truecolor-display-background", Era::Win95, (44, 44), None, Show::Center, None, None),
+        ("display-win95-bubbles-center", "win95-truecolor-display-bg-bubbles-center", Era::Win95, (44, 44), Some("Bubbles"), Show::Center, None, list),
+        ("display-win95-pattern-bricks", "win95-truecolor-display-bg-none-pattern-bricks", Era::Win95, (66, 66), None, Show::Center, Some("Bricks"), Some(Part::List(Which::Pattern))),
+        ("display-win98-background", "win98-truecolor-display-background", Era::Win98, (0, 0), None, Show::Center, None, None),
+        ("display-win98-forest-center", "win98-truecolor-display-bg-forest-center", Era::Win98, (0, 0), Some("Forest"), Show::Center, None, list),
+        ("display-win98-pattern-bricks", "win98-truecolor-display-bg-none-pattern-bricks-2", Era::Win98, (110, 110), None, Show::Center, Some("Bricks"), list),
+        ("display-win2000-background", "win2000-truecolor-display-background", Era::Win2000, (110, 110), None, Show::Center, None, None),
+        ("display-win2000-bluelace16-center", "win2000-truecolor-display-bg-bluelace16-center", Era::Win2000, (110, 110), Some("Blue Lace 16"), Show::Center, None, list),
+        ("display-win2000-pattern-scottie", "win2000-truecolor-display-bg-none-pattern-scottie", Era::Win2000, (44, 44), None, Show::Center, Some("Scottie"), list),
+        // Tiled and stretched: the monitor tiles the scaled picture or fills its screen.
+        ("display-win95-bubbles-tile", "win95-truecolor-display-bg-bubbles-tile", Era::Win95, (132, 120), Some("Bubbles"), Show::Tile, None, Some(Part::Tile)),
+        ("display-win98-forest-tile", "win98-truecolor-display-bg-forest-tile", Era::Win98, (0, 0), Some("Forest"), Show::Tile, None, Some(Part::ShowList)),
+        ("display-win98-clouds-stretch", "win98-truecolor-display-bg-clouds-stretch", Era::Win98, (66, 66), Some("Clouds"), Show::Stretch, None, Some(Part::ShowList)),
+        ("display-win2000-zapotec-tile", "win2000-truecolor-display-bg-zapotec-tile", Era::Win2000, (110, 110), Some("Zapotec"), Show::Tile, None, Some(Part::ShowList)),
+        ("display-win2000-zapotec-stretch", "win2000-truecolor-display-bg-zapotec-stretch", Era::Win2000, (110, 110), Some("Zapotec"), Show::Stretch, None, Some(Part::ShowList)),
+    ];
+    for &(name, file, era, at, wallpaper, show, pattern, focus) in shots {
+        let (theme, fonts) = look(era, f95, f2k);
+        let mut p = DisplayProperties::new(era, Choice::plain());
+        p.set_shown(Choice { wallpaper: wallpaper.map(str::to_string), show, pattern: pattern.map(str::to_string) });
+        if let Some(f) = focus {
+            p.focus = f;
+        }
+        p.show_keys = true;
+        // 95's capture shows its Pattern list scrolled to Bricks, the chosen one, at the top.
+        if name == "display-win95-pattern-bricks" {
+            p.scroll(Which::Pattern, 1);
+        }
+        let mut ours = Framebuffer::new(404, 448, 0);
+        p.paint(&mut ours, theme, fonts);
+        let mut masks = vec![Rect::new(83, 29, 312, 20)];
+        masks.push(match era {
+            Era::Win95 => Rect::new(279, 335, 92, 23),
+            Era::Win98 => Rect::new(294, 285, 75, 23),
+            Era::Win2000 => Rect::new(306, 282, 75, 23),
+        });
+        // With a pattern chosen 95's Edit Pattern... is usable on the PC, grayed in Bevel95 for now.
+        if era == Era::Win95 && pattern.is_some() {
+            masks.push(Rect::new(96, 335, 92, 23));
+        }
+        // 95's tiled capture still had a pattern of an earlier step chosen, out of sight in its list
+        // and hidden under the wallpaper: its Pattern list and Edit Pattern... are left out.
+        if name == "display-win95-bubbles-tile" {
+            masks.extend([Rect::new(33, 262, 155, 68), Rect::new(96, 335, 92, 23)]);
+        }
+        // 2000's list scrolled down to Zapotec shows other rows on the PC (its JPEG entries).
+        if name.starts_with("display-win2000-zapotec") {
+            masks.push(Rect::new(26, 282, 252, 110));
+        }
+        match era {
+            Era::Win98 => masks.push(Rect::new(265, 287, 16, 92)),
+            Era::Win2000 => masks.extend([Rect::new(26, 316, 252, 76), Rect::new(278, 282, 16, 110)]),
+            Era::Win95 => {}
+        }
+        let masks = masks.into_iter().map(|m| Rect::new(m.x + at.0, m.y + at.1, m.w, m.h)).collect();
+        out.push(Case { name, file: format!("vm/{file}.png").leak(), regions: vec![whole(&ours, at)], ours, masks, vga: false });
+    }
+    // The Pattern window as it opens on "(None)", and with a pattern chosen.
+    type Window = (&'static str, &'static str, Era, (i32, i32), Option<&'static str>);
+    let windows: &[Window] = &[
+        ("display-win98-pattern-window", "win98-truecolor-display-pattern-window", Era::Win98, (113, 132), None),
+        ("display-win98-pattern-window-bricks", "win98-truecolor-display-pattern-window-bricks", Era::Win98, (113, 132), Some("Bricks")),
+        ("display-win2000-pattern-window", "win2000-truecolor-display-pattern-window", Era::Win2000, (47, 66), None),
+        ("display-win2000-pattern-window-weave", "win2000-truecolor-display-pattern-window-weave", Era::Win2000, (47, 66), Some("Weave")),
+    ];
+    for &(name, file, era, at, chosen) in windows {
+        let (theme, fonts) = look(era, f95, f2k);
+        let mut w = PatternWindow::new(era, chosen);
+        w.show_keys = true;
+        let mut ours = Framebuffer::new(318, 205, 0);
+        w.paint(&mut ours, theme, fonts);
+        // With a pattern chosen the PCs' Edit Pattern... is usable; Bevel95's is grayed for now.
+        let masks = if chosen.is_some() { vec![Rect::new(at.0 + 230, at.1 + 92, 75, 23)] } else { vec![] };
+        out.push(Case { name, file: format!("vm/{file}.png").leak(), regions: vec![whole(&ours, at)], ours, masks, vga: false });
     }
 }
 

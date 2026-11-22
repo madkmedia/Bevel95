@@ -732,6 +732,37 @@ fn wallpaper_desktop_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) 
     screen
 }
 
+/// Display Properties' Background page, or the Pattern window, in the look's own design.
+fn display_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
+    use bevel_core::display::form::DisplayProperties;
+    use bevel_core::display::pattern::PatternWindow;
+    use bevel_core::display::{Choice, Show};
+    let pattern_name = if era == Era::Win2000 { "Weave" } else { "Bricks" };
+    if which == "display-pattern-window" {
+        let w = PatternWindow::new(era, Some(pattern_name));
+        let mut fb = Framebuffer::new(318, 205, 0);
+        w.paint(&mut fb, theme, fonts);
+        return fb;
+    }
+    let mut p = DisplayProperties::new(era, Choice::plain());
+    match which {
+        "display-wallpaper" => {
+            let name = match era {
+                Era::Win95 => "Bubbles",
+                Era::Win98 => "Forest",
+                Era::Win2000 => "Zapotec",
+            };
+            p.set_shown(Choice { wallpaper: Some(name.into()), show: Show::Center, pattern: None });
+            p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
+        }
+        "display-pattern" => p.set_shown(Choice { wallpaper: None, show: Show::Center, pattern: Some(pattern_name.into()) }),
+        _ => {}
+    }
+    let mut fb = Framebuffer::new(404, 448, 0);
+    p.paint(&mut fb, theme, fonts);
+    fb
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ItemScene {
     Menu,
@@ -1648,6 +1679,16 @@ fn scenes() -> Vec<Scene> {
         ] {
             if era != Era::Win95 || state != "desktop-wallpaper-stretch" {
                 add(state, caption, wallpaper_desktop_scene(theme, era, &fonts, state));
+            }
+        }
+        for (state, caption) in [
+            ("display-background", "Display Properties (the desktop's Properties), its Background page as it opens: nothing chosen, Apply grayed (only this tab for now)"),
+            ("display-wallpaper", "Display Properties with a wallpaper chosen: the little monitor shows it as each Windows scaled it, Apply usable"),
+            ("display-pattern", "Display Properties with a pattern chosen: the monitor shows it 1:1 on the desktop color"),
+            ("display-pattern-window", "The Pattern window (98, 2000: Pattern...) with a pattern chosen, its Preview, Edit Pattern... grayed for now"),
+        ] {
+            if era != Era::Win95 || state != "display-pattern-window" {
+                add(state, caption, display_scene(theme, era, &fonts, state));
             }
         }
         add(
