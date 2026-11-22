@@ -12,13 +12,14 @@ const DATA_FILES: &[&str] =
     &["rgb", "rgba", "pic", "idx", "idx4", "bits", "pcm", "palrle", "i4", "glyphs", "bin", "bmp", "ico", "cur", "wav", "gif", "wlp", "jpg", "jpeg"];
 
 /// The places allowed to hold such things although they are not in art/: the test pictures that
-/// show them (golden images, and README's pictures made from them), the font fixtures, the
-/// project's own drawing of its icon.
+/// show them (golden images), the README's pictures, the font fixtures, the project's own drawing
+/// of its icon.
 fn allowed(rel: &str) -> bool {
     rel.starts_with("art/")
         || rel.starts_with("core/tests/golden/")
         || rel.starts_with("core/tests/fixtures/")
-        // README's pictures, composed only from the golden images.
+        // The README's pictures: drawn by Bevel95's own code (ignored tests in
+        // core/tests/golden.rs); the animation's first frame is a drawn impression of Windows 11.
         || rel.starts_with("docs/img/")
         // Bevel95's own silver B (drawn for the project, not taken from Windows).
         || rel == "core/src/bevel_icon.rs"

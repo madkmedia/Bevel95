@@ -6,11 +6,14 @@ any screen scale, while today's Windows keeps running underneath. It also brings
 desktop, classic folder windows, and its own Minesweeper, Solitaire and Calculator, each in the
 look you choose.
 
-![The Start menu in the Windows 95, 98 and 2000 looks](docs/img/start-menus.png)
+<picture>
+  <source media="(min-resolution: 1.9dppx)" srcset="docs/img/bevel95-2x.gif" width="600">
+  <source media="(min-resolution: 1.4dppx)" srcset="docs/img/bevel95-2x.gif" width="800">
+  <source media="(min-resolution: 1.2dppx)" srcset="docs/img/bevel95.gif" width="480">
+  <img src="docs/img/bevel95.gif" width="600" alt="Windows 11 with its own taskbar, then the same desktop turned into the Windows 98 look by Bevel95: the Start menu opened out to Minesweeper, Minesweeper and the Calculator, then the same desktop in the Windows 2000 and Windows 95 looks">
+</picture>
 
-![Windows Explorer in the 2000 look, the Calculator in the 98 look, Minesweeper in the 95 look](docs/img/programs.png)
-
-(These pictures are drawn by Bevel95 itself, at its original size.)
+(The first frame is a drawn impression of Windows 11; every other frame is drawn by Bevel95 itself. The Google Chrome and ChatGPT icons in it belong to Google and OpenAI.)
 
 ## What it does
 

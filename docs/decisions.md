@@ -6134,7 +6134,19 @@ sharable").
   are never in the repository; without it the test draws Clouds and nothing of either program.
   With the Start menu open no window is in front, as on the real bar (the menu takes the
   keyboard): every title bar inactive, every task button raised. It writes `site/desktop.png`, or
-  the file named by `BEVEL95_SITE_PICTURE`. Also CONTRIBUTING.md, `docs/roadmap.md`, the bug report form
+  the file named by `BEVEL95_SITE_PICTURE`. **The README's one picture** (the owner,
+  2026-11-22): a short animation at 600 x 450, `docs/img/bevel95.gif`, with every pixel doubled
+  in `docs/img/bevel95-2x.gif` (1200 x 900) for sharp screens, in place of `start-menus.png` and
+  `programs.png` (both kept in the repository with their tests, no longer shown). Why 600: GitHub's
+  README column is 823 to 839 CSS pixels wide (measured on the live page), so a picture 640 wide
+  doubled for a screen at 150% does not fit, while 600 shows on whole screen pixels at 100, 125,
+  150 and 200%. GitHub keeps a picture tag's sources with a resolution query and a width, but
+  strips styles and gives pictures no `height: auto`, so the README's picture tag chooses the file
+  and width by the screen's sharpness and gives no height. Its first frame is a drawn impression of
+  Windows 11, not Bevel95's drawing; the other frames are the ignored test's steps
+  (`BEVEL95_SITE_STEP` 1 to 5, drawn at 600 x 450, with `BEVEL95_SITE_ASSETS`),
+  whose wallpaper and the two programs' icons are not in the repository; the GIF itself is put
+  together outside the repository for now. Also CONTRIBUTING.md, `docs/roadmap.md`, the bug report form
   (`.github/ISSUE_TEMPLATE/bug_report.yml`) and a build-and-test workflow
   (`.github/workflows/test.yml`, untried). The owner's checklists moved unchanged to
   `private/checklists.md`. The art guard allows `docs/img/`.
