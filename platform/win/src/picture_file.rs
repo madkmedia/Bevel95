@@ -55,8 +55,15 @@ fn gdiplus() -> bool {
     })
 }
 
-/// Reads the file at `path` whole (at most `display::MAX_FILE_BYTES`) and decodes it.
+/// Reads the file at `path` whole (at most `display::MAX_FILE_BYTES`) and decodes it (the tests'
+/// way in; the bar reads in two steps, `load_file` then `read_owned`, and looks between them).
+#[cfg(test)]
 pub fn read_file(path: &Path) -> Result<Picture, Refused> {
+    read_owned(std::borrow::Cow::Owned(load_file(path)?))
+}
+
+/// The file's bytes, whole (at most `display::MAX_FILE_BYTES`), not yet decoded.
+pub fn load_file(path: &Path) -> Result<Vec<u8>, Refused> {
     let file = std::fs::File::open(path).map_err(|_| Refused::Unreadable)?;
     let len = file.metadata().map_err(|_| Refused::Unreadable)?.len();
     if len > display::MAX_FILE_BYTES {
@@ -67,7 +74,11 @@ pub fn read_file(path: &Path) -> Result<Picture, Refused> {
     if bytes.len() as u64 > display::MAX_FILE_BYTES {
         return Err(Refused::TooLarge);
     }
-    // The file's bytes go as soon as the stream has its own copy of them.
+    Ok(bytes)
+}
+
+/// Decodes a picture file's bytes; bytes of its own go as soon as the stream has its copy of them.
+pub fn read_owned(bytes: std::borrow::Cow<'_, [u8]>) -> Result<Picture, Refused> {
     let stream = Stream::of(&bytes)?;
     drop(bytes);
     stream.decode()
@@ -235,6 +246,7 @@ fn bmp_whole(b: &[u8]) -> bool {
 
 /// Decodes a picture file's bytes (its first picture), upright: a BMP or DIB, JPEG, PNG or GIF,
 /// told by its first bytes; anything else (another kind GDI+ would read, a metafile) is refused.
+#[cfg(test)]
 pub fn read_bytes(bytes: &[u8]) -> Result<Picture, Refused> {
     Stream::of(bytes)?.decode()
 }

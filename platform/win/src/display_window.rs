@@ -130,7 +130,17 @@ fn page_ids() -> Vec<PictureId> {
         ids.push(id);
     }
     ids.extend(browsed_id());
+    ids.extend(previous_id());
     ids
+}
+
+/// The picture the page's monitor showed just before the one it shows now (the last one only):
+/// kept, so going back and forth between two rows of the list reads neither again (the review
+/// before 0.1.4, B1). Forgotten when Display Properties closes.
+static PREVIOUS: Mutex<Option<PictureId>> = Mutex::new(None);
+
+fn previous_id() -> Option<PictureId> {
+    PREVIOUS.lock().ok().and_then(|p| p.clone())
 }
 
 /// Every picture to read that is wanted now: the desktop's (only while it shows), Display
@@ -316,6 +326,12 @@ impl Hosted for DisplayHost {
         if self.form.props.has_read(&id) {
             return;
         }
+        // What the monitor showed until now stays kept (the last one only).
+        if let Some(shown) = self.form.props.read_id().filter(|shown| **shown != id).cloned()
+            && let Ok(mut p) = PREVIOUS.lock()
+        {
+            *p = Some(shown);
+        }
         ask(Some(id.clone()));
         // The desktop's large picture may have been let go: the monitor needs it again.
         pictures::again(&id, pictures::Anew::IfLetGo);
@@ -391,6 +407,9 @@ pub fn close() {
     wallpaper_browse::close();
     if let Ok(mut b) = BROWSED.lock() {
         *b = None;
+    }
+    if let Ok(mut p) = PREVIOUS.lock() {
+        *p = None;
     }
     kit::close::<PatternHost>();
     kit::close::<DisplayHost>();

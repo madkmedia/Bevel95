@@ -493,6 +493,11 @@ impl DisplayProperties {
         self.read = picture.map(|p| (id, Show::ALL.iter().map(|&show| display::monitor_layer(era, &p, show)).collect()));
     }
 
+    /// The picture whose small copies the monitor holds, by what it is.
+    pub fn read_id(&self) -> Option<&display::PictureId> {
+        self.read.as_ref().map(|(id, _)| id)
+    }
+
     /// The small copy of the picture read for what the page shows now, if it has come.
     fn read_now(&self) -> Option<&display::Picture> {
         let want = self.to_read()?;

@@ -6066,6 +6066,33 @@ Display Properties' Background page chooses them.
   - Known and left (private todo): a second Browse... does nothing while an earlier file window is
     held up after its Display Properties closed; the classic desktop shows a changed "Hidden items"
     switch only at its next listing.
+- **Repairs after the review before 0.1.4** (2026-11-22, brief 80):
+  - **Readings take turns** (`pictures::read`): one picture is read and decoded at a time; a
+    reading waits its turn on its own thread (never on the bar's or the desktop's). When its turn
+    comes, and again once the file's bytes are in and before it is decoded, it looks whether its
+    slot still waits for it, and ends without decoding if not (`picture_file::load_file`, then
+    `read_owned`). Display Properties' page also keeps the picture its monitor showed just before
+    (the last one only, forgotten when the window closes: `display_window::page_ids`), so going
+    back and forth between two rows of the list reads neither again; while the page is open that
+    can hold two large pictures. Tests: ten clicks back and forth decode each picture once (2
+    decodes); ten askings that each drop the other picture decode only the last (1 decode: every
+    earlier reading ends at its turn); never two decodes at once; asking takes no turn.
+  - **A large picture goes only once the desktop has drawn it**: the desktop tells the bar which
+    reading it drew its picture from (`pictures::drawn`, from `desktop::let_go_large`), and only a
+    slot of that reading is let go (`let_go_large` remembers the page's pictures for that moment).
+    Before, a second `sync_desktop` before the desktop's thread took its look handed it the
+    picture already let go: the desktop went plain and read it once more. Test: the review's
+    sequence (let go asked twice before the desktop drew it: still handed over; drawn: let go).
+  - Browse... asks Windows not to add the chosen file to Recent items (`OFN_DONTADDTORECENT`).
+  - A value in background.txt that names a device or a pipe (`\\.\...`, `\\?\...`) is no
+    picture: that look is plain (`display::is_own`; tested).
+  - Windows 2000's Quick Launch list builds its rows as one list of name, picture and target, so
+    a row can never stand for another icon.
+  - Known and left (private todo): a picture that crashes Windows' own decoder ends the bar at
+    every start while it is the saved choice (recover by deleting background.txt); going back to
+    0.1.3 and using its Remove leaves background.txt; opening Display Properties on the desktop's
+    own large picture reads it again and draws the desktop once more; a live test's picture file
+    is not in Remove's list.
 - **The screen's full sharpness (job 4): not built.** The owner: "with setting for full res
   maybe". What stands in the way: the desktop paints its icons, names, selection, the dotted
   selection rectangle (inverted over what lies under it), cut and hidden fading and the drag

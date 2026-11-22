@@ -23,7 +23,8 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use bevel_core::theme::Era;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows_sys::Win32::UI::Controls::Dialogs::{
-    GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    GetOpenFileNameW, OFN_DONTADDTORECENT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR, OFN_PATHMUSTEXIST,
+    OPENFILENAMEW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, EnumThreadWindows, GetWindowRect, PostMessageW, WM_CLOSE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -102,7 +103,8 @@ fn run(era: Era, ticket: u64, over: RECT) {
         lpstrFile: file.as_mut_ptr(),
         nMaxFile: file.len() as u32,
         lpstrTitle: title.as_ptr(),
-        Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR,
+        // No trace in Windows' Recent items (the review before 0.1.4, C3).
+        Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_DONTADDTORECENT,
         ..Default::default()
     };
     // Closed before it could show (Display Properties went at once): nothing opens.

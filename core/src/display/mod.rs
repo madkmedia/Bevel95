@@ -316,11 +316,14 @@ impl PictureId {
 
 /// Whether a wallpaper value is a person's own picture: a file's full path (`X:\...` or a
 /// network path `\\server\...`), never one of Windows' names (they hold no backslash or colon).
-/// Text that cannot be a file's path (control characters, longer than Windows' paths) is not.
+/// Text that cannot be a file's path (control characters, longer than Windows' paths) is not, nor
+/// a device's or a pipe's name (`\\.\...`, `\\?\...`: reading one could wait for ever; the review
+/// before 0.1.4, C4).
 pub fn is_own(value: &str) -> bool {
     let mut c = value.chars();
     let drive = matches!((c.next(), c.next(), c.next()), (Some(d), Some(':'), Some('\\')) if d.is_ascii_alphabetic());
-    let network = value.starts_with("\\\\") && value.len() > 2;
+    let device = value.starts_with("\\\\.\\") || value.starts_with("\\\\?\\");
+    let network = value.starts_with("\\\\") && value.len() > 2 && !device;
     (drive || network) && value.chars().count() <= 32_767 && !value.chars().any(char::is_control)
 }
 

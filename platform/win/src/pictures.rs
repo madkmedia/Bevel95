@@ -180,21 +180,40 @@ pub fn keep_only(wanted: &[PictureId]) {
     }
 }
 
+/// The pictures Display Properties' page still needs (`let_go_large`'s `still`, kept for `drawn`).
+static STILL: Mutex<Vec<PictureId>> = Mutex::new(Vec::new());
+/// The last reading the classic desktop has drawn its picture from (0: none yet).
+static DRAWN: AtomicU64 = AtomicU64::new(0);
+
 /// Every large picture held, but those in `still` (a picture Display Properties' page shows, so
-/// that its Apply or OK needs no new reading), is let go: what is made from it has been made (the
-/// desktop has been handed it; the monitor makes its small copies at once). Its slot remembers
-/// that it was read (`State::LetGo`).
+/// that its Apply or OK needs no new reading), is let go once what is made from it has been made:
+/// the desktop has drawn that reading (`drawn`; until then a second `sync_desktop` must still hand
+/// it the picture: the review before 0.1.4, C1), and the monitor makes its small copies at once.
+/// Its slot remembers that it was read (`State::LetGo`).
 pub fn let_go_large(still: &[PictureId]) {
+    if let Ok(mut s) = STILL.lock() {
+        *s = still.to_vec();
+    }
+    let drawn = DRAWN.load(Ordering::SeqCst);
     if let Ok(mut slots) = SLOTS.lock() {
         for (id, st) in slots.iter_mut() {
             if let State::Ready(n, p) = st
                 && is_large(p)
+                && *n == drawn
                 && !still.contains(id)
             {
                 *st = State::LetGo(*n);
             }
         }
     }
+}
+
+/// The desktop's thread: it has drawn its picture from reading `reading`; that picture, if large
+/// and not needed by Display Properties' page, can go now.
+pub fn drawn(reading: u64) {
+    DRAWN.store(reading, Ordering::SeqCst);
+    let still = STILL.lock().map(|s| s.clone()).unwrap_or_default();
+    let_go_large(&still);
 }
 
 /// Where an answer went.
@@ -228,16 +247,49 @@ fn what(id: &PictureId) -> String {
     }
 }
 
-/// The reading thread: reads, puts the answer in its slot, tells the bar.
+/// Readings take turns: one picture is read and decoded at a time (a person's photo can take
+/// hundreds of MB while it is decoded). Only reading threads wait for it, never the bar's or the
+/// desktop's thread (they only start a reading).
+static TURN: Mutex<()> = Mutex::new(());
+
+/// Whether reading `reading` is still the one `id`'s slot waits for.
+fn still_wanted(id: &PictureId, reading: u64) -> bool {
+    SLOTS.lock().is_ok_and(|slots| slots.iter().any(|(i, st)| i == id && matches!(st, State::Reading(n, _) if *n == reading)))
+}
+
+/// How many decodes have begun, and the most at once (the tests count them).
+#[cfg(test)]
+static DECODES: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static DECODING: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static MOST_AT_ONCE: AtomicU64 = AtomicU64::new(0);
+
+/// The reading thread: waits its turn, reads, puts the answer in its slot, tells the bar. A
+/// reading that is no longer wanted when its turn comes, or once the file's bytes are in, ends
+/// without decoding (the review before 0.1.4, B1).
 fn read(id: PictureId, reading: u64) {
+    let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+    if !still_wanted(&id, reading) {
+        return;
+    }
     let started = Instant::now();
-    let answer = match &id {
-        PictureId::Windows(..) => match id.bytes() {
-            Some(bytes) => picture_file::read_bytes(bytes),
-            None => Err(Refused::Unreadable),
-        },
-        PictureId::Own(path) => picture_file::read_file(Path::new(path)),
+    let bytes = match &id {
+        PictureId::Windows(..) => id.bytes().map(std::borrow::Cow::Borrowed).ok_or(Refused::Unreadable),
+        PictureId::Own(path) => picture_file::load_file(Path::new(path)).map(std::borrow::Cow::Owned),
     };
+    if !still_wanted(&id, reading) {
+        return;
+    }
+    #[cfg(test)]
+    {
+        DECODES.fetch_add(1, Ordering::SeqCst);
+        let now = DECODING.fetch_add(1, Ordering::SeqCst) + 1;
+        MOST_AT_ONCE.fetch_max(now, Ordering::SeqCst);
+    }
+    let answer = bytes.and_then(picture_file::read_owned);
+    #[cfg(test)]
+    DECODING.fetch_sub(1, Ordering::SeqCst);
     let ms = started.elapsed().as_millis();
     match &answer {
         Ok(p) => log(&format!("picture: {} read ({}x{}) in {ms} ms", what(&id), p.width, p.height)),
@@ -336,8 +388,14 @@ mod tests {
         // Display Properties' page shows it: kept (its Apply needs no new reading).
         let_go_large(std::slice::from_ref(&large));
         assert!(matches!(state(&large), State::Ready(..)));
-        // Handed on and not shown on the page: let go, still known by its reading.
+        // Handed to the desktop, but the desktop has not drawn it yet: a second `sync_desktop`
+        // must still hand it the picture (the review before 0.1.4, C1).
         let_go_large(&[]);
+        assert!(matches!(state(&large), State::Ready(..)), "kept until the desktop has drawn it");
+        let_go_large(&[]);
+        assert!(matches!(got(&large), Some(Got { picture: Some(_), .. })), "a second sync_desktop still hands it over");
+        // The desktop has drawn it, not shown on the page: let go, still known by its reading.
+        drawn(n);
         assert!(matches!(state(&large), State::LetGo(m) if m == n));
         assert!(matches!(got(&large), Some(Got { reading, picture: None }) if reading == n));
         assert!(matches!(state(&small), State::Ready(..)), "a small one stays");
@@ -352,11 +410,79 @@ mod tests {
         again(&large, Anew::IfLetGoIn(n));
         // Meanwhile the desktop is still handed the reading it drew (or already the new one).
         assert!(got(&large).is_some(), "never nothing while it is read again");
-        assert!(matches!(wait(&large), State::Ready(m, _) if m != n));
-        // Display Properties' monitor needs it (let go): read again.
-        let_go_large(&[]);
+        let State::Ready(m, _) = wait(&large) else { panic!("read again") };
+        assert_ne!(m, n);
+        // Display Properties' monitor needs it (drawn and let go): read again.
+        drawn(m);
+        assert!(matches!(state(&large), State::LetGo(_)));
         again(&large, Anew::IfNotHeld);
         assert!(matches!(wait(&large), State::Ready(..)));
+        keep_only(&[]);
+    }
+
+    /// Going back and forth between two pictures (Display Properties' list: the page keeps the
+    /// one it showed just before, `display_window::page_ids`) decodes each once, however often;
+    /// readings take turns, never two decodes at once; nothing waits on the asking thread (the
+    /// review before 0.1.4, B1).
+    #[test]
+    fn back_and_forth_reads_each_once_and_one_at_a_time() {
+        let _turn = TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let (w, h) = (1500, 1000);
+        let mut ids = Vec::new();
+        for name in ["forth-a.png", "forth-b.png"] {
+            let path = crate::picture_file::tests::scratch(name);
+            crate::picture_file::tests::save(&path, w, h, &crate::picture_file::tests::test_pixels(w, h), "image/png");
+            ids.push(PictureId::Own(path.to_string_lossy().into_owned()));
+        }
+        keep_only(&[]);
+        let before = DECODES.load(Ordering::SeqCst);
+        MOST_AT_ONCE.store(0, Ordering::SeqCst);
+        let started = Instant::now();
+        // Ten clicks: each wants the row picked and keeps the one shown before.
+        for k in 0..10 {
+            let (now, before_it) = (&ids[k % 2], &ids[(k + 1) % 2]);
+            keep_only(&[now.clone(), before_it.clone()]);
+            want(now);
+        }
+        let asking = started.elapsed();
+        assert!(asking.as_millis() < 200, "the asking thread waits for nobody ({asking:?})");
+        assert!(matches!(wait(&ids[0]), State::Ready(..)) && matches!(wait(&ids[1]), State::Ready(..)));
+        let decodes = DECODES.load(Ordering::SeqCst) - before;
+        assert_eq!(decodes, 2, "each picture decoded once");
+        assert_eq!(MOST_AT_ONCE.load(Ordering::SeqCst), 1, "never two decodes at once");
+        keep_only(&[]);
+    }
+
+    /// Without the page keeping the picture before, quick changes still end the readings no longer
+    /// wanted before they decode: far fewer decodes than askings, one at a time.
+    #[test]
+    fn readings_no_longer_wanted_end_before_decoding() {
+        let _turn = TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let (w, h) = (1500, 1000);
+        let mut ids = Vec::new();
+        for name in ["quick-a.png", "quick-b.png"] {
+            let path = crate::picture_file::tests::scratch(name);
+            crate::picture_file::tests::save(&path, w, h, &crate::picture_file::tests::test_pixels(w, h), "image/png");
+            ids.push(PictureId::Own(path.to_string_lossy().into_owned()));
+        }
+        keep_only(&[]);
+        let before = DECODES.load(Ordering::SeqCst);
+        MOST_AT_ONCE.store(0, Ordering::SeqCst);
+        // Ten askings, each dropping the other picture's slot (and its reading under way).
+        for k in 0..10 {
+            let now = &ids[k % 2];
+            keep_only(std::slice::from_ref(now));
+            want(now);
+        }
+        let last = &ids[1];
+        assert!(matches!(wait(last), State::Ready(..)));
+        // Let every thread finish (each either decodes or ends before decoding).
+        let _all = TURN.lock().unwrap_or_else(|e| e.into_inner());
+        let decodes = DECODES.load(Ordering::SeqCst) - before;
+        println!("ten askings, {decodes} decodes");
+        assert!(decodes <= 3, "{decodes} decodes for ten askings");
+        assert_eq!(MOST_AT_ONCE.load(Ordering::SeqCst), 1, "never two decodes at once");
+        drop(_all);
         keep_only(&[]);
     }
 
@@ -439,6 +565,7 @@ mod tests {
         let_go_large(&[]);
         let background = bevel_core::display::background_on(theme, &choice, handed.picture.as_deref(), &[], 1280, 720);
         assert!(background.is_some());
+        drawn(handed.reading);
         handed.picture = None;
         assert!(matches!(state(&id), State::LetGo(_)));
         let (shown, _) = memory();

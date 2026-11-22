@@ -12,7 +12,7 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 
 use bevel_core::bar_menu::{self, BarCommand, BarEntry};
-use bevel_core::fb::{Framebuffer, Rect};
+use bevel_core::fb::{Framebuffer, Icon, Rect};
 use bevel_core::icons;
 use bevel_core::layout::{place_popup, place_start_menu, place_submenu};
 use bevel_core::paint::{self, EntryKind, Menu, MenuEntry, MenuLayout, MenuStyle};
@@ -210,8 +210,14 @@ pub fn open_quick_list(bar: HWND, all: bool) {
         let at = app.on_screen(band.chevron.unwrap_or(Rect::new(band.end_line, band.rect.y, 1, band.rect.h)));
         let pictures = app.ql.band(app.era, false).icons;
         let name = |i: usize| app.ql.tooltip(app.era, i).map(|t| t.lines().next().unwrap_or_default().to_string()).unwrap_or_default();
-        let targets: Vec<_> = rows.iter().filter_map(|&i| app.ql.target(i)).collect();
-        let entries = rows.iter().map(|&i| (name(i), pictures.get(i).cloned().flatten())).collect();
+        // One list of (name, picture, target): a row whose icon has no target any more (the folder
+        // shrank before the next paint) is left out whole, so no row can stand for another icon.
+        let rows: Vec<(String, Option<Icon>, _)> =
+            rows.iter().filter_map(|&i| Some((name(i), pictures.get(i).cloned().flatten(), app.ql.target(i)?))).collect();
+        if rows.is_empty() {
+            return None;
+        }
+        let (entries, targets): (Vec<_>, Vec<_>) = rows.into_iter().map(|(n, p, t)| ((n, p), t)).unzip();
         let all_names: Vec<String> = (0..app.ql.items.len()).map(name).collect();
         Some((targets, bevel_core::quick_launch::list_menu(entries, &all_names), at))
     })

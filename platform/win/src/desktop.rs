@@ -1014,21 +1014,24 @@ fn same_picture(a: &Option<crate::pictures::Got>, b: &Option<crate::pictures::Go
     }
 }
 
-/// A large picture is let go once the desktop's own picture is made from it: from the state's look
-/// and from the look handed over (`LOOK`), if that is still the same reading.
+/// The desktop's own picture has been made from the look's picture: the bar is told it has drawn
+/// that reading (`pictures::drawn`: only now may the bar's slot let a large picture go, the review
+/// before 0.1.4, C1), and a large picture is let go here too: from the state's look and from the
+/// look handed over (`LOOK`), if that is still the same reading.
 fn let_go_large(look: &mut Look) {
     let Some(got) = look.picture.as_mut() else { return };
-    if !got.picture.as_deref().is_some_and(crate::pictures::is_large) {
-        return;
+    let Some(picture) = got.picture.as_deref() else { return };
+    let (reading, large) = (got.reading, crate::pictures::is_large(picture));
+    if large {
+        got.picture = None;
+        if let Ok(mut l) = LOOK.lock()
+            && let Some(g) = l.as_mut().and_then(|l| l.picture.as_mut())
+            && g.reading == reading
+        {
+            g.picture = None;
+        }
     }
-    got.picture = None;
-    let reading = got.reading;
-    if let Ok(mut l) = LOOK.lock()
-        && let Some(g) = l.as_mut().and_then(|l| l.picture.as_mut())
-        && g.reading == reading
-    {
-        g.picture = None;
-    }
+    crate::pictures::drawn(reading);
 }
 
 /// Every screen's rectangle in the desktop window's pixels (relative to `desktop`, the window's

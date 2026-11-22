@@ -441,6 +441,13 @@ fn a_persons_own_picture_is_a_path() {
     for value in ["Forest", "(None)", "C:", "C:relative.jpg", "\\single", "\\\\", "C:\\a\u{7}b.jpg", ""] {
         assert!(!is_own(value), "{value}");
     }
+    // A device's or a pipe's name is no picture (the review before 0.1.4, C4); background.txt's
+    // line naming one leaves that look plain.
+    for value in ["\\\\.\\pipe\\name", "\\\\.\\PhysicalDrive0", "\\\\?\\C:\\Pictures\\Me.jpg", "\\\\?\\UNC\\server\\x.png"] {
+        assert!(!is_own(value), "{value}");
+        assert_eq!(parse(&format!("win98 wallpaper = {value}\n"))[1], Choice::plain(), "{value}");
+    }
+    assert!(is_own("\\\\server\\share\\x.png"), "a network path still is");
     assert_eq!(own_name("C:\\Фото\\日本 #1=2.v1.final.JPG"), "日本 #1=2.v1.final");
     assert_eq!(own_name("C:\\Pictures\\Me.jpg"), "Me");
     assert_eq!(own_name("C:\\Pictures\\NoEnding"), "NoEnding");
