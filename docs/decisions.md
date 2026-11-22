@@ -5829,6 +5829,32 @@ Display Properties' Background page chooses them.
 - Not tried live: Apply, OK and the file written by the installed bar (the owner's checklist; the
   save is tested in a scratch folder), real clicks and keys in the windows, the 95 and 2000 looks
   live, 16 and 256 Colors, two screens.
+- **Repairs after the read-only review of 2026-11-21** (brief 73):
+  - A key written twice in background.txt: reading takes a key's last line, writing replaced the
+    first, so a choice was lost at the next start. Writing a look's choice now leaves exactly one
+    line per key: the first takes the value where it stands, later lines of the same key go
+    (`display::with_choice`; tested with the review's sequence).
+  - **Several screens** (PROVISIONAL: the Reference PCs have one screen, nothing measured): as the
+    old Windows did it on two screens, the pattern and the tiles start at the main screen's
+    top-left corner and run over every screen (also left of and above it); Center and Stretch are
+    done for each screen by itself, within its own screen (a larger picture is cut to its screen,
+    never reaching into the next). The core's drawing takes the screens' rectangles in the
+    desktop's own 1x pixels, the main one first (`display::draw_on`, `background_on`; the desktop
+    reads them with `EnumDisplayMonitors`). With one screen every picture is as before (no golden
+    picture changed). Unit tests: two screens side by side of different heights, a second screen
+    left of and above the main one.
+  - The picture is made again only when it must be: for a new choice, look, colors, size or
+    screens, not when only the work area changed (the bar moved, resized or hid); the desktop's 1x
+    picture is kept when its size stayed. The old wallpaper picture is let go before the new one
+    is made: at the peak the desktop holds its own 1x picture, the new wallpaper picture and, for
+    Stretch, one screen's stretched copy (before: also the old wallpaper picture and a whole-area
+    stretched copy).
+  - A live test's choice goes at the person's Apply or OK and at a change of look, colors or size,
+    so it can never hide what the person chose; test message 2 opens the Pattern window only where
+    a person could (98 and 2000, Pattern... not grayed).
+  - Left as they are: a note after a value (a value will soon be a file's path, which may hold a
+    `#`; a new background.txt's header says a note needs a line of its own), and a person's own
+    background.txt in a portable folder (the rule of every state file but settings.txt).
 
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean

@@ -888,6 +888,9 @@ struct State {
     view: Desktop,
     /// The whole desktop at 1× (all screens), painted where something changed.
     fb: Framebuffer,
+    /// Every screen in the look's 1x pixels of `fb`, the main one first (what the picture was
+    /// made for).
+    screens: Vec<Rect>,
     /// The last left press: when (message time), where (window pixels), on which icon (its id:
     /// items read between the two presses move the indices).
     last_press: Option<(u32, i32, i32, Option<String>)>,
@@ -990,6 +993,31 @@ fn work_area(screen: &RECT) -> RECT {
     RECT { left: w.left - screen.left, top: w.top - screen.top, right: w.right - screen.left, bottom: w.bottom - screen.top }
 }
 
+/// Every screen's rectangle in the desktop window's pixels (relative to `desktop`, the window's
+/// place), the main screen first; empty if Windows says nothing (the caller then takes the whole
+/// desktop as one screen).
+fn screens(desktop: &RECT) -> Vec<RECT> {
+    unsafe extern "system" fn each(monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR, _: windows_sys::Win32::Graphics::Gdi::HDC, _: *mut RECT, data: LPARAM) -> windows_sys::core::BOOL {
+        // SAFETY: `data` is the `Vec` of `screens`, alive for the whole enumeration on this thread.
+        let found = unsafe { &mut *(data as *mut Vec<(bool, RECT)>) };
+        let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+        // SAFETY: a monitor Windows just named; a valid out-struct.
+        if unsafe { GetMonitorInfoW(monitor, &mut info) } != 0 {
+            found.push((info.dwFlags & windows_sys::Win32::UI::WindowsAndMessaging::MONITORINFOF_PRIMARY != 0, info.rcMonitor));
+        }
+        1
+    }
+    let mut found: Vec<(bool, RECT)> = Vec::new();
+    // SAFETY: the callback only touches `found`, which outlives the call.
+    unsafe { windows_sys::Win32::Graphics::Gdi::EnumDisplayMonitors(null_mut(), null(), Some(each), &mut found as *mut _ as LPARAM) };
+    // The main screen first, the others in Windows' order.
+    found.sort_by_key(|(main, _)| !*main);
+    found
+        .into_iter()
+        .map(|(_, r)| RECT { left: r.left - desktop.left, top: r.top - desktop.top, right: r.right - desktop.left, bottom: r.bottom - desktop.top })
+        .collect()
+}
+
 /// Hands a new item's place (`new_item`) to the state before the item shows.
 fn take_pending_place(view: &mut Desktop) {
     if let Some((id, x, y)) = PENDING_PLACE.lock().ok().and_then(|mut p| p.take()) {
@@ -1009,20 +1037,28 @@ fn rebuild(hwnd: HWND, force: bool) {
     let work = work_area(&screen);
     let area = Rect::new(s.old(work.left), s.old(work.top), s.old_fit(rect_w(&work)), s.old_fit(rect_h(&work)));
     let size = (s.old_cover(rect_w(&screen)), s.old_cover(rect_h(&screen)));
+    // Each screen in the look's 1x pixels, the main one first (several screens: `display::draw_on`).
+    let screens: Vec<Rect> =
+        screens(&screen).iter().map(|r| Rect::new(s.old(r.left), s.old(r.top), s.old_cover(rect_w(r)), s.old_cover(rect_h(r)))).collect();
     STATE.with(|c| {
         let mut borrow = c.borrow_mut();
+        // The picture is made again only for a new choice, look, colors, size or screens; a new
+        // work area alone (the bar moved, resized or hid) keeps it.
+        let mut keep_picture = false;
         if let Some(st) = borrow.as_ref() {
-            let same = st.look.era == look.era
+            let same_picture = st.look.era == look.era
                 && st.look.scale == s
-                && st.view.area() == area
                 && (st.fb.width, st.fb.height) == size
-                && st.look.background == look.background;
-            if same && !force && std::ptr::eq(st.look.theme, look.theme) {
+                && st.screens == screens
+                && st.look.background == look.background
+                && std::ptr::eq(st.look.theme, look.theme);
+            if same_picture && st.view.area() == area && !force {
                 return;
             }
+            keep_picture = same_picture && !force;
         }
-        let mut view = match borrow.take() {
-            Some(old) => old.view,
+        let (mut view, old_fb) = match borrow.take() {
+            Some(old) => (old.view, Some(old.fb)),
             None => {
                 let mut view = Desktop::new(look.era, area);
                 // Unreadable: logged by `load`, kept as it is and not saved over.
@@ -1030,7 +1066,7 @@ fn rebuild(hwnd: HWND, force: bool) {
                     view.load_places(&text);
                     log("desktop: where the icons lie read from desktop.txt");
                 }
-                view
+                (view, None)
             }
         };
         view.set_era(look.era);
@@ -1043,15 +1079,29 @@ fn rebuild(hwnd: HWND, force: bool) {
         }
         save_if_changed(&mut view);
         // The wallpaper and pattern over the whole desktop, made now (a new choice, look, colors,
-        // size or screen), not at every paint; the plain desktop has none.
-        let started = Instant::now();
-        let background = bevel_core::display::background(look.theme, &look.background, size.0, size.1);
-        if background.is_some() {
-            log(&format!("desktop: its wallpaper and pattern drawn over {}x{} in {} ms", size.0, size.1, started.elapsed().as_millis()));
+        // size or screens), not at every paint and not for a new work area; the plain desktop has
+        // none. The old picture is let go first, so that two are never held at once.
+        if !keep_picture {
+            view.set_background(None);
+            let started = Instant::now();
+            let background = bevel_core::display::background_on(look.theme, &look.background, &screens, size.0, size.1);
+            if background.is_some() {
+                log(&format!(
+                    "desktop: its wallpaper and pattern drawn over {}x{} ({} screens) in {} ms",
+                    size.0,
+                    size.1,
+                    screens.len().max(1),
+                    started.elapsed().as_millis()
+                ));
+            }
+            view.set_background(background.map(std::sync::Arc::new));
         }
-        view.set_background(background.map(std::sync::Arc::new));
-        let fb = Framebuffer::new(size.0, size.1, look.theme.colors.desktop);
-        let mut st = State { look, view, fb, last_press: None, right_hit: None, pointer: None, timer: None, blink_on: true };
+        // The 1x picture of the whole desktop: the old one again when its size stayed.
+        let fb = match old_fb {
+            Some(fb) if (fb.width, fb.height) == size => fb,
+            _ => Framebuffer::new(size.0, size.1, look.theme.colors.desktop),
+        };
+        let mut st = State { look, view, fb, screens, last_press: None, right_hit: None, pointer: None, timer: None, blink_on: true };
         st.look.scale = s;
         repaint(hwnd, &mut st, Rect::new(0, 0, size.0, size.1));
         *borrow = Some(st);

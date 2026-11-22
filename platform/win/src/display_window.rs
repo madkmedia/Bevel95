@@ -78,6 +78,8 @@ fn put_in_effect(era: Era, choice: Choice) {
     if let Ok(mut c) = CHOICES.lock() {
         c.get_or_insert_with(Default::default)[index(era)] = choice.clone();
     }
+    // A live test's choice never hides what the person chose.
+    drop_test();
     let path = file();
     if let Err(e) = state_file::change(&path, "", |text| display::with_choice(text, era, &choice))
         && !state_file::is_read_only(&e)
@@ -182,6 +184,19 @@ pub fn look_changed() {
     if kit::hwnd::<DisplayHost>().is_some() || kit::hwnd::<PatternHost>().is_some() {
         close();
     }
+    // A live test's choice goes with the look it was made in (it never comes back with it).
+    if drop_test() {
+        bar::sync_desktop();
+    }
+}
+
+/// Takes a live test's choice away; true if there was one.
+fn drop_test() -> bool {
+    let gone = TEST.lock().ok().and_then(|mut t| t.take()).is_some();
+    if gone {
+        log("display: the live test's choice is gone; the look's own shows again");
+    }
+    gone
 }
 
 fn apply() {
@@ -251,14 +266,18 @@ fn activate_pattern(part: pattern::Part) {
 /// Properties, 1 closes it (and the Pattern window) applying nothing, 2 opens the Pattern window
 /// over it, 3 shows the look's wallpaper number lParam (1 = the list's first) tiled on the desktop,
 /// 4 the look's pattern number lParam, 5 takes a test's choice away again. A test's choice is never
-/// saved and never changes the person's own: the desktop shows it until 5, a restart or a change
-/// of look.
+/// saved and never changes the person's own: the desktop shows it until 5, a restart, a change of
+/// look, colors or size, or the person's Apply or OK. 2 opens the Pattern window only where a
+/// person could (98 and 2000, Pattern... not grayed).
 pub fn test_message(wparam: usize, lparam: isize) {
     let Some(era) = with_app(|app| app.era) else { return };
     match wparam {
         0 => open(),
         1 => close(),
-        2 => open_pattern(),
+        // Only where a person could: a look that has the Pattern window, its button not grayed.
+        2 if kit::with::<DisplayHost, _>(|h| h.form.props.era != Era::Win95 && h.form.props.enabled(Part::PatternButton)) == Some(true) => {
+            open_pattern()
+        }
         3 | 4 => {
             let n = usize::try_from(lparam).unwrap_or(0).max(1) - 1;
             let mut c = Choice::plain();
@@ -274,10 +293,7 @@ pub fn test_message(wparam: usize, lparam: isize) {
             }
             bar::sync_desktop();
         }
-        5 if TEST.lock().ok().and_then(|mut t| t.take()).is_some() => {
-            log("display: the live test's choice is gone; the look's own shows again");
-            bar::sync_desktop();
-        }
+        5 if drop_test() => bar::sync_desktop(),
         _ => {}
     }
 }
@@ -308,7 +324,14 @@ mod tests {
         *TEST.lock().unwrap() = Some((Era::Win98, Choice { pattern: Some("Bricks".into()), ..Choice::plain() }));
         assert_eq!(choice(Era::Win98).pattern.as_deref(), Some("Bricks"));
         assert_eq!(saved(Era::Win98), forest);
-        *TEST.lock().unwrap() = None;
+        // The person's Apply or OK takes the test's choice away (the review of 2026-11-21, 7)...
+        put_in_effect(Era::Win98, forest.clone());
+        assert!(TEST.lock().unwrap().is_none());
+        assert_eq!(choice(Era::Win98), forest);
+        // ...and so does a change of look.
+        *TEST.lock().unwrap() = Some((Era::Win98, Choice { pattern: Some("Bricks".into()), ..Choice::plain() }));
+        look_changed();
+        assert!(TEST.lock().unwrap().is_none());
         // An unreadable file is kept as it is and every look is plain.
         std::fs::write(&path, [0xFF, 0xFE, 0x41, 0x00]).unwrap();
         load();

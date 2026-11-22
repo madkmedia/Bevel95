@@ -390,8 +390,13 @@ fn fill_ground(fb: &mut Framebuffer, theme: &Theme, pattern: Option<Pattern>, or
 
 /// Lays `picture` into `fb` with its top-left at (x, y) (clipped), opaque pixels only.
 fn lay(fb: &mut Framebuffer, theme: &Theme, picture: &Picture, x: i32, y: i32) {
-    let (x0, y0) = (x.max(0), y.max(0));
-    let (x1, y1) = ((x + picture.width).min(fb.width), (y + picture.height).min(fb.height));
+    lay_in(fb, theme, picture, x, y, Rect::new(0, 0, fb.width, fb.height));
+}
+
+/// `lay`, cut to `clip` (a screen of several) as well as to `fb`.
+fn lay_in(fb: &mut Framebuffer, theme: &Theme, picture: &Picture, x: i32, y: i32, clip: Rect) {
+    let (x0, y0) = (x.max(0).max(clip.x), y.max(0).max(clip.y));
+    let (x1, y1) = ((x + picture.width).min(fb.width).min(clip.right()), (y + picture.height).min(fb.height).min(clip.bottom()));
     for fy in y0..y1 {
         for fx in x0..x1 {
             let p = picture.get(fx - x, fy - y);
@@ -402,48 +407,73 @@ fn lay(fb: &mut Framebuffer, theme: &Theme, picture: &Picture, x: i32, y: i32) {
     }
 }
 
-/// Draws `choice` over an area `w` x `h` (the whole screen): the desktop color or the pattern,
+/// Draws `choice` over an area `w` x `h` that is one screen: the desktop color or the pattern,
 /// then the wallpaper tiled from the corner, centered or stretched.
 pub fn draw(fb: &mut Framebuffer, theme: &Theme, choice: &Choice) {
+    let whole = Rect::new(0, 0, fb.width, fb.height);
+    draw_on(fb, theme, choice, &[whole]);
+}
+
+/// Draws `choice` over the classic desktop's whole area `fb`, which holds the `screens` (their
+/// rectangles in `fb`'s pixels, the main screen first). As the old Windows did it on two screens
+/// (PROVISIONAL: the Reference PCs had one screen, nothing was measured): the pattern and the
+/// tiles start at the main screen's top-left corner and run over every screen; Center and Stretch
+/// are done for each screen by itself, within its own screen. With one screen covering the whole
+/// area it is the one-screen drawing the Reference PCs showed. No screens: the whole area is one.
+pub fn draw_on(fb: &mut Framebuffer, theme: &Theme, choice: &Choice, screens: &[Rect]) {
+    let whole = [Rect::new(0, 0, fb.width, fb.height)];
+    let screens = if screens.is_empty() { &whole[..] } else { screens };
+    let main = screens[0];
     let era = theme.era;
-    fill_ground(fb, theme, choice.pattern_shown(era), (0, 0));
+    fill_ground(fb, theme, choice.pattern_shown(era), (-main.x, -main.y));
     let Some(wallpaper) = choice.wallpaper_in(era) else { return };
     let picture = wallpaper.picture();
     if picture.width <= 0 || picture.height <= 0 {
         return;
     }
-    let (w, h) = (fb.width, fb.height);
-    match choice.show {
-        Show::Center => {
-            let (x, y) = centered(w, h, picture.width, picture.height);
-            lay(fb, theme, &picture, x, y);
-        }
+    // 95 had no Stretch: such a choice is no choice (`parse` never gives one); centered.
+    let show = if era == Era::Win95 && choice.show == Show::Stretch { Show::Center } else { choice.show };
+    match show {
         Show::Tile => {
-            // Tiled from the top-left corner: one row of tiles, then copied down.
-            for y in (0..h).step_by(picture.height as usize) {
-                for x in (0..w).step_by(picture.width as usize) {
+            // From the main screen's corner over the whole area, the tiles left of and above it too.
+            let (pw, ph) = (picture.width, picture.height);
+            let first = |main: i32, step: i32| main - (main.max(0) + step - 1) / step * step;
+            let (x0, y0) = (first(main.x, pw), first(main.y, ph));
+            for y in (y0..fb.height).step_by(ph as usize) {
+                for x in (x0..fb.width).step_by(pw as usize) {
                     lay(fb, theme, &picture, x, y);
                 }
             }
         }
-        Show::Stretch if era == Era::Win95 => {
-            // 95 had no Stretch: such a choice is no choice (`background_file` never gives one).
-            let (x, y) = centered(w, h, picture.width, picture.height);
-            lay(fb, theme, &picture, x, y);
+        Show::Center => {
+            for s in screens {
+                let (x, y) = centered(s.w, s.h, picture.width, picture.height);
+                lay_in(fb, theme, &picture, s.x + x, s.y + y, *s);
+            }
         }
-        Show::Stretch => lay(fb, theme, &stretched(era, &picture, w, h), 0, 0),
+        Show::Stretch => {
+            for s in screens {
+                lay_in(fb, theme, &stretched(era, &picture, s.w, s.h), s.x, s.y, *s);
+            }
+        }
     }
 }
 
-/// The classic desktop's picture for `choice` over its whole area (`w` x `h`, 1x pixels), or
-/// `None` for the plain desktop, which is drawn as before without one (nothing of the plain
-/// desktop changes: not its pixels, its memory or its time).
+/// The classic desktop's picture for `choice` over its whole area (`w` x `h`, 1x pixels), which
+/// is one screen, or `None` for the plain desktop.
 pub fn background(theme: &Theme, choice: &Choice, w: i32, h: i32) -> Option<Framebuffer> {
+    background_on(theme, choice, &[Rect::new(0, 0, w.max(0), h.max(0))], w, h)
+}
+
+/// The classic desktop's picture for `choice` over its whole area (`w` x `h`, 1x pixels) holding
+/// `screens` (`draw_on`), or `None` for the plain desktop, which is drawn as before without one
+/// (nothing of the plain desktop changes: not its pixels, its memory or its time).
+pub fn background_on(theme: &Theme, choice: &Choice, screens: &[Rect], w: i32, h: i32) -> Option<Framebuffer> {
     if choice.is_plain(theme.era) {
         return None;
     }
     let mut fb = Framebuffer::new(w.max(0), h.max(0), theme.colors.desktop);
-    draw(&mut fb, theme, choice);
+    draw_on(&mut fb, theme, choice, screens);
     Some(fb)
 }
 
@@ -543,10 +573,12 @@ fn parse_one(text: &str, era: Era) -> Option<Choice> {
 }
 
 /// The first lines of a new background.txt.
-const HEADER: &str = "# Bevel95's wallpaper and pattern for each look (desktop menu > Properties, Background page).\n# Each look keeps its own: (None) or a name from that look's lists; display = center, tile or stretch.\n";
+const HEADER: &str = "# Bevel95's wallpaper and pattern for each look (desktop menu > Properties, Background page).\n# Each look keeps its own: (None) or a name from that look's lists; display = center, tile or stretch.\n# A note needs a line of its own, starting with #: after a value it would be taken as part of it.\n";
 
-/// `text` with `era`'s three lines set to `choice` (added if missing); every other line is kept
-/// as it was.
+/// `text` with `era`'s three lines set to `choice` (added if missing): the first line of each key
+/// takes the value and later lines of the same key go, so that exactly one line per key is left
+/// (reading takes a key's last line: a second one would win at the next start). Every other line
+/// is kept as it was.
 pub fn with_choice(text: &str, era: Era, choice: &Choice) -> String {
     let [wk, dk, pk] = keys(era);
     let values = [
@@ -558,15 +590,18 @@ pub fn with_choice(text: &str, era: Era, choice: &Choice) -> String {
     let base = if text.trim().is_empty() { HEADER } else { text };
     let mut lines: Vec<String> = base
         .lines()
-        .map(|line| {
+        .filter_map(|line| {
             let key = line.split_once('=').map(|(k, _)| k.trim().to_string()).unwrap_or_default();
             for (i, k) in [&wk, &dk, &pk].into_iter().enumerate() {
-                if !line.trim_start().starts_with('#') && key.eq_ignore_ascii_case(k) && !done[i] {
+                if !line.trim_start().starts_with('#') && key.eq_ignore_ascii_case(k) {
+                    if done[i] {
+                        return None;
+                    }
                     done[i] = true;
-                    return format!("{k} = {}", values[i]);
+                    return Some(format!("{k} = {}", values[i]));
                 }
             }
-            line.to_string()
+            Some(line.to_string())
         })
         .collect();
     for (i, k) in [&wk, &dk, &pk].into_iter().enumerate() {

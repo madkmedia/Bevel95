@@ -240,6 +240,98 @@ fn the_choice_is_kept_per_look_by_name() {
     assert_eq!(again.matches("win98 wallpaper").count(), 1);
 }
 
+/// The review of 2026-11-21, finding 2: reading takes a key's last line, so writing must leave
+/// one line per key, or the person's choice is lost at the next start.
+#[test]
+fn a_key_written_twice_is_left_once() {
+    let text = "# mine\nwin98 wallpaper = Forest\nwin95 wallpaper = Bubbles\nwin98 wallpaper = Clouds\nWIN98 Wallpaper = Setup\n";
+    assert_eq!(parse(text)[1].wallpaper.as_deref(), Some("Setup"), "the last line wins when read");
+    let written = with_choice(text, Era::Win98, &choice(Some("Metal Links"), Show::Tile, None));
+    assert_eq!(written.matches("win98 wallpaper").count() + written.matches("WIN98 Wallpaper").count(), 1, "{written}");
+    assert_eq!(parse(&written)[1], choice(Some("Metal Links"), Show::Tile, None), "{written}");
+    // The first line took the value where it stood; the other look and the note stay.
+    assert!(written.starts_with("# mine\nwin98 wallpaper = Metal Links\nwin95 wallpaper = Bubbles\n"), "{written}");
+    assert_eq!(parse(&written)[0].wallpaper.as_deref(), Some("Bubbles"));
+    // A note on a line of its own is kept; a new file says so in its header.
+    assert!(with_choice("", Era::Win95, &Choice::plain()).contains("A note needs a line of its own"));
+}
+
+/// The review of 2026-11-21, finding 5 (PROVISIONAL, nothing measured): with several screens the
+/// pattern and the tiles start at the main screen's corner and run over every screen; Center and
+/// Stretch are done for each screen within its own.
+#[test]
+fn several_screens_each_center_and_stretch_their_own() {
+    let bubbles = wallpaper(Era::Win95, "Bubbles").unwrap().picture();
+    let at = |fb: &Framebuffer, x: i32, y: i32| fb.get(x, y);
+    // Two screens side by side, of different heights: the main 200x150 at the left, a 100x80 right.
+    let (main, second) = (Rect::new(0, 0, 200, 150), Rect::new(200, 0, 100, 80));
+    let c = choice(Some("Bubbles"), Show::Center, Some("Plaid"));
+    let mut fb = Framebuffer::new(300, 150, 0);
+    draw_on(&mut fb, &WIN95, &c, &[main, second]);
+    let plaid = pattern(Era::Win95, "Plaid").unwrap();
+    let ground = |x: i32, y: i32, origin: (i32, i32)| if plaid.set(x - origin.0, y - origin.1) { 0xFF00_0000 } else { WIN95.colors.desktop };
+    for (s, origin) in [(main, (0, 0)), (second, (0, 0))] {
+        let (x0, y0) = centered(s.w, s.h, 64, 64);
+        for y in 0..s.h {
+            for x in 0..s.w {
+                let inside = (x0..x0 + 64).contains(&x) && (y0..y0 + 64).contains(&y);
+                let want = if inside { bubbles.get(x - x0, y - y0) } else { ground(s.x + x, s.y + y, origin) };
+                assert_eq!(at(&fb, s.x + x, s.y + y), want, "{s:?} {x},{y}");
+            }
+        }
+    }
+    // A picture larger than a screen is cut to it: the 100x80 screen shows only its own part, and
+    // the main screen's picture does not reach into it.
+    let setup = wallpaper(Era::Win95, "Setup").unwrap().picture();
+    let mut fb = Framebuffer::new(300, 150, 0);
+    draw_on(&mut fb, &WIN95, &choice(Some("Setup"), Show::Center, None), &[main, second]);
+    let (mx, my) = centered(200, 150, 640, 480);
+    let (sx, sy) = centered(100, 80, 640, 480);
+    assert_eq!(at(&fb, 199, 10), setup.get(199 - mx, 10 - my));
+    assert_eq!(at(&fb, 200, 10), setup.get(-sx, 10 - sy));
+    assert_eq!(at(&fb, 250, 100), WIN95.colors.desktop, "below the shorter screen: no screen, the ground");
+    // Stretch: each screen gets the whole picture.
+    let clouds = wallpaper(Era::Win98, "Clouds").unwrap().picture();
+    let mut fb = Framebuffer::new(300, 150, 0);
+    draw_on(&mut fb, &WIN98, &choice(Some("Clouds"), Show::Stretch, None), &[main, second]);
+    for (s, small) in [(main, stretched(Era::Win98, &clouds, 200, 150)), (second, stretched(Era::Win98, &clouds, 100, 80))] {
+        for y in 0..s.h {
+            for x in 0..s.w {
+                assert_eq!(at(&fb, s.x + x, s.y + y), small.get(x, y), "{s:?} {x},{y}");
+            }
+        }
+    }
+    // A second screen left of and above the main one: the desktop's corner is the second screen's,
+    // the pattern and the tiles line up with the main screen's corner.
+    let (main, second) = (Rect::new(100, 40, 200, 150), Rect::new(0, 0, 100, 80));
+    let mut fb = Framebuffer::new(300, 190, 0);
+    draw_on(&mut fb, &WIN95, &choice(None, Show::Center, Some("Plaid")), &[main, second]);
+    for (x, y) in [(100, 40), (0, 0), (37, 13), (299, 189), (5, 70)] {
+        assert_eq!(at(&fb, x, y), ground(x, y, (100, 40)), "{x},{y}");
+    }
+    let thatch = wallpaper(Era::Win95, "Black Thatch").unwrap().picture();
+    let mut fb = Framebuffer::new(300, 190, 0);
+    draw_on(&mut fb, &WIN95, &choice(Some("Black Thatch"), Show::Tile, None), &[main, second]);
+    for y in 0..190 {
+        for x in 0..300 {
+            assert_eq!(at(&fb, x, y), thatch.get((x - 100).rem_euclid(31), (y - 40).rem_euclid(30)), "{x},{y}");
+        }
+    }
+    // Centered on the second screen within it, on the main within the main.
+    let mut fb = Framebuffer::new(300, 190, 0);
+    draw_on(&mut fb, &WIN95, &c, &[main, second]);
+    let (x0, y0) = centered(100, 80, 64, 64);
+    assert_eq!(at(&fb, x0, y0), bubbles.get(0, 0));
+    let (x0, y0) = centered(200, 150, 64, 64);
+    assert_eq!(at(&fb, 100 + x0 + 63, 40 + y0 + 63), bubbles.get(63, 63));
+    // One screen over the whole area is the one-screen drawing.
+    for c in [c.clone(), choice(Some("Black Thatch"), Show::Tile, Some("Bricks")), choice(Some("Setup"), Show::Center, None)] {
+        let mut one = Framebuffer::new(300, 190, 0);
+        draw_on(&mut one, &WIN95, &c, &[Rect::new(0, 0, 300, 190)]);
+        assert_eq!(one.pixels, drawn(&WIN95, &c, 300, 190).pixels);
+    }
+}
+
 #[test]
 fn a_nonsense_value_means_the_plain_desktop_for_that_look() {
     let text = "win95 wallpaper = Clouds\nwin95 display = tile\nwin98 wallpaper = Clouds\nwin98 display = sideways\n\
