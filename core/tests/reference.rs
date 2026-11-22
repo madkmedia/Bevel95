@@ -5718,7 +5718,7 @@ fn explorer_list_cases(out: &mut Vec<Case>, f98: &Fonts, f2k: &Fonts) {
 fn reference_tree(era: Era) -> bevel_core::folder::pane::Tree {
     use bevel_core::folder::art::DriveKind;
     use bevel_core::folder::pane::{NodeKind as K, NodeSpec, Tree};
-    let spec = |id: &str, name: &str, kind: K, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows };
+    let spec = |id: &str, name: &str, kind: K, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows, hidden: false };
     let mut t = Tree::new();
     let _ = t.wanted();
     let computer = spec("::my-computer", "My Computer", K::MyComputer, true);

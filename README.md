@@ -32,7 +32,9 @@ look you choose.
   choose how it is drawn: even pixels with mixed edges (the default), the same mixed by light,
   sharp but uneven pixels, or smooth.
 - **A classic desktop** with its icons (it can be switched off), **folder windows** and **Windows
-  Explorer** with the tree of folders, in each look. Right-click the desktop and choose
+  Explorer** with the tree of folders, in each look. Hidden files and folders show, faded, when
+  Windows is set to show hidden items (File Explorer > View > Show > Hidden items); protected
+  system files only when Windows does not hide them. Right-click the desktop and choose
   **Properties** for **Display Properties**: each look's own wallpapers and patterns (tiled,
   centered or, in 98 and 2000, stretched), drawn as that Windows drew them.
 - **Minesweeper, Solitaire and the Calculator**, each in the look you use, with their Help.

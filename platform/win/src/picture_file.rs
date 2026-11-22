@@ -499,11 +499,9 @@ pub(crate) mod tests {
     /// in a process of its own (other tests beside it open handles of their own).
     #[test]
     fn reading_leaves_nothing_behind() {
-        use std::os::windows::process::CommandExt;
         let me = std::env::current_exe().unwrap();
-        let out = std::process::Command::new(me)
+        let out = bevel_winkit::quiet::command(me)
             .args(["--ignored", "--exact", "picture_file::tests::reading_leaves_nothing_behind_alone", "--test-threads=1"])
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
             .output()
             .unwrap();
         let text = String::from_utf8_lossy(&out.stdout);

@@ -62,6 +62,8 @@ pub struct NodeSpec {
     pub kind: NodeKind,
     /// It has folders of its own (a plus box).
     pub has_rows: bool,
+    /// A hidden folder (Windows shows hidden items): its picture faded (`crate::hidden`).
+    pub hidden: bool,
 }
 
 /// One row of the tree.
@@ -77,6 +79,8 @@ pub struct Node {
     pub read: bool,
     /// Its rows were asked for and have not come yet.
     asked: bool,
+    /// A hidden folder: its picture faded.
+    pub hidden: bool,
 }
 
 /// The ids compared as Windows compares paths: without regard to case.
@@ -113,6 +117,7 @@ impl Tree {
             has_rows: true,
             read: false,
             asked: false,
+            hidden: false,
         };
         Tree { nodes: vec![desktop], sel: 0, top: 0, scroll_x: 0, follow: Vec::new(), drop_row: None }
     }
@@ -220,6 +225,7 @@ impl Tree {
                     let mut head = old[a].clone();
                     head.name = spec.name;
                     head.kind = spec.kind;
+                    head.hidden = spec.hidden;
                     head.has_rows = spec.has_rows || (head.read && stop > a + 1);
                     if !head.has_rows {
                         head.open = false;
@@ -236,6 +242,7 @@ impl Tree {
                     has_rows: spec.has_rows,
                     read: false,
                     asked: false,
+                    hidden: spec.hidden,
                 }),
             }
         }
@@ -705,6 +712,8 @@ pub fn paint_rows(fb: &mut Framebuffer, theme: &Theme, font: &Font, era: Era, t:
         };
         let lit = if t.drop_row.is_some() { selected } else { selected && focused };
         let icon = picture(era, n.kind, selected && n.kind == NodeKind::Folder);
+        // A hidden folder's picture faded as a cut one's, on the tree's white (PROVISIONAL).
+        let icon = if n.hidden { crate::desktop_icons::cut_picture(era, &icon, rgb(0xFFFFFF)) } else { icon };
         let row = TreeRow {
             depth: n.depth,
             open: n.has_rows.then_some(n.open),
@@ -891,7 +900,20 @@ mod tests {
     use super::*;
 
     fn spec(id: &str, kind: NodeKind, has_rows: bool) -> NodeSpec {
-        NodeSpec { id: id.into(), name: id.trim_end_matches('\\').rsplit('\\').next().unwrap_or(id).into(), kind, has_rows }
+        NodeSpec { id: id.into(), name: id.trim_end_matches('\\').rsplit('\\').next().unwrap_or(id).into(), kind, has_rows, hidden: false }
+    }
+
+    /// A hidden folder's row is marked so (its picture faded) and follows a new reading.
+    #[test]
+    fn a_hidden_folder_row_is_faded() {
+        let mut t = Tree::new();
+        let hidden = NodeSpec { hidden: true, ..spec("D\\Private", NodeKind::Folder, false) };
+        t.set_rows("::desktop", vec![spec("D\\Plain", NodeKind::Folder, false), hidden.clone()]);
+        let at = |t: &Tree, id: &str| t.nodes[t.find(id).unwrap()].hidden;
+        assert!(at(&t, "D\\Private") && !at(&t, "D\\Plain"));
+        // Read again with its hidden mark gone (unhidden on the disk): plain.
+        t.set_rows("::desktop", vec![spec("D\\Plain", NodeKind::Folder, false), NodeSpec { hidden: false, ..hidden }]);
+        assert!(!at(&t, "D\\Private"));
     }
 
     /// The Reference PC's tree as Windows 95 opened it: the Desktop, My Computer with A:, C: and

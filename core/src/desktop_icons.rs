@@ -324,6 +324,9 @@ pub struct Desktop {
     /// The items on the clipboard after Cut (by id): their pictures show faded, as Windows drew
     /// them, until they are pasted or something else goes onto the clipboard.
     cut: HashSet<String>,
+    /// The hidden items shown (by id: Windows shows hidden items): their pictures show faded too,
+    /// whatever happens to a cut (crate::hidden; PROVISIONAL).
+    hidden: HashSet<String>,
     /// The label being renamed.
     rename: Option<Rename>,
     /// The items stay in the order given (`keep_order`).
@@ -493,6 +496,7 @@ impl Desktop {
             pending: Vec::new(),
             changed: false,
             cut: HashSet::new(),
+            hidden: HashSet::new(),
             rename: None,
             keep_order: false,
             dots_origin: (0, 0),
@@ -591,6 +595,17 @@ impl Desktop {
         self.items.get(i).is_some_and(|item| self.cut.contains(&item.id))
     }
 
+    /// The hidden items among those shown (by id), as the folder was read: their pictures show
+    /// faded, as a cut item's (the old Windows drew hidden files so; PROVISIONAL, not measured).
+    pub fn set_hidden(&mut self, ids: impl IntoIterator<Item = String>) {
+        self.hidden = ids.into_iter().collect();
+    }
+
+    /// Whether icon `i`'s picture shows faded: cut, or hidden (the two do not disturb each other).
+    pub fn is_faded(&self, i: usize) -> bool {
+        self.is_cut(i) || self.items.get(i).is_some_and(|item| self.hidden.contains(&item.id))
+    }
+
     /// An item was renamed (Windows' file machinery said so): it keeps its place, its selection
     /// and its focus under its new id until the folder is read again; its label shows `name`
     /// at once. Its place in Arrange Icons' order follows with the next reading.
@@ -604,6 +619,9 @@ impl Desktop {
         }
         if self.cut.remove(old_id) {
             self.cut.insert(new_id.to_string());
+        }
+        if self.hidden.remove(old_id) {
+            self.hidden.insert(new_id.to_string());
         }
         self.items[i].id = new_id.to_string();
         self.items[i].name = name.to_string();
@@ -1648,7 +1666,7 @@ impl Desktop {
         // Which item stands at each index belongs to its look: Arrange Icons puts other items into
         // the same cells (the user's report of 2026-11-21: nothing was painted).
         let looks = (0..self.items.len())
-            .map(|i| (self.shows_selected(i, self.active), self.active && self.focus == Some(i), self.cells[i], self.is_cut(i), id_code(&self.items[i].id)))
+            .map(|i| (self.shows_selected(i, self.active), self.active && self.focus == Some(i), self.cells[i], self.is_faded(i), id_code(&self.items[i].id)))
             .collect();
         let band = match &self.gesture {
             Some(Gesture::Band { from, to, .. }) => Some(band_rect(*from, *to)),
@@ -1810,7 +1828,7 @@ impl Desktop {
             let r = self.icon_rect(i);
             let sixteen = theme.depth.reduced();
             if let Some(icon) = self.picture(theme, i, selected && !sixteen) {
-                let icon = if self.is_cut(i) { cut_picture(self.era, &icon, ground) } else { icon };
+                let icon = if self.is_faded(i) { cut_picture(self.era, &icon, ground) } else { icon };
                 let icon = if sixteen { sixteen_picture(theme, &icon, selected, (0, 0)) } else { icon };
                 tmp.draw_icon(&icon, r.x - region.x, r.y - region.y);
             }
@@ -3040,5 +3058,25 @@ mod tests {
         let (_, rects) = d.update(&f, |d| d.set_cut(["C:\\Desktop\\a".to_string()]));
         assert!(d.is_cut(i) && !rects.is_empty(), "the cut icon is painted again");
         assert!(!d.is_cut(0));
+    }
+
+    /// A hidden item shown is faded as a cut one; cut and hidden do not disturb each other.
+    #[test]
+    fn hidden_and_cut_fade_each_on_its_own() {
+        let mut d = desktop(&["a", "b"]);
+        let (a, b) = (d.index_of("C:\\Desktop\\a").unwrap(), d.index_of("C:\\Desktop\\b").unwrap());
+        d.set_hidden(["C:\\Desktop\\a".to_string()]);
+        assert!(d.is_faded(a) && !d.is_cut(a) && !d.is_faded(b));
+        // Cut both, then the cut ends (pasted, or something else on the clipboard): a stays faded.
+        d.set_cut(["C:\\Desktop\\a".to_string(), "C:\\Desktop\\b".to_string()]);
+        assert!(d.is_faded(a) && d.is_faded(b));
+        d.set_cut(Vec::<String>::new());
+        assert!(d.is_faded(a) && !d.is_faded(b));
+        // Renamed, it keeps its fading under its new id.
+        d.renamed("C:\\Desktop\\a", "C:\\Desktop\\c", "c");
+        assert!(d.is_faded(d.index_of("C:\\Desktop\\c").unwrap()));
+        // The folder read again without it hidden: plain again.
+        d.set_hidden(Vec::<String>::new());
+        assert!(!d.is_faded(d.index_of("C:\\Desktop\\c").unwrap()));
     }
 }

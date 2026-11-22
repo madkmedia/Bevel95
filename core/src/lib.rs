@@ -32,6 +32,7 @@ pub mod flyout;
 pub mod folder;
 pub mod gui_watch;
 pub mod help;
+pub mod hidden;
 pub mod html_help;
 pub mod icons;
 pub mod kit;

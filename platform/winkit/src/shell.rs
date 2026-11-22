@@ -183,8 +183,14 @@ pub struct Seen {
     pub attributes: u32,
 }
 
-const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+
+impl Seen {
+    /// A hidden item shown (Windows shows hidden items): its picture is drawn faded.
+    pub fn hidden(&self) -> bool {
+        bevel_core::hidden::faded(self.attributes)
+    }
+}
 
 /// What `list_folder` found besides the items shown: how many it left out (Windows 95's status
 /// bar counted them: "plus N hidden") and the size of all files, hidden ones too (its status bar
@@ -195,9 +201,29 @@ pub struct Hidden {
     pub total_size: u64,
 }
 
-/// Everything in `dir` that Explorer shows (not hidden, not system files such as desktop.ini), in
-/// no particular order, and what it leaves out. `None` if the folder could not be read.
+/// Windows' own two switches for hidden files, read through the shell's own call
+/// (`SHGetSetSettings`, reading only: Bevel95 changes nothing there): File Explorer's "Hidden
+/// items" and Folder Options' "Hide protected operating system files". If the call says nothing
+/// both stay off, so nothing hidden shows.
+pub fn explorer_switches() -> bevel_core::hidden::Switches {
+    use windows_sys::Win32::UI::Shell::{SHELLSTATEA, SHGetSetSettings, SSF_SHOWALLOBJECTS, SSF_SHOWSUPERHIDDEN};
+    let mut state = SHELLSTATEA::default();
+    // SAFETY: a valid out-struct; 0 = read, never set.
+    unsafe { SHGetSetSettings(&mut state, SSF_SHOWALLOBJECTS | SSF_SHOWSUPERHIDDEN, 0) };
+    // SHELLSTATE's first bit field: fShowAllObjects is its bit 0, fShowSuperHidden its bit 15.
+    let bits = state._bitfield1 as u32;
+    bevel_core::hidden::Switches { show_hidden: bits & 1 != 0, show_protected: bits & (1 << 15) != 0 }
+}
+
+/// Everything in `dir` that Windows' two switches show (`bevel_core::hidden::shown`, the switches
+/// read now), in no particular order, and what it leaves out. `None` if the folder could not be
+/// read. Called off every window's thread, as the listings are.
 pub fn list_folder(dir: &Path) -> Option<(Vec<Seen>, Hidden)> {
+    list_folder_with(dir, explorer_switches())
+}
+
+/// `list_folder` with the switches given (the tests give their own, never the PC's).
+pub fn list_folder_with(dir: &Path, switches: bevel_core::hidden::Switches) -> Option<(Vec<Seen>, Hidden)> {
     use std::os::windows::fs::MetadataExt;
     let entries = std::fs::read_dir(dir).ok()?;
     let mut out = Vec::new();
@@ -207,7 +233,8 @@ pub fn list_folder(dir: &Path) -> Option<(Vec<Seen>, Hidden)> {
         if !meta.is_dir() {
             hidden.total_size += meta.len();
         }
-        if meta.file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0 {
+        // Only what is left out is counted ("plus N hidden").
+        if !bevel_core::hidden::shown(meta.file_attributes(), switches) {
             hidden.count += 1;
             continue;
         }
@@ -400,4 +427,52 @@ pub fn local_time(utc: u64) -> u64 {
         return utc;
     }
     (u64::from(local.dwHighDateTime) << 32) | u64::from(local.dwLowDateTime)
+}
+#[cfg(test)]
+mod hidden_tests {
+    use super::*;
+    use bevel_core::hidden::Switches;
+
+    fn set_attributes(path: &Path, attributes: u32) {
+        let w = wide(&path.to_string_lossy());
+        // SAFETY: a null-terminated path of the test's own scratch file.
+        assert!(unsafe { windows_sys::Win32::Storage::FileSystem::SetFileAttributesW(w.as_ptr(), attributes) } != 0);
+    }
+
+    /// A scratch folder with a plain file, a hidden one, a hidden system one and a hidden folder
+    /// (made here, never anyone's): what each pair of switches lists and counts as left out.
+    #[test]
+    fn a_listing_follows_the_two_switches() {
+        let dir = crate::log::installed_dir().join("hidden-listing");
+        assert!(!dir.to_string_lossy().contains("AppData\\Local\\Bevel95\\"), "a scratch folder");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Secret folder")).unwrap();
+        for name in ["plain.dat", "hidden.dat", "desktop.ini"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        set_attributes(&dir.join("hidden.dat"), 0x2);
+        set_attributes(&dir.join("desktop.ini"), 0x2 | 0x4);
+        set_attributes(&dir.join("Secret folder"), 0x2 | 0x10);
+        let names = |s: Switches| {
+            let (seen, hidden) = list_folder_with(&dir, s).unwrap();
+            let mut n: Vec<(String, bool)> = seen.iter().map(|s| (s.path.file_name().unwrap().to_string_lossy().into_owned(), s.hidden())).collect();
+            n.sort();
+            (n, hidden.count)
+        };
+        let item = |n: &str, faded: bool| (n.to_string(), faded);
+        assert_eq!(names(Switches::NONE), (vec![item("plain.dat", false)], 3));
+        assert_eq!(
+            names(Switches { show_hidden: true, show_protected: false }),
+            (vec![item("Secret folder", true), item("hidden.dat", true), item("plain.dat", false)], 1)
+        );
+        assert_eq!(
+            names(Switches { show_hidden: true, show_protected: true }),
+            (vec![item("Secret folder", true), item("desktop.ini", true), item("hidden.dat", true), item("plain.dat", false)], 0)
+        );
+        assert_eq!(names(Switches { show_hidden: false, show_protected: true }), (vec![item("plain.dat", false)], 3));
+        for name in ["hidden.dat", "desktop.ini", "Secret folder"] {
+            set_attributes(&dir.join(name), 0x80);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

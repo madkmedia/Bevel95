@@ -1087,6 +1087,7 @@ fn rebuild(hwnd: HWND, force: bool) {
         if let Some(snapshot) = crate::desktop_items::take() {
             take_pending_place(&mut view);
             view.set_files(snapshot.files);
+            view.set_hidden(snapshot.hidden);
             view.recycle_full = snapshot.recycle_full;
             RECYCLE_FULL.store(snapshot.recycle_full, Ordering::SeqCst);
         }
@@ -2041,6 +2042,7 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
                 with_state(hwnd, |st, _| {
                     take_pending_place(&mut st.view);
                     st.view.set_files(snapshot.files);
+                    st.view.set_hidden(snapshot.hidden);
                     st.view.recycle_full = snapshot.recycle_full;
                     RECYCLE_FULL.store(snapshot.recycle_full, Ordering::SeqCst);
                     let pending = PENDING_SELECT.lock().ok().and_then(|p| p.clone());

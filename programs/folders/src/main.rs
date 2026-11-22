@@ -196,6 +196,12 @@ impl Shows {
     }
 }
 
+/// The hidden items among those listed (by id), whose pictures are drawn faded
+/// (`bevel_core::hidden::faded`).
+fn hidden_of(attributes: &HashMap<String, u32>) -> Vec<String> {
+    attributes.iter().filter(|(_, a)| bevel_core::hidden::faded(**a)).map(|(id, _)| id.clone()).collect()
+}
+
 /// What a folder reader found.
 struct Snapshot {
     items: Vec<Item>,
@@ -784,6 +790,8 @@ fn items_ready(id: usize) {
             h.form.total_size = snapshot.total_size;
             h.form.spaces = snapshot.spaces;
             h.form.disk_free = snapshot.free;
+            // The hidden items shown (Windows shows hidden items) are drawn faded.
+            let hidden_ids = hidden_of(&snapshot.attributes);
             h.form.web.attributes = snapshot.attributes;
             // The tree's rows of the folder shown follow its folders (one made, renamed, gone).
             if h.form.tree_shown {
@@ -804,6 +812,7 @@ fn items_ready(id: usize) {
             let n = snapshot.items.len();
             h.form.set_items(snapshot.items);
             h.form.view.set_cut(cut);
+            h.form.view.set_hidden(hidden_ids);
             if let Some(asked) = h.asked.take() {
                 log(&format!("folders: {n} items shown {} ms after the window asked", asked.elapsed().as_millis()));
             }
@@ -1860,24 +1869,25 @@ fn tree_chain(era: Era, shows: &Shows, from_documents: bool, facts: &Facts) -> V
     walk(&root, vec![MY_COMPUTER.to_string(), root.to_string_lossy().into_owned()])
 }
 
-/// Whether `dir` holds a folder Explorer shows (a plus box in the tree). Reads only until the
-/// first one.
-fn has_folders(dir: &Path) -> bool {
+/// Whether `dir` holds a folder that shows by Windows' two switches (a plus box in the tree;
+/// `bevel_core::hidden::shown`). Reads only until the first one.
+fn has_folders(dir: &Path, switches: bevel_core::hidden::Switches) -> bool {
     use std::os::windows::fs::MetadataExt;
     let Ok(entries) = std::fs::read_dir(dir) else { return false };
-    entries.flatten().any(|e| e.metadata().is_ok_and(|m| m.is_dir() && m.file_attributes() & 0x6 == 0))
+    entries.flatten().any(|e| e.metadata().is_ok_and(|m| m.is_dir() && bevel_core::hidden::shown(m.file_attributes(), switches)))
 }
 
 /// The folders in `dir` as tree rows, by name (`None`: it could not be read).
 fn folder_rows(dir: &Path) -> Option<Vec<NodeSpec>> {
-    let (seen, _) = shell::list_folder(dir)?;
+    let switches = shell::explorer_switches();
+    let (seen, _) = shell::list_folder_with(dir, switches)?;
     let mut rows: Vec<NodeSpec> = seen
         .into_iter()
         .filter(|s| s.folder)
         .map(|s| {
             let id = s.path.to_string_lossy().into_owned();
             let name = shell::display_name(&id).unwrap_or_else(|| s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-            NodeSpec { has_rows: has_folders(&s.path), id, name, kind: NodeKind::Folder }
+            NodeSpec { has_rows: has_folders(&s.path, switches), hidden: s.hidden(), id, name, kind: NodeKind::Folder }
         })
         .collect();
     rows.sort_by_key(|r| r.name.to_lowercase());
@@ -1886,11 +1896,12 @@ fn folder_rows(dir: &Path) -> Option<Vec<NodeSpec>> {
 
 /// The rows of tree row `id` in `era` (`None`: it could not be read).
 fn tree_rows(era: Era, id: &str) -> Option<Vec<NodeSpec>> {
-    let spec = |id: &str, name: &str, kind: NodeKind, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows };
+    let spec = |id: &str, name: &str, kind: NodeKind, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows, hidden: false };
+    let switches = shell::explorer_switches();
     match id {
         DESKTOP => {
             let computer = spec(MY_COMPUTER, "My Computer", NodeKind::MyComputer, true);
-            let documents = shell::documents_folder().map(|d| spec("::my-documents", "My Documents", NodeKind::MyDocuments, has_folders(&d)));
+            let documents = shell::documents_folder().map(|d| spec("::my-documents", "My Documents", NodeKind::MyDocuments, has_folders(&d, switches)));
             let recycle = spec("::recycle-bin", "Recycle Bin", NodeKind::RecycleBin, false);
             // Each look's order of the desktop's own items (95 had no My Documents).
             let mut rows: Vec<NodeSpec> = match era {
@@ -1899,7 +1910,10 @@ fn tree_rows(era: Era, id: &str) -> Option<Vec<NodeSpec>> {
                 Era::Win2000 => [documents, Some(computer), Some(recycle)].into_iter().flatten().collect(),
             };
             let mut folders: Vec<NodeSpec> =
-                desktop_folders().into_iter().map(|(path, name)| NodeSpec { has_rows: has_folders(Path::new(&path)), id: path, name, kind: NodeKind::Folder }).collect();
+                desktop_folders_with(switches)
+                    .into_iter()
+                    .map(|(path, name, hidden)| NodeSpec { has_rows: has_folders(Path::new(&path), switches), id: path, name, kind: NodeKind::Folder, hidden })
+                    .collect();
             folders.sort_by_key(|r| r.name.to_lowercase());
             rows.extend(folders);
             Some(rows)
@@ -1911,11 +1925,11 @@ fn tree_rows(era: Era, id: &str) -> Option<Vec<NodeSpec>> {
                 .map(|i| match i.picture {
                     Picture::Art(Art::Drive(k)) => {
                         // A drive that takes disks always has its plus (Windows asked it only when opened).
-                        let rows = matches!(k, DriveKind::Floppy | DriveKind::Floppy525 | DriveKind::Removable | DriveKind::CdRom) || has_folders(Path::new(&i.id));
-                        NodeSpec { id: i.id, name: i.name, kind: NodeKind::Drive(k), has_rows: rows }
+                        let rows = matches!(k, DriveKind::Floppy | DriveKind::Floppy525 | DriveKind::Removable | DriveKind::CdRom) || has_folders(Path::new(&i.id), switches);
+                        NodeSpec { id: i.id, name: i.name, kind: NodeKind::Drive(k), has_rows: rows, hidden: false }
                     }
-                    Picture::Art(Art::Printers) => NodeSpec { id: i.id, name: i.name, kind: NodeKind::Printers, has_rows: false },
-                    _ => NodeSpec { id: i.id, name: i.name, kind: NodeKind::ControlPanel, has_rows: false },
+                    Picture::Art(Art::Printers) => NodeSpec { id: i.id, name: i.name, kind: NodeKind::Printers, has_rows: false, hidden: false },
+                    _ => NodeSpec { id: i.id, name: i.name, kind: NodeKind::ControlPanel, has_rows: false, hidden: false },
                 })
                 .collect(),
         ),
@@ -3016,8 +3030,10 @@ impl Hosted for FolderHost {
                         h.form.hidden = hidden;
                         h.form.total_size = total;
                         h.form.spaces = spaces;
+                        let hidden_ids = hidden_of(&attributes);
                         h.form.web.attributes = attributes;
                         h.form.set_items(items);
+                        h.form.view.set_hidden(hidden_ids);
                         icon = Some(h.form.icon.clone());
                     }
                     h.form.set_font(&look.regular);
@@ -3498,17 +3514,23 @@ fn places_menu(hwnd: HWND, t: Tool) {
 
 /// The folders on the desktop (the address bar's list holds them).
 fn desktop_folders() -> Vec<(String, String)> {
+    desktop_folders_with(shell::explorer_switches()).into_iter().map(|(path, name, _)| (path, name)).collect()
+}
+
+/// The folders on the desktop that Windows' two switches show, each with whether it is hidden.
+fn desktop_folders_with(switches: bevel_core::hidden::Switches) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
     for dir in [shell::desktop_folder(), shell::public_desktop_folder()].into_iter().flatten() {
-        if let Some((seen, _)) = shell::list_folder(&dir) {
+        if let Some((seen, _)) = shell::list_folder_with(&dir, switches) {
             for s in seen.into_iter().filter(|s| s.folder) {
                 let path = s.path.to_string_lossy().into_owned();
                 let name = shell::display_name(&path).unwrap_or_else(|| s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-                out.push((path, name));
+                let hidden = s.hidden();
+                out.push((path, name, hidden));
             }
         }
     }
-    out.sort_by_key(|(_, n)| n.to_lowercase());
+    out.sort_by_key(|(_, n, _)| n.to_lowercase());
     out
 }
 

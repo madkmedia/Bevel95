@@ -2667,7 +2667,7 @@ mod tests {
     #[test]
     fn the_tree_rows_menu_acts_on_its_row_though_rows_arrive_while_it_is_open() {
         use pane::{NodeKind, NodeSpec};
-        let folder = |id: &str, has_rows: bool| NodeSpec { id: id.into(), name: id.rsplit('\\').next().unwrap().into(), kind: NodeKind::Folder, has_rows };
+        let folder = |id: &str, has_rows: bool| NodeSpec { id: id.into(), name: id.rsplit('\\').next().unwrap().into(), kind: NodeKind::Folder, has_rows, hidden: false };
         let mut w = window(0, (640, 480));
         w.tree.wanted();
         w.tree.set_rows("::desktop", vec![folder("C:\\Slow", true), folder("C:\\Bevel95 test b", false), folder("C:\\Bevel95 test c", false)]);

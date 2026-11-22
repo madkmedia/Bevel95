@@ -1971,6 +1971,7 @@ fn scenes() -> Vec<Scene> {
             ("folder-mycomputer", "A folder window: My Computer with its drives, Control Panel and Printers, the hard disk selected (its free space in the status bar)"),
             ("folder-files", "A folder of files made narrower than its icons: they stay where they were and scroll bars come; the long name selected, in full"),
             ("folder-menu", "A folder window's File menu with a file selected: the status bar shows the highlighted entry's help text"),
+            ("folder-hidden", "A folder with a hidden folder and a hidden file among plain ones, Windows set to show hidden items: their pictures faded as a cut item's (provisional); one protected system file still left out (plus 1 hidden)"),
         ] {
             out.push(Scene { section: "Windows 95", name: format!("win95-{state}"), caption, image: folder_scene(&fonts, state) });
         }
@@ -2738,7 +2739,17 @@ fn folder_scene(fonts: &Fonts, which: &str) -> Framebuffer {
         ]);
         w.hidden = 1;
         w.total_size = 34_237;
-        if which == "folder-files" {
+        if which == "folder-hidden" {
+            w.set_items(vec![
+                item("C:\\L\\Old", "Old", Picture::Folder, true, 0),
+                item("C:\\L\\Private", "Private", Picture::Folder, true, 0),
+                item("C:\\L\\Notes.txt", "Notes.txt", Picture::Own(Some(icon(&DOCUMENT, 2))), false, 489),
+                item("C:\\L\\Secret.txt", "Secret.txt", Picture::Own(Some(icon(&DOCUMENT, 2))), false, 1_200),
+                item("C:\\L\\Plans.txt", "Plans.txt", Picture::Own(Some(icon(&DOCUMENT, 2))), false, 31_000),
+            ]);
+            w.view.set_hidden(["C:\\L\\Private".to_string(), "C:\\L\\Secret.txt".to_string()]);
+            w.view.select_only(Some(0));
+        } else if which == "folder-files" {
             let long = w.view.index_of("C:\\L\\To the bank about the account.txt");
             w.view.select_only(long);
             w.resize((230, 220), false);
@@ -2838,7 +2849,7 @@ fn tree_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
     use bevel_core::folder::pane::{NodeKind as K, NodeSpec, Tree};
     use bevel_core::folder::{FolderWindow, tree_art};
     use bevel_core::kit::Form;
-    let spec = |id: &str, name: &str, kind: K, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows };
+    let spec = |id: &str, name: &str, kind: K, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows, hidden: false };
     let mut tree = Tree::new();
     let _ = tree.wanted();
     let mut on_desktop = vec![spec("::my-computer", "My Computer", K::MyComputer, true), spec("::recycle-bin", "Recycle Bin", K::RecycleBin, false)];

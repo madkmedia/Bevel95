@@ -563,7 +563,7 @@ impl Desktop {
             let r = self.small_icon_rect(cell);
             let sixteen = theme.depth.reduced();
             if let Some(icon) = self.small_picture(theme, i, selected && lit && !sixteen) {
-                let icon = if self.is_cut(i) { crate::desktop_icons::cut_picture(self.era, &icon, crate::desktop_icons::WINDOW) } else { icon };
+                let icon = if self.is_faded(i) { crate::desktop_icons::cut_picture(self.era, &icon, crate::desktop_icons::WINDOW) } else { icon };
                 let icon = if sixteen { crate::desktop_icons::sixteen_picture(theme, &icon, selected && lit, (0, 0)) } else { icon };
                 tmp.draw_icon(&icon, r.x - region.x, r.y - region.y);
             }

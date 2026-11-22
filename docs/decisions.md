@@ -3099,6 +3099,33 @@ it, but write nothing).
   `private/probes/explorer/for-the-owner.txt`) found: 95 opens a new window for every folder, 98 and
   2000 the same window; the Explorer entry is Start > Programs > Windows Explorer in 95 and 98,
   Programs > Accessories in 2000.
+- **Hidden files and folders** (2026-11-21, GitHub issue 4, the owner: "people want to be able to
+  see their own hidden files"): every listing follows Windows' own two switches, File Explorer's
+  "Hidden items" and Folder Options' "Hide protected operating system files", until Bevel95 has
+  each look's own Folder Options page. One rule in the core, `bevel_core::hidden::shown`
+  (attributes and the two switches in, shown or not out; a table test): a file or folder neither
+  hidden nor a system file always shows; a hidden one when Windows shows hidden items; one both
+  hidden and a system file (desktop.ini and the like) only when Windows shows hidden items and
+  does not hide protected files; a system file that is not hidden never, as before (File Explorer
+  shows such a file: here Bevel95 differs). The switches are read through the shell's own call
+  (`SHGetSetSettings`, reading only; `winkit::shell::explorer_switches`); a call that says nothing
+  leaves both off (nothing hidden shows). They are read at each listing, off every window's
+  thread as the listings are (`shell::list_folder`; `list_folder_with` takes them from a test): a
+  folder window reads its folder again every second or so and shows a changed switch then; the
+  tree, the address bar's list and the classic desktop at their next reading. Everything that
+  lists a folder goes through it: the folder windows, the Desktop window, the tree of folders and
+  its plus boxes (`has_folders`), the address bar's desktop folders and the classic desktop's items
+  (`desktop_items`). A hidden item's picture is drawn faded as a cut item's
+  (`desktop_icons::Desktop::set_hidden`, `is_faded`; the tree's `NodeSpec::hidden`), its name as
+  any other (PROVISIONAL: the old Windows drew hidden files so, not measured on the Reference
+  PCs); cut and hidden do not disturb each other (a cut ending leaves a hidden item faded). The
+  status bar's "(plus N hidden)" counts only what is left out. Left out by rules of their own, as
+  before: Quick Search, the Programs menu (`start_menu`) and the Quick Launch folder
+  (`quick_launch`); file_ops reads folders only for its own checks. Not built: a Folder Options
+  View page, a switch of Bevel95's own, hidden files in Quick Search. Golden scene
+  `win95-folder-hidden`; live: a copy of the installed folders.exe in a scratch folder of its own
+  listed a scratch folder of test files as the rule says for this PC's switches
+  (`private/probes/hidden/live.ps1`).
 - **Measured first** on the Windows 95 PC (theme-spec.md, "Folder windows": 40 captures
   `win95-truecolor-folder-*`, the menu help texts and status bar words read from its SHELL32.DLL
   and EXPLORER.EXE string tables, `private/probes/folders/strings.ps1`).

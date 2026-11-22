@@ -23,6 +23,8 @@ use crate::log::log;
 pub struct Snapshot {
     pub files: Vec<Item>,
     pub recycle_full: bool,
+    /// The hidden items among them (by id: Windows shows hidden items): drawn faded.
+    pub hidden: Vec<String>,
 }
 
 static LATEST: Mutex<Option<Snapshot>> = Mutex::new(None);
@@ -105,7 +107,8 @@ fn run() {
                 log(&format!("desktop: {} items of the owner's", seen.len()));
             }
             if let Ok(mut latest) = LATEST.lock() {
-                *latest = Some(Snapshot { files, recycle_full: full });
+                let hidden = seen.iter().filter(|s| s.hidden()).map(|s| s.path.to_string_lossy().into_owned()).collect();
+                *latest = Some(Snapshot { files, recycle_full: full, hidden });
             }
             crate::desktop::items_ready();
             last = Some((seen, full));
@@ -118,8 +121,8 @@ fn run() {
     RUNNING.store(false, Ordering::SeqCst);
 }
 
-/// Everything in the two desktop folders that Explorer shows (not hidden, not system files
-/// such as desktop.ini), in the order of their paths. `None` if the owner's Desktop folder could
+/// Everything in the two desktop folders that Windows' two switches show (`shell::list_folder`,
+/// `bevel_core::hidden`), in the order of their paths. `None` if the owner's Desktop folder could
 /// not be read.
 fn list() -> Option<Vec<Seen>> {
     let mut out = Vec::new();
