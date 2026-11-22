@@ -306,21 +306,30 @@ enum Kind {
     Picture,
 }
 
-/// The wallpaper list's entries in Windows' order: "(None)" first, then the look's own and the
-/// person's own pictures `own` (by their names without the ending) by name without case. Each with
-/// its value (None for "(None)", else a name of the look's or a file's path) and kind.
+/// The wallpaper list's entries in Windows' order: "(None)" first, then the look's own by name
+/// without case, and the person's own pictures `own` (by their names without the ending): in 98
+/// at the end, in the order they came, as Windows 98 added a picture chosen with Browse... (the
+/// Reference PC's capture `win98-truecolor-display-bg-browsed-jpg1024-center`: "Windows 98
+/// wallpaper" after "Windows98"); in 2000 the same (PROVISIONAL: nothing browsed was captured
+/// there); in 95 by name among the look's own (PROVISIONAL: nothing browsed was captured there;
+/// its list was a plain sorted list box). Each with its value (None for "(None)", else a name of
+/// the look's or a file's path) and kind.
 fn wallpaper_entries(era: Era, own: &[String]) -> Vec<(String, Option<String>, Kind)> {
     let mut list: Vec<(String, Option<String>, Kind)> = display::wallpapers(era)
         .into_iter()
         .map(|w| (w.name.to_string(), Some(w.name.to_string()), if w.is_jpeg() { Kind::Picture } else { Kind::Bitmap }))
         .collect();
+    let mut added = Vec::new();
     for path in own {
         let ending = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
         let kind = if matches!(ending.as_str(), "bmp" | "dib") { Kind::Bitmap } else { Kind::Picture };
-        list.push((display::own_name(path).to_string(), Some(path.clone()), kind));
+        added.push((display::own_name(path).to_string(), Some(path.clone()), kind));
     }
-    // Stable: of two entries of the same name, the look's own comes first.
-    list.sort_by(|a, b| display::windows_order(&a.0, &b.0));
+    list.extend(added);
+    if era == Era::Win95 {
+        // Stable: of two entries of the same name, the look's own comes first.
+        list.sort_by(|a, b| display::windows_order(&a.0, &b.0));
+    }
     std::iter::once((NONE.to_string(), None, Kind::None)).chain(list).collect()
 }
 
@@ -356,8 +365,13 @@ pub struct DisplayProperties {
     /// The person's own pictures in the list: the look's choice when the window opened, and each
     /// chosen with Browse... in this opening (PROVISIONAL: not measured how long Windows kept one).
     own: Vec<String>,
-    /// The picture read for the monitor (a JPEG, a person's own), by what it is.
-    read: Option<(display::PictureId, std::sync::Arc<display::Picture>)>,
+    /// The picture read for the monitor (a JPEG, a person's own), by what it is: its small copies
+    /// (`display::monitor_layer`), one for each way of showing in `Show::ALL`'s order, made once
+    /// when it came; the picture itself is not kept (a photo may be large).
+    read: Option<(display::PictureId, Vec<display::Picture>)>,
+    /// The small copy of one of the look's own BMPs the monitor shows, made once per wallpaper and
+    /// way of showing (not at every paint).
+    bmp_layer: std::cell::RefCell<Option<((&'static str, Show), display::Picture)>>,
     pattern_names: Vec<String>,
 }
 
@@ -402,6 +416,7 @@ impl DisplayProperties {
             wallpaper_kinds,
             own,
             read: None,
+            bmp_layer: std::cell::RefCell::new(None),
             pattern_names,
         };
         d.sync_lists();
@@ -471,15 +486,38 @@ impl DisplayProperties {
         self.shown.to_read(self.era)
     }
 
-    /// A picture read for the monitor (`None`: it cannot be shown; the monitor shows the ground).
+    /// A picture read for the monitor (`None`: it cannot be shown; the monitor shows the ground):
+    /// its small copies are made now, for every way of showing, and the picture is not kept.
     pub fn set_read(&mut self, id: display::PictureId, picture: Option<std::sync::Arc<display::Picture>>) {
-        self.read = picture.map(|p| (id, p));
+        let era = self.era;
+        self.read = picture.map(|p| (id, Show::ALL.iter().map(|&show| display::monitor_layer(era, &p, show)).collect()));
     }
 
-    /// The picture read for what the page shows now, if it has come.
+    /// The small copy of the picture read for what the page shows now, if it has come.
     fn read_now(&self) -> Option<&display::Picture> {
         let want = self.to_read()?;
-        self.read.as_ref().filter(|(id, _)| *id == want).map(|(_, p)| &**p)
+        let at = Show::ALL.iter().position(|&s| s == self.shown.show)?;
+        self.read.as_ref().filter(|(id, _)| *id == want).and_then(|(_, layers)| layers.get(at))
+    }
+
+    /// Paints the monitor showing what the page shows: a picture read by its small copy made when
+    /// it came, one of the look's own BMPs by its small copy made once per wallpaper and way of
+    /// showing.
+    fn paint_monitor(&self, fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32) {
+        if self.to_read().is_some() {
+            display::paint_monitor_layer(fb, theme, x, y, &self.shown, self.read_now());
+            return;
+        }
+        let Some(w) = self.shown.wallpaper_in(self.era) else {
+            display::paint_monitor_layer(fb, theme, x, y, &self.shown, None);
+            return;
+        };
+        let key = (w.name, self.shown.show);
+        let mut cache = self.bmp_layer.borrow_mut();
+        if cache.as_ref().map(|(k, _)| *k) != Some(key) {
+            *cache = w.picture().map(|p| (key, display::monitor_layer(self.era, &p, key.1)));
+        }
+        display::paint_monitor_layer(fb, theme, x, y, &self.shown, cache.as_ref().map(|(_, layer)| layer));
     }
 
     /// Whether the monitor has the picture it needs read (or needs none).
@@ -786,7 +824,7 @@ impl DisplayProperties {
         }
 
         let (mx, my) = self.monitor_at();
-        display::paint_monitor(fb, theme, mx, my, &self.shown, self.read_now());
+        self.paint_monitor(fb, theme, mx, my);
 
         let o = ORIGIN;
         let framed = self.default_button();
@@ -1458,15 +1496,16 @@ mod tests {
         assert_eq!((w.props.drop, w.props.shown.show), (None, Show::Stretch));
     }
 
-    /// A person's own picture comes into the list by its name without the ending, where Windows'
-    /// order puts it, selected; it stays while it is the choice or was chosen in this opening.
+    /// A person's own picture comes into the list by its name without the ending, selected: in 98
+    /// (as its Reference PC showed) and 2000 at the end, in the order chosen; in 95 where its
+    /// sorted list puts it. It stays while it is the choice or was chosen in this opening.
     #[test]
     fn a_persons_own_picture_takes_its_place_in_the_list() {
         let mut w = window(Era::Win98, Choice::plain());
         let me = "C:\\Pictures\\Garden.2024.jpg";
         w.props.add_own(me);
         let at = w.props.wallpaper_names.iter().position(|n| n == "Garden.2024").unwrap();
-        assert_eq!((w.props.wallpaper_names[at - 1].as_str(), w.props.wallpaper_names[at + 1].as_str()), ("Forest", "Gold Weave"));
+        assert_eq!((at, w.props.wallpaper_names[at - 1].as_str()), (21, "Waves"), "98: at the end");
         assert_eq!((w.props.selected(Which::Wallpaper), w.props.shown.wallpaper.as_deref()), (Some(at), Some(me)));
         assert_eq!(w.props.wallpaper_kinds[at], Kind::Picture);
         assert!(w.props.enabled(Part::Apply) && w.props.enabled(Part::ShowList));
@@ -1478,9 +1517,21 @@ mod tests {
         assert!(w.props.wallpaper_names.iter().any(|n| n == "Garden.2024"));
         // A second one chosen with Browse...: both listed; a BMP gets the bitmap's small picture.
         w.props.add_own("D:\\Old\\Aardvark.BMP");
-        assert_eq!((w.props.wallpaper_names[1].as_str(), w.props.wallpaper_names[2].as_str()), ("1stboot", "Aardvark"));
-        assert_eq!(w.props.wallpaper_kinds[2], Kind::Bitmap);
+        assert_eq!((w.props.wallpaper_names[21].as_str(), w.props.wallpaper_names[22].as_str()), ("Garden.2024", "Aardvark"), "in the order chosen");
+        assert_eq!(w.props.wallpaper_kinds[22], Kind::Bitmap);
         assert_eq!(w.props.wallpaper_names.len(), 23);
+        assert_eq!(w.props.selected(Which::Wallpaper), Some(22));
+        // Chosen again: listed once, where it was.
+        w.props.add_own(me);
+        assert_eq!((w.props.wallpaper_names.len(), w.props.selected(Which::Wallpaper)), (23, Some(21)));
+        // 2000 the same (PROVISIONAL); 95 by name among its own (PROVISIONAL).
+        let mut w = window(Era::Win2000, Choice::plain());
+        w.props.add_own("D:\\Old\\Aardvark.BMP");
+        assert_eq!(w.props.wallpaper_names.last().map(String::as_str), Some("Aardvark"));
+        let mut w = window(Era::Win95, Choice::plain());
+        w.props.add_own(me);
+        let at = w.props.wallpaper_names.iter().position(|n| n == "Garden.2024").unwrap();
+        assert_eq!((w.props.wallpaper_names[at - 1].as_str(), w.props.wallpaper_names[at + 1].as_str()), ("Circles", "Houndstooth"));
         // A window opening on the look's own picture lists it, selected, nothing to apply.
         let w = window(Era::Win95, Choice { wallpaper: Some(me.into()), show: Show::Tile, pattern: None });
         assert_eq!(w.props.shown.wallpaper.as_deref(), Some(me));
@@ -1495,8 +1546,10 @@ mod tests {
         let p = std::sync::Arc::new(display::Picture { width: 2, height: 2, pixels: vec![0xFF00_0000; 4] });
         w.props.set_read(display::PictureId::Own("C:\\other.png".into()), Some(p.clone()));
         assert!(w.props.read_now().is_none());
-        w.props.set_read(display::PictureId::Own(me.into()), Some(p));
+        w.props.set_read(display::PictureId::Own(me.into()), Some(p.clone()));
         assert!(w.props.read_now().is_some() && w.props.has_read(&display::PictureId::Own(me.into())));
+        // Only its small copies are kept, not the picture (a photo may be large).
+        assert_eq!(std::sync::Arc::strong_count(&p), 1);
     }
 
     #[test]

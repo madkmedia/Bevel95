@@ -157,13 +157,36 @@ pub fn close() {
         return;
     }
     unsafe extern "system" fn each(hwnd: HWND, _: LPARAM) -> windows_sys::core::BOOL {
-        // SAFETY: a window of the file window's thread; nothing waits for the message.
-        unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+        if is_our_file_window(hwnd) {
+            // SAFETY: the file window of this process's own thread; nothing waits for the message.
+            unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+        }
         1
     }
-    // SAFETY: the callback only posts messages.
+    // SAFETY: the callback only reads about each window and posts to the file window.
     unsafe { EnumThreadWindows(thread, Some(each), 0) };
     log("Browse: its window was asked to close (Display Properties closed)");
+}
+
+/// The window class of a dialog, which the file window is.
+const DIALOG_CLASS: &str = "#32770";
+
+/// Whether `hwnd` is the file window itself: a window of this process (Windows is asked for the
+/// window's process: a thread's id can be given again to a thread of another process once the
+/// browse thread has ended) whose class is a dialog's. Never the hidden owner (its class is
+/// "Static"), never an input method's window, never a window of another process.
+fn is_our_file_window(hwnd: HWND) -> bool {
+    let mut process = 0u32;
+    // SAFETY: plain queries about a window; `process` and `class` are locals of the sizes given.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, &mut process);
+        if process != windows_sys::Win32::System::Threading::GetCurrentProcessId() {
+            return false;
+        }
+        let mut class = [0u16; 16];
+        let n = windows_sys::Win32::UI::WindowsAndMessaging::GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+        n > 0 && String::from_utf16_lossy(&class[..n as usize]) == DIALOG_CLASS
+    }
 }
 
 #[cfg(test)]
@@ -178,6 +201,31 @@ mod tests {
             assert!(filter.ends_with("\0\0") && filter.contains("*.bmp;*.dib;*.jpg;*.jpeg;*.png;*.gif"));
         }
         assert!(title_and_filter(Era::Win2000).1.contains("All Picture Files"));
+    }
+
+    /// The close goes only to the file window itself: a dialog of this process; never the hidden
+    /// owner, never another process's window (the review of 2026-11-21, 3 and 4).
+    #[test]
+    fn only_our_own_dialog_is_asked_to_close() {
+        let make = |class: &str| {
+            let class = wide(class);
+            // SAFETY: test-only hidden windows of system classes, destroyed below.
+            unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, class.as_ptr(), null(), WS_POPUP, 0, 0, 0, 0, null_mut(), null_mut(), null_mut(), null()) }
+        };
+        let (dialog, owner) = (make(DIALOG_CLASS), make("Static"));
+        assert!(!dialog.is_null() && !owner.is_null());
+        assert!(is_our_file_window(dialog), "our own dialog");
+        assert!(!is_our_file_window(owner), "the hidden owner");
+        // Windows' own desktop window belongs to another process.
+        // SAFETY: plain queries.
+        let desktop = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetDesktopWindow() };
+        assert!(!is_our_file_window(desktop), "another process's window");
+        assert!(!is_our_file_window(null_mut()), "no window");
+        // SAFETY: the windows made above, on this thread.
+        unsafe {
+            DestroyWindow(dialog);
+            DestroyWindow(owner);
+        }
     }
 
     /// An answer is taken only for the opening wanted, once; a closed opening's answer is dropped.

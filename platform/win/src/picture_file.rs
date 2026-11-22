@@ -67,7 +67,10 @@ pub fn read_file(path: &Path) -> Result<Picture, Refused> {
     if bytes.len() as u64 > display::MAX_FILE_BYTES {
         return Err(Refused::TooLarge);
     }
-    read_bytes(&bytes)
+    // The file's bytes go as soon as the stream has its own copy of them.
+    let stream = Stream::of(&bytes)?;
+    drop(bytes);
+    stream.decode()
 }
 
 /// The kinds of file taken, told by their first bytes (never by the file's name).
@@ -94,73 +97,200 @@ fn kind(bytes: &[u8]) -> Option<Kind> {
 }
 
 /// Whether the file has its end: GDI+ decodes a picture cut short as far as it goes and fills the
-/// rest, without saying so. A PNG ends with its IEND part, a GIF with its last byte 0x3B, a JPEG
-/// has its end mark (FF D9) after the start of its last scan, a BMP holds all the rows its header
-/// promises.
+/// rest, without saying so. Each kind is walked part by part to where the picture ends, so that
+/// bytes after that end are no harm (a phone writes a short film after a photo's end; tools leave
+/// padding): a PNG to its IEND part, a GIF to its last block (0x3B), a JPEG through its last scan
+/// to its end mark (FF D9; a small picture of the camera's own inside its header is skipped with
+/// the header), a BMP holds all the rows its header promises. A file that runs out before its end
+/// is not whole.
 fn whole(kind: Kind, b: &[u8]) -> bool {
-    let u32_at = |i: usize| b.get(i..i + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
     match kind {
-        Kind::Png => b.len() >= 12 && &b[b.len() - 8..b.len() - 4] == b"IEND",
-        Kind::Gif => b.last() == Some(&0x3B),
-        Kind::Jpeg => {
-            let last_scan = b.windows(2).rposition(|w| w == [0xFF, 0xDA]);
-            last_scan.is_some_and(|s| b[s..].windows(2).any(|w| w == [0xFF, 0xD9]))
+        Kind::Png => png_whole(b),
+        Kind::Gif => gif_whole(b),
+        Kind::Jpeg => jpeg_whole(b),
+        Kind::Bmp => bmp_whole(b),
+    }
+}
+
+/// A PNG's parts (length, kind, data, check) from after its 8 first bytes to the end of IEND.
+fn png_whole(b: &[u8]) -> bool {
+    let mut at = 8usize;
+    loop {
+        let Some(len) = b.get(at..at + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]])) else { return false };
+        let Some(kind) = b.get(at + 4..at + 8) else { return false };
+        // The part's data and its four check bytes.
+        let Some(end) = (at + 12).checked_add(len as usize) else { return false };
+        if end > b.len() {
+            return false;
         }
-        Kind::Bmp => {
-            let (Some(off), Some(header)) = (u32_at(10), u32_at(14)) else { return false };
-            if header < 40 {
-                // The old OS/2 header: its rows are not counted here; GDI+ decides.
-                return true;
+        if kind == b"IEND" {
+            return true;
+        }
+        at = end;
+    }
+}
+
+/// A GIF's blocks after its screen descriptor (and its colors) to its last block, 0x3B.
+fn gif_whole(b: &[u8]) -> bool {
+    /// Skips data sub-blocks (a size byte, that many bytes, ...) to the one of size 0.
+    fn sub_blocks(b: &[u8], mut at: usize) -> Option<usize> {
+        loop {
+            let n = usize::from(*b.get(at)?);
+            at += 1;
+            if n == 0 {
+                return Some(at);
             }
-            let (Some(w), Some(h), Some(compression), Some(size)) = (u32_at(18), u32_at(22), u32_at(30), u32_at(34)) else {
-                return false;
-            };
-            let bits = b.get(28..30).map_or(0, |s| u64::from(u16::from_le_bytes([s[0], s[1]])));
-            let (w, h) = (u64::from((w as i32).max(0) as u32), u64::from((h as i32).unsigned_abs()));
-            let need = match compression {
-                // Plain rows (and bit fields): each row padded to four bytes.
-                0 | 3 => (w * bits).div_ceil(32) * 4 * h,
-                _ => u64::from(size),
-            };
-            u64::from(off) + need <= b.len() as u64
+            at += n;
         }
     }
+    let colors = |packed: u8| if packed & 0x80 != 0 { 3usize << ((packed & 7) + 1) } else { 0 };
+    let Some(&packed) = b.get(10) else { return false };
+    let mut at = 13 + colors(packed);
+    loop {
+        match b.get(at) {
+            Some(0x3B) => return true,
+            // An extension: its label, then its sub-blocks.
+            Some(0x21) => match sub_blocks(b, at + 2) {
+                Some(next) => at = next,
+                None => return false,
+            },
+            // A picture: its descriptor (9 bytes), its own colors, the code size, its sub-blocks.
+            Some(0x2C) => {
+                let Some(&packed) = b.get(at + 9) else { return false };
+                match sub_blocks(b, at + 10 + colors(packed) + 1) {
+                    Some(next) => at = next,
+                    None => return false,
+                }
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// A JPEG's parts from after its start mark: each part with a length is skipped whole (the APP1
+/// part a camera writes, with its own small picture inside, among them); after a scan's header the
+/// coded data runs to the next mark (FF followed by neither 00 nor a restart mark D0..D7). The end
+/// mark FF D9 reached that way is the picture's end. A file that runs out first is not whole.
+fn jpeg_whole(b: &[u8]) -> bool {
+    let mut at = 2usize;
+    let mut scanned = false;
+    loop {
+        // A mark: FF (any number of them, as fill), then its kind.
+        if b.get(at) != Some(&0xFF) {
+            return false;
+        }
+        while b.get(at) == Some(&0xFF) {
+            at += 1;
+        }
+        let Some(&mark) = b.get(at) else { return false };
+        at += 1;
+        match mark {
+            0xD9 => return scanned,
+            // Marks without a length.
+            0x01 | 0xD0..=0xD7 => continue,
+            _ => {}
+        }
+        let Some(len) = b.get(at..at + 2).map(|s| usize::from(u16::from_be_bytes([s[0], s[1]]))) else { return false };
+        if len < 2 || at + len > b.len() {
+            return false;
+        }
+        at += len;
+        if mark == 0xDA {
+            // The coded data, to the next mark.
+            scanned = true;
+            loop {
+                let Some(p) = b.get(at..).and_then(|rest| rest.iter().position(|&c| c == 0xFF)) else { return false };
+                at += p;
+                match b.get(at + 1) {
+                    None => return false,
+                    Some(0x00 | 0xD0..=0xD7) => at += 2,
+                    Some(_) => break,
+                }
+            }
+        }
+    }
+}
+
+/// A BMP holds the rows its header promises (sums checked: a header that says more than any file
+/// can hold is not whole).
+fn bmp_whole(b: &[u8]) -> bool {
+    let u32_at = |i: usize| b.get(i..i + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+    let (Some(off), Some(header)) = (u32_at(10), u32_at(14)) else { return false };
+    if header < 40 {
+        // The old OS/2 header: its rows are not counted here; GDI+ decides.
+        return true;
+    }
+    let (Some(w), Some(h), Some(compression), Some(size)) = (u32_at(18), u32_at(22), u32_at(30), u32_at(34)) else {
+        return false;
+    };
+    let bits = b.get(28..30).map_or(0, |s| u64::from(u16::from_le_bytes([s[0], s[1]])));
+    let (w, h) = (u64::from((w as i32).max(0) as u32), u64::from((h as i32).unsigned_abs()));
+    let need = match compression {
+        // Plain rows (and bit fields): each row padded to four bytes.
+        0 | 3 => w.checked_mul(bits).map(|v| v.div_ceil(32)).and_then(|v| v.checked_mul(4)).and_then(|v| v.checked_mul(h)),
+        _ => Some(u64::from(size)),
+    };
+    need.and_then(|n| u64::from(off).checked_add(n)).is_some_and(|end| end <= b.len() as u64)
 }
 
 /// Decodes a picture file's bytes (its first picture), upright: a BMP or DIB, JPEG, PNG or GIF,
 /// told by its first bytes; anything else (another kind GDI+ would read, a metafile) is refused.
 pub fn read_bytes(bytes: &[u8]) -> Result<Picture, Refused> {
-    if bytes.len() as u64 > display::MAX_FILE_BYTES {
-        return Err(Refused::TooLarge);
-    }
-    let Some(kind) = kind(bytes) else { return Err(Refused::Unreadable) };
-    if !whole(kind, bytes) || !gdiplus() {
-        return Err(Refused::Unreadable);
-    }
-    // SAFETY: the stream copies the bytes; it is released below in every case.
-    let stream = unsafe { SHCreateMemStream(bytes.as_ptr(), bytes.len() as u32) };
-    if stream.is_null() {
-        return Err(Refused::Unreadable);
-    }
-    let mut bitmap: *mut GpBitmap = null_mut();
-    // SAFETY: a live stream; GDI+ keeps its own reference while the bitmap lives.
-    let made = unsafe { GdipCreateBitmapFromStream(stream, &mut bitmap) } == GDIP_OK && !bitmap.is_null();
-    let result = if made { decode(bitmap) } else { Err(Refused::Unreadable) };
-    if !bitmap.is_null() {
-        // SAFETY: the bitmap made above, disposed once.
-        unsafe { GdipDisposeImage(bitmap as *mut GpImage) };
-    }
-    // SAFETY: our reference to the stream (IUnknown::Release, the third entry of its table).
-    unsafe {
-        let table = *(stream as *const *const usize);
-        let release: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 = std::mem::transmute(*table.add(2));
-        release(stream);
-    }
-    result
+    Stream::of(bytes)?.decode()
 }
 
-/// The bitmap's pixels as 0xAARRGGBB, its size checked first, upright.
-fn decode(bitmap: *mut GpBitmap) -> Result<Picture, Refused> {
+/// A picture file's bytes in a stream of GDI+'s (`SHCreateMemStream`, which keeps its own copy of
+/// them), checked first: a kind taken, the file whole. Released when dropped.
+struct Stream(*mut core::ffi::c_void);
+
+impl Stream {
+    fn of(bytes: &[u8]) -> Result<Stream, Refused> {
+        if bytes.len() as u64 > display::MAX_FILE_BYTES {
+            return Err(Refused::TooLarge);
+        }
+        let Some(kind) = kind(bytes) else { return Err(Refused::Unreadable) };
+        if !whole(kind, bytes) || !gdiplus() {
+            return Err(Refused::Unreadable);
+        }
+        // SAFETY: the stream copies the bytes; it is released when dropped.
+        let stream = unsafe { SHCreateMemStream(bytes.as_ptr(), bytes.len() as u32) };
+        if stream.is_null() {
+            return Err(Refused::Unreadable);
+        }
+        Ok(Stream(stream))
+    }
+
+    /// Decodes the picture (its first), upright. GDI+'s bitmap and the stream go before the
+    /// picture is turned, so that a turned photo is never held three times over.
+    fn decode(self) -> Result<Picture, Refused> {
+        let mut bitmap: *mut GpBitmap = null_mut();
+        // SAFETY: a live stream; GDI+ keeps its own reference while the bitmap lives.
+        let made = unsafe { GdipCreateBitmapFromStream(self.0 as _, &mut bitmap) } == GDIP_OK && !bitmap.is_null();
+        let result = if made { decode(bitmap) } else { Err(Refused::Unreadable) };
+        if !bitmap.is_null() {
+            // SAFETY: the bitmap made above, disposed once.
+            unsafe { GdipDisposeImage(bitmap as *mut GpImage) };
+        }
+        drop(self);
+        result.map(|(picture, orientation)| picture.upright(orientation))
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        // SAFETY: our reference to the stream (IUnknown::Release, the third entry of its table),
+        // released once.
+        unsafe {
+            let table = *(self.0 as *const *const usize);
+            let release: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32 = std::mem::transmute(*table.add(2));
+            release(self.0);
+        }
+    }
+}
+
+/// The bitmap's pixels as 0xAARRGGBB, its size checked first, with the orientation a camera wrote
+/// (the caller turns it upright once GDI+'s bitmap is gone).
+fn decode(bitmap: *mut GpBitmap) -> Result<(Picture, u16), Refused> {
     let image = bitmap as *mut GpImage;
     let (mut w, mut h) = (0u32, 0u32);
     // SAFETY: a live bitmap; plain queries into locals.
@@ -173,6 +303,7 @@ fn decode(bitmap: *mut GpBitmap) -> Result<Picture, Refused> {
         return Err(if w == 0 || h == 0 { Refused::Unreadable } else { Refused::TooLarge });
     }
     let (w, h) = (w as i32, h as i32);
+    let orientation = orientation(image);
     let mut pixels = vec![0u32; (w as usize) * (h as usize)];
     let rect = GpRect { X: 0, Y: 0, Width: w, Height: h };
     // GDI+ writes straight into `pixels` (ImageLockModeUserInputBuf: 4), rows of w * 4 bytes.
@@ -187,7 +318,7 @@ fn decode(bitmap: *mut GpBitmap) -> Result<Picture, Refused> {
     if unsafe { GdipBitmapUnlockBits(bitmap, &mut data) } != GDIP_OK {
         return Err(Refused::Unreadable);
     }
-    Ok(Picture { width: w, height: h, pixels }.upright(orientation(image)))
+    Ok((Picture { width: w, height: h, pixels }, orientation))
 }
 
 /// The orientation a camera wrote into the picture (EXIF 0x0112), 1 when there is none.
@@ -321,7 +452,7 @@ pub(crate) mod tests {
         out
     }
 
-    fn scratch(name: &str) -> std::path::PathBuf {
+    pub(crate) fn scratch(name: &str) -> std::path::PathBuf {
         let dir = crate::log::data_dir().join("picture-tests");
         assert!(!dir.to_string_lossy().contains("AppData\\Local\\Bevel95\\"), "a scratch data folder");
         std::fs::create_dir_all(&dir).unwrap();
@@ -426,6 +557,79 @@ pub(crate) mod tests {
         let path = scratch("other.tif");
         save(&path, w, h, &pixels, "image/tiff");
         assert_eq!(read_file(&path), Err(Refused::Unreadable));
+    }
+
+    /// Bytes after a picture's end are no harm (a phone's short film after a photo, a tool's
+    /// padding); a JPEG with a small picture of the camera's own inside its header is read whole;
+    /// a file cut short is still refused (the review of 2026-11-21, 8).
+    #[test]
+    fn bytes_after_the_end_are_taken_and_a_cut_file_is_not() {
+        let (w, h) = (64, 48);
+        let pixels = test_pixels(w, h);
+        // What a phone puts after a photo: something like a film, with marks of a JPEG's in it.
+        let film: Vec<u8> = (0..4000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).chain([0xFF, 0xDA, 0x00, 0x08, 0xFF, 0xD8, 0x3B]).collect();
+        for (mime, name) in [("image/png", "after.png"), ("image/jpeg", "after.jpg"), ("image/gif", "after.gif")] {
+            let path = scratch(name);
+            save(&path, w, h, &pixels, mime);
+            let whole = std::fs::read(&path).unwrap();
+            let plain = read_bytes(&whole).unwrap();
+            for tail in [&b"\0\0\0\0"[..], &film] {
+                let mut longer = whole.clone();
+                longer.extend_from_slice(tail);
+                assert_eq!(read_bytes(&longer).as_ref(), Ok(&plain), "{name} with {} bytes after its end", tail.len());
+            }
+            // Cut anywhere before its end: refused.
+            for keep in [whole.len() - 1, whole.len() - 3, whole.len() * 3 / 4, whole.len() / 2] {
+                assert_eq!(read_bytes(&whole[..keep]), Err(Refused::Unreadable), "{name} cut to {keep} of {}", whole.len());
+            }
+        }
+        // A camera's photo: its header (APP1) holds a small JPEG of its own, start to end mark.
+        let path = scratch("thumb.jpg");
+        save(&path, w, h, &pixels, "image/jpeg");
+        let photo = std::fs::read(&path).unwrap();
+        save(&path, 16, 12, &test_pixels(16, 12), "image/jpeg");
+        let small = std::fs::read(&path).unwrap();
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&small);
+        let mut camera = photo[..2].to_vec();
+        camera.extend_from_slice(&[0xFF, 0xE1]);
+        camera.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        camera.extend_from_slice(&app1);
+        camera.extend_from_slice(&photo[2..]);
+        let p = read_bytes(&camera).unwrap();
+        assert_eq!((p.width, p.height), (w, h), "the photo, not its small picture");
+        assert_eq!(p, read_bytes(&photo).unwrap());
+        // Cut after the small picture's end, inside the photo's own scan: refused.
+        let cut = 2 + 4 + app1.len() + (photo.len() - 2) * 3 / 4;
+        assert_eq!(read_bytes(&camera[..cut]), Err(Refused::Unreadable));
+        // A JPEG without its end mark (written so by some tools) is still refused.
+        assert_eq!(read_bytes(&photo[..photo.len() - 2]), Err(Refused::Unreadable));
+        // A BMP with bytes after its rows.
+        let mut b = bmp(w, h, &pixels);
+        b.extend_from_slice(&film);
+        assert_eq!(read_bytes(&b).unwrap().pixels, pixels);
+    }
+
+    /// A BMP header whose sums run over (the review of 2026-11-21, 7): width and height near 2^31
+    /// and 0xFFFF bits a pixel, an offset near 2^32: not whole, and no panic.
+    #[test]
+    fn a_bmp_header_that_runs_over_is_not_whole() {
+        let mut b = bmp(2, 2, &[0xFF00_0000; 4]);
+        b[18..22].copy_from_slice(&0x7FFF_FFFFi32.to_le_bytes());
+        b[22..26].copy_from_slice(&i32::MIN.to_le_bytes());
+        b[28..30].copy_from_slice(&0xFFFFu16.to_le_bytes());
+        assert!(!whole(Kind::Bmp, &b));
+        assert_eq!(read_bytes(&b), Err(Refused::Unreadable));
+        // Sums that fit, but an offset near 2^32 with rows after it.
+        let mut b = bmp(2, 2, &[0xFF00_0000; 4]);
+        b[10..14].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+        assert!(!whole(Kind::Bmp, &b));
+        // Compressed, its size near 2^32 and the offset too.
+        let mut b = bmp(2, 2, &[0xFF00_0000; 4]);
+        b[10..14].copy_from_slice(&u32::MAX.to_le_bytes());
+        b[30..34].copy_from_slice(&1u32.to_le_bytes());
+        b[34..38].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(!whole(Kind::Bmp, &b));
     }
 
     #[test]

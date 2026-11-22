@@ -1,7 +1,9 @@
 //! Which files and folders a listing shows: Windows' own two switches decide (File Explorer's
 //! "Hidden items", and Folder Options' "Hide protected operating system files"), until Bevel95
-//! has each look's own Folder Options page (GitHub issue 4). Everything that lists a folder goes
-//! through `shown`: the folder windows, the tree of folders, the classic desktop's items.
+//! has each look's own Folder Options page (GitHub issue 4). The folder windows, the tree of
+//! folders and the classic desktop's items go through `shown`. The Start menu and Quick Launch
+//! keep their own rule: they leave out every hidden or system item whatever the switches say, as
+//! Windows' own Start menu did (`start_menu.rs`, `quick_launch.rs`).
 
 /// A file's attributes as Windows keeps them (FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM).
 pub const HIDDEN: u32 = 0x2;

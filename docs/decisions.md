@@ -5894,13 +5894,19 @@ Display Properties' Background page chooses them.
     before anything is decoded and GDI+ never holds the file open. The kind is told by the file's
     first bytes (BMP/DIB, JPEG, PNG, GIF); anything else GDI+ would read (TIFF, icons, metafiles) is
     refused. **A file cut short**: GDI+ decodes it as far as it goes, fills the rest and says
-    nothing (found by the test), so the reader first checks that the file has its end (a PNG's
-    IEND, a GIF's last byte 0x3B, a JPEG's end mark after its last scan, a BMP's rows as its header
-    promises). **Upright**: the orientation a camera writes (EXIF 0x0112, numbers 1 to 8) turns the
+    nothing (found by the test), so the reader first checks that the file has its end, walking it
+    part by part (since brief 76; before, it looked only at the file's last bytes and refused sound
+    files with bytes after their end): a PNG to its IEND part, a GIF through its blocks to 0x3B, a
+    JPEG through its parts (a camera's small picture inside its header skipped with the header) and
+    its last scan to its end mark FF D9, a BMP's rows as its header promises (sums checked: a
+    header that runs over is not whole). Bytes after the end are no harm (a phone writes a short
+    film after a photo's end); a JPEG without its end mark and a file really cut short are still
+    refused. **Upright**: the orientation a camera writes (EXIF 0x0112, numbers 1 to 8) turns the
     picture (`display::Picture::upright`, a table test of all eight). **The limits**: a side of at
     most 16,384 pixels and at most 50 million pixels (a 50-megapixel camera's photo; 200 MB while
-    decoded, held while it is the choice, so that a change of size or screens can draw it again
-    without reading the file), a file of at most 256 MB; beyond them the picture is refused like one
+    decoded; a picture of more than 4,194,304 pixels is let go once the desktop's picture is made
+    from it, see "Repairs after the review of the own pictures" below), a file of at most 256 MB;
+    beyond them the picture is refused like one
     that cannot be read (before decoding: GDI+ gives the size first). A partly see-through pixel (a
     PNG's or GIF's edge) is mixed with the ground under it; Windows' own pictures have none.
   - **Never on the bar's, the desktop's or a window's thread** (`platform/win/src/pictures.rs`):
@@ -5913,7 +5919,8 @@ Display Properties' Background page chooses them.
     answer for a picture no longer wanted finds no slot and is dropped, decided by what it is, not
     by order (`pictures::tests::a_late_answer_is_dropped`). Until a picture has come the desktop
     shows its color or pattern (with Tile or Stretch the color), the monitor the same. A picture
-    that cannot be read is kept as "cannot be shown" while it is wanted (not read again and again).
+    that cannot be read is kept as "cannot be shown" while it is wanted (not read again and again),
+    until the person asks for it anew (brief 76: Browse..., Display Properties opening, Apply, OK).
     Display Properties asks for its monitor's picture after each input that changed the page (the
     kit's new `Hosted::input_changed`, called with the window borrowed; it only starts a reading).
   - **The log**: Windows' own pictures by name ("Windows 2000's Chateau read (800x600) in 9 ms"); a
@@ -5960,16 +5967,23 @@ Display Properties' Background page chooses them.
     is enabled again when the answer comes by `Bevel95.Bar.Browsed` (the bar's own) with a ticket;
     an answer of an earlier opening or after Display Properties closed is dropped. A change of
     look, colors or size, or Display Properties closing, asks the file window to go (WM_CLOSE:
-    Cancel); when the bar ends, the thread ends with the process. A clicked Display Properties
+    Cancel), sent only to the file window itself: a window of this process (Windows is asked for
+    the window's process) whose class is a dialog's (`#32770`), never the hidden owner, an input
+    method's window or another process's window (brief 76); when the bar ends, the thread ends
+    with the process. A clicked Display Properties
     does not bring the file window forward (its owner is the hidden window). A chosen name that is
     not valid text (a lone UTF-16 half) is refused as "cannot be shown", never kept lossily.
   - **The chosen picture** is read on its own thread first; once it can be shown it comes into the
-    list by its name without the ending (`display::own_name`, cut at characters), where Windows'
-    order puts it (by name without case; of two of the same name the look's own first), selected,
-    and the monitor shows it by the BMPs' rule. It stays in the list while it is the look's choice
-    or was chosen in this opening of the window (PROVISIONAL: not measured how long the old Windows
-    listed it; the survey saw 98 add a browsed picture at the end of its list, unsorted; the brief
-    chose Windows' order). Its small picture in 98's and 2000's list: a BMP or DIB the bitmap's, any
+    list by its name without the ending (`display::own_name`, cut at characters), selected, and the
+    monitor shows it by the BMPs' rule. **Where it stands** (brief 76; brief 73 had chosen name
+    order, which was wrong for 98): in 98 at the end of the list, after Windows' own entries, in
+    the order chosen, as the Reference PC showed (`win98-truecolor-display-bg-browsed-jpg1024-center`:
+    "Windows 98 wallpaper" after "Windows98"); in 2000 the same (PROVISIONAL: no capture of 2000
+    shows a browsed picture; its "Sample" from My Pictures stood in name order, but it came from a
+    folder Windows read, not from Browse...); in 95 where its sorted list puts it, by name without
+    case (PROVISIONAL: no capture of 95 shows one). It stays in the list while it is the look's
+    choice or was chosen in this opening of the window (PROVISIONAL: not measured how long the old
+    Windows listed it). Its small picture in 98's and 2000's list: a BMP or DIB the bitmap's, any
     other kind the picture file's (PNG and GIF: the JPEG's, PROVISIONAL).
   - **Drawn** by the rules that are built: tiled, centered (cut equally when larger), and in 98 and
     2000 stretched by Windows' own stepping, in the look's 1x pixels; 16 and 256 Colors by the
@@ -5978,13 +5992,15 @@ Display Properties' Background page chooses them.
     copied into the data folder: the old Windows kept the path too). A path is told from one of
     Windows' names by its form (`display::is_own`): it starts with a drive letter, colon and
     backslash, or with two backslashes (a network path); Windows' names never hold a backslash or a
-    colon. The value is everything after the first `=`, trimmed (a file's name cannot end with a
-    space in Windows); letters of any alphabet, `#`, `=`, spaces and several dots come back whole
+    colon. The value is everything after the first `=`, with plain spaces and tabs taken off its
+    ends and nothing else (a file's name cannot end with a plain space in Windows, but it can end
+    with another alphabet's, U+00A0 or U+3000: brief 76); letters of any alphabet, `#`, `=`, spaces and several dots come back whole
     (tested; text is never cut by byte counts). At the bar's start the picture is read on its own
     thread; the desktop shows its color or pattern until it is there. A picture that cannot be read
     at the start (the file gone, the drive not there) leaves the look plain **and its line as it
-    is**: it is tried again at the next start, and Display Properties lists it as the choice
-    (PROVISIONAL). The log says "the person's own picture", never its name or path
+    is**: it is tried again at the next start, and when Display Properties opens, at its Apply and
+    OK, and when it is chosen again with Browse... (brief 76); Display Properties lists it as the
+    choice (PROVISIONAL). The log says "the person's own picture", never its name or path
     (`Choice::wallpaper_said`).
   - **A picture that cannot be shown** when chosen: the look's message window (`confirm_window::
     message`), title "Display Properties", "This file cannot be shown as wallpaper. It may be
@@ -6006,6 +6022,47 @@ Display Properties' Background page chooses them.
     after the first rounds (GDI+ starting once in the process), and in a second 20 rounds no growth
     (GDI 46, USER 35, handles 578 to 580). Browse... was not tried live (the owner's checklist: no
     file window is operated on the owner's PC).
+- **Repairs after the review of the own pictures** (the read-only review of 2026-11-21, brief 76):
+  - **Read afresh when the person asks again**: each reading has a number (`pictures::State`:
+    Reading, Ready, LetGo, Failed). A file chosen with Browse... is always read anew (a file that
+    changed on the disk shows its new picture; one on a drive that was not there before can be
+    read now); the look's own picture is read anew if it failed before when Display Properties
+    opens and at Apply and OK (`pictures::again`, `Anew`). Only wanting it (the bar's every look
+    at the desktop) never reads it again. An earlier reading that comes back after a newer one
+    began is dropped and logged as such, never as "no longer wanted".
+  - **The desktop's picture is wanted only while the classic desktop shows** (the test
+    `bar::sync_desktop` makes, `bar::classic_desktop_shows`). With the desktop off or the bar
+    switched to Windows' taskbar, Display Properties reads only what its monitor needs and lets it
+    go when it closes; the desktop going away lets its picture go.
+  - **What is kept in memory**: a picture of more than 4,194,304 pixels (16 MB decoded:
+    `pictures::KEEP_PIXELS`; every picture of Windows' and a picture of a screen's size up to
+    2560 x 1600 stay below it, so going through the list or changing the size reads them no
+    more than before) is let go once what is made from it is made: the desktop, handed it, makes
+    its own picture and lets it go; the slot keeps only the reading's number (`LetGo`), by which
+    the desktop knows it has drawn it. When the desktop must draw it again (a new size, look,
+    colors or screens) it asks the bar (`Bevel95.Bar.PictureAgain`, the bar's own, wParam the
+    reading) and shows its color or pattern until the picture has come again, as at the start.
+    Display Properties keeps no picture at all: when one comes, the monitor's small copy is made
+    for each way of showing (`display::monitor_layer`: only the 152 x 112 pixels that show, so a
+    large photo gives no large copy; equal pixel for pixel to the old drawing, tested) and the
+    picture goes; one of the look's BMPs gets its small copy once per wallpaper and way, not at
+    every paint. While the page shows a large picture its slot keeps it (Apply or OK would need
+    it); it goes when the window closes. Opening the window, or choosing such a picture again in
+    its list, reads a let-go picture again. At the reading the file's bytes go once GDI+'s stream
+    has its copy, and GDI+'s bitmap and the stream go before a turned photo is turned.
+    Measured (`pictures::tests::memory_of_a_big_photo`, release build, a 4000 x 3000 JPEG of the
+    test's own making, 3.3 MB; the desktop's picture 1280 x 720): held once the desktop shows it
+    52.3 MB before, 4.2 MB after; the peak while it is read 106.8 MB before and 103.6 MB after,
+    for the same photo written turned (orientation 6) 154.9 MB before and 103.6 MB after. The rest
+    of the peak is GDI+'s own decoded copy beside Bevel95's while the pixels are taken.
+  - The BMP's size check adds and multiplies with checked sums (an overrun means "not whole"); a
+    path's value in background.txt loses only plain spaces and tabs at its ends; hidden.rs names
+    the Start menu and Quick Launch as keeping their own rule for hidden items.
+  - Golden pictures: 98's and 2000's `display-own-picture` (the browsed picture at the end of the
+    list, the list scrolled to it); nothing else.
+  - Known and left (private todo): a second Browse... does nothing while an earlier file window is
+    held up after its Display Properties closed; the classic desktop shows a changed "Hidden items"
+    switch only at its next listing.
 - **The screen's full sharpness (job 4): not built.** The owner: "with setting for full res
   maybe". What stands in the way: the desktop paints its icons, names, selection, the dotted
   selection rectangle (inverted over what lies under it), cut and hidden fading and the drag

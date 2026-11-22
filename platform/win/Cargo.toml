@@ -18,6 +18,8 @@ bevel-core = { path = "../../core" }
 # The tests never write the real data folder (decisions.md, "Milestone 1 decisions"): in a test
 # build the log and every state file go to a scratch folder.
 bevel-winkit = { path = "../winkit", features = ["test-scratch"] }
+# The process's memory, read by a test that measures what a large wallpaper costs (tests only).
+windows-sys = { version = "=0.61.2", features = ["Win32_System_ProcessStatus"] }
 
 [dependencies]
 bevel-core = { path = "../../core" }

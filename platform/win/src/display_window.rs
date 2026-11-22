@@ -10,11 +10,11 @@
 //! effect at once: the classic desktop draws it (`bar::sync_desktop`).
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use bevel_core::display::form::{DisplayProperties, DisplayWindow, Part};
 use bevel_core::display::pattern::{self, PatternWindow};
-use bevel_core::display::{self, Choice, Picture, PictureId};
+use bevel_core::display::{self, Choice, PictureId};
 
 use crate::{picture_file, pictures, wallpaper_browse};
 use bevel_core::theme::Era;
@@ -85,6 +85,10 @@ fn put_in_effect(era: Era, choice: Choice) {
     }
     // A live test's choice never hides what the person chose.
     drop_test();
+    // The picture chosen is read anew if it could not be read before (the drive is there now).
+    if let Some(id) = choice.to_read(era) {
+        pictures::again(&id, pictures::Anew::IfFailed);
+    }
     let path = file();
     if let Err(e) = state_file::change(&path, "", |text| display::with_choice(text, era, &choice))
         && !state_file::is_read_only(&e)
@@ -104,21 +108,58 @@ fn put_in_effect(era: Era, choice: Choice) {
     bar::sync_desktop();
 }
 
-/// Every picture to read that is wanted now: the desktop's (the look's choice in effect, or a live
-/// test's), Display Properties' monitor's, and `extra` (asked for by a window that is busy).
-fn wanted(extra: Option<PictureId>) -> Vec<PictureId> {
-    let mut ids = Vec::new();
-    if let Some(era) = with_app(|app| app.era)
-        && let Some(id) = choice(era).to_read(era)
-    {
-        ids.push(id);
+/// The picture the classic desktop draws, when it shows (the same test as `bar::sync_desktop`:
+/// switched on, and the bar is Bevel95's): the look's choice in effect, or a live test's.
+fn desktop_id() -> Option<PictureId> {
+    if !bar::classic_desktop_shows() {
+        return None;
     }
+    let era = with_app(|app| app.era)?;
+    choice(era).to_read(era)
+}
+
+/// The pictures Display Properties' page needs: its monitor's and a Browse... answer's.
+///
+/// While the window handles a message its state is lifted out of the kit (`kit::with` gives None
+/// then, and says nothing), so its monitor's picture is missing from an ask made from inside its
+/// own message handling: such an ask passes it in as `extra` (as `input_changed` does), or the
+/// monitor's reading would be dropped.
+fn page_ids() -> Vec<PictureId> {
+    let mut ids = Vec::new();
     if let Some(Some(id)) = kit::with::<DisplayHost, _>(|h| h.form.props.to_read()) {
         ids.push(id);
     }
     ids.extend(browsed_id());
+    ids
+}
+
+/// Every picture to read that is wanted now: the desktop's (only while it shows), Display
+/// Properties' page's (`page_ids`), and `extra` (asked for by a window that is busy).
+fn wanted(extra: Option<PictureId>) -> Vec<PictureId> {
+    let mut ids: Vec<PictureId> = desktop_id().into_iter().collect();
+    ids.extend(page_ids());
     ids.extend(extra);
     ids
+}
+
+/// The classic desktop went (switched off, or the bar switched to Windows' taskbar): its picture
+/// is let go, unless Display Properties' page shows it.
+pub fn desktop_gone() {
+    pictures::keep_only(&wanted(None));
+}
+
+/// The desktop has been handed what came (`bar::sync_desktop`), or Display Properties closed: a
+/// large picture is let go, unless the page still shows it (its Apply or OK would need it).
+pub fn settle() {
+    pictures::let_go_large(&page_ids());
+}
+
+/// The desktop must draw its picture again (a new size, look, colors or screens) and the picture
+/// of reading `reading` was let go (`pictures::WM_PICTURE_AGAIN`): read again, once.
+pub fn desktop_needs_again(reading: u64) {
+    if let Some(id) = desktop_id() {
+        pictures::again(&id, pictures::Anew::IfLetGoIn(reading));
+    }
 }
 
 /// Lets go of the pictures no longer wanted and asks for the wanted ones (each read on a thread
@@ -131,12 +172,13 @@ fn ask(extra: Option<PictureId>) {
     }
 }
 
-/// The picture the desktop draws `choice` with in `era`, when it is one to read and has been read;
-/// asked for if not (`bar::sync_desktop`).
-pub fn picture_for(era: Era, choice: &Choice) -> Option<Arc<Picture>> {
+/// The picture the desktop draws `choice` with in `era`, when it is one to read and has been read
+/// (held, or let go once the desktop made its picture: `pictures::Got`); asked for if not
+/// (`bar::sync_desktop`, only while the desktop shows).
+pub fn picture_for(era: Era, choice: &Choice) -> Option<pictures::Got> {
     let id = choice.to_read(era)?;
     ask(None);
-    pictures::ready(&id)
+    pictures::got(&id)
 }
 
 /// The person's own picture chosen with Browse... while it is being read (its file's full path).
@@ -174,13 +216,22 @@ pub fn browsed(ticket: u64) {
         take_focus(hwnd);
     }
     let Some(path) = answer else { return };
+    choose_browsed(path);
+}
+
+/// A file chosen with Browse...: read on its own thread, always anew (it may have changed on the
+/// disk, or have been on a drive that was not there before), then into the list once it can be
+/// shown.
+fn choose_browsed(path: String) {
     if !display::is_own(&path) {
         cannot_be_shown(picture_file::Refused::Unreadable);
         return;
     }
+    let id = PictureId::Own(path.clone());
     if let Ok(mut b) = BROWSED.lock() {
         *b = Some(path);
     }
+    pictures::again(&id, pictures::Anew::Always);
     ask(None);
     take_browsed();
 }
@@ -191,7 +242,7 @@ fn take_browsed() {
     let Some(id) = browsed_id() else { return };
     let PictureId::Own(path) = id.clone() else { return };
     match pictures::state(&id) {
-        pictures::State::Ready(p) => {
+        pictures::State::Ready(_, p) => {
             if let Ok(mut b) = BROWSED.lock() {
                 *b = None;
             }
@@ -266,6 +317,8 @@ impl Hosted for DisplayHost {
             return;
         }
         ask(Some(id.clone()));
+        // The desktop's large picture may have been let go: the monitor needs it again.
+        pictures::again(&id, pictures::Anew::IfLetGo);
         if let Some(p) = pictures::ready(&id) {
             self.form.props.set_read(id, Some(p));
         }
@@ -322,6 +375,11 @@ pub fn open() {
     };
     if kit::open(DisplayHost { form }, place).is_some() {
         log("opened Display Properties");
+        // The look's own picture, for the monitor: read anew if it could not be read before (the
+        // drive is there now) or was let go once the desktop had made its picture (a large one).
+        if let Some(id) = saved(era).to_read(era) {
+            pictures::again(&id, pictures::Anew::IfNotHeld);
+        }
         ask(None);
         feed_window();
     }
@@ -336,8 +394,10 @@ pub fn close() {
     }
     kit::close::<PatternHost>();
     kit::close::<DisplayHost>();
-    // Its monitor's picture is let go (unless the desktop draws it).
+    // Its monitor's picture is let go (unless the desktop draws it; a large one the desktop draws
+    // is let go too, the desktop having made its own picture from it).
     ask(None);
+    settle();
 }
 
 /// The bar's look, colors or size changed: the windows close (they show the old look's lists;
@@ -541,7 +601,7 @@ mod tests {
         let id = c.to_read(Era::Win2000).unwrap();
         pictures::want(&id);
         for _ in 0..500 {
-            if !matches!(pictures::state(&id), pictures::State::Reading) {
+            if !matches!(pictures::state(&id), pictures::State::Reading(_)) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));

@@ -570,3 +570,68 @@ fn how_much_a_wallpaper_costs() {
         }
     }
 }
+/// The monitor's screen as it was painted before its small copies were kept (each paint scaled the
+/// whole picture again): the reference the small copies must equal pixel for pixel.
+fn monitor_as_before(theme: &Theme, choice: &Choice, picture: &Picture) -> Framebuffer {
+    let era = theme.era;
+    let s = MONITOR_SCREEN;
+    let mut screen = Framebuffer::new(s.w, s.h, theme.colors.desktop);
+    fill_ground(&mut screen, theme, choice.pattern_shown(era), (s.x, s.y));
+    let (w, h) = in_monitor(picture.width, picture.height);
+    match choice.show {
+        Show::Stretch if era != Era::Win95 => lay(&mut screen, theme, &stretched(era, picture, s.w, s.h), 0, 0),
+        Show::Tile => {
+            let small = stretched(era, picture, w, h);
+            for ty in (0..s.h).step_by(h as usize) {
+                for tx in (0..s.w).step_by(w as usize) {
+                    lay(&mut screen, theme, &small, tx, ty);
+                }
+            }
+        }
+        _ => {
+            let small = stretched(era, picture, w, h);
+            let (cx, cy) = centered(s.w, s.h, w, h);
+            lay(&mut screen, theme, &small, cx, cy);
+        }
+    }
+    screen
+}
+
+/// The monitor's small copy (made once per picture and way of showing, the review of 2026-11-21,
+/// 12) shows every pixel as the whole picture scaled at every paint did: small and large pictures,
+/// odd sizes, see-through pixels, a pattern around, every look and way.
+#[test]
+fn the_monitors_small_copy_is_the_scaled_picture() {
+    let mut seethrough = where_picture(37, 23);
+    seethrough.pixels[5] = 0;
+    seethrough.pixels[40] = 0x80FF_0000;
+    let pictures = [where_picture(10, 6), where_picture(255, 200), where_picture(1000, 3), where_picture(3, 900), where_picture(2000, 1500), seethrough];
+    for theme in [&WIN95, &WIN98, &WIN2000] {
+        for picture in &pictures {
+            for show in Show::ALL {
+                for pattern in [None, Some(if theme.era == Era::Win2000 { "Weave" } else { "Bricks" })] {
+                    let c = choice(Some("C:\\Pictures\\Me.png"), show, pattern);
+                    let mut now = Framebuffer::new(184, 170, 0);
+                    paint_monitor(&mut now, theme, 0, 0, &c, Some(picture));
+                    let mut inside = Framebuffer::new(MONITOR_SCREEN.w, MONITOR_SCREEN.h, 0);
+                    inside.blit(&now, -MONITOR_SCREEN.x, -MONITOR_SCREEN.y);
+                    let before = monitor_as_before(theme, &c, picture);
+                    assert_eq!(inside.pixels, before.pixels, "{:?} {}x{} {show:?} {pattern:?}", theme.era, picture.width, picture.height);
+                }
+            }
+        }
+    }
+}
+
+/// Only plain spaces and tabs are taken off a value's ends: a path whose file's name ends in
+/// another alphabet's space (U+00A0, U+3000) comes back whole (the review of 2026-11-21, 11).
+#[test]
+fn a_path_ending_in_another_alphabets_space_comes_back_whole() {
+    for path in ["C:\\Pictures\\Evening\u{00A0}", "C:\\写真\\夕方\u{3000}", "\\\\server\\x\\\u{2003}a\u{2003}"] {
+        let text = with_choice("", Era::Win98, &choice(Some(path), Show::Tile, None));
+        assert_eq!(parse(&text)[1].wallpaper.as_deref(), Some(path), "{text:?}");
+        // Plain spaces and tabs around the value still go.
+        let spaced = text.replace(&format!("= {path}"), &format!("=  \t{path} \t "));
+        assert_eq!(parse(&spaced)[1].wallpaper.as_deref(), Some(path), "{spaced:?}");
+    }
+}

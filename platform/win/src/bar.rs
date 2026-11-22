@@ -181,6 +181,7 @@ fn register_messages() {
     }
     // The bar's own, posted by its threads only (never by a live test).
     crate::pictures::WM_PICTURE.id();
+    crate::pictures::WM_PICTURE_AGAIN.id();
     crate::wallpaper_browse::WM_BROWSED.id();
 }
 /// The timer that slides an auto-hiding bar in and out, and its step.
@@ -937,6 +938,12 @@ fn show_ours(bar: HWND) {
     sync_desktop();
 }
 
+/// Whether the classic desktop shows (switched on, and the bar is Bevel95's): `sync_desktop`'s
+/// test.
+pub fn classic_desktop_shows() -> bool {
+    with_app(|app| app.ours && app.desktop).unwrap_or(false)
+}
+
 /// Bevel95's own desktop shows while it is switched on and our bar is showing, in the color of
 /// the look in use; otherwise it is taken away (Windows' own desktop shows).
 pub fn sync_desktop() {
@@ -960,8 +967,14 @@ pub fn sync_desktop() {
     });
     match look {
         Some(look) => desktop::show(look),
-        None => desktop::hide(),
+        None => {
+            desktop::hide();
+            // The desktop's picture is no longer wanted (read again when it shows again).
+            crate::display_window::desktop_gone();
+        }
     }
+    // The desktop has been handed its picture: a large one is let go (`pictures::let_go_large`).
+    crate::display_window::settle();
 }
 
 /// Switches Bevel95's desktop on or off and remembers it in settings.txt.
@@ -3302,6 +3315,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         m if m == crate::pictures::WM_PICTURE.id() => {
             crate::display_window::pictures_came();
+            return 0;
+        }
+        m if m == crate::pictures::WM_PICTURE_AGAIN.id() => {
+            crate::display_window::desktop_needs_again(wparam as u64);
             return 0;
         }
         m if m == crate::wallpaper_browse::WM_BROWSED.id() => {

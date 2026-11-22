@@ -159,8 +159,10 @@ pub struct Look {
     /// The look's wallpaper and pattern (`display_window::choice`).
     pub background: bevel_core::display::Choice,
     /// Its picture once read, when it is one to read (a JPEG, the person's own picture): read on
-    /// a thread of its own, never here.
-    pub picture: Option<std::sync::Arc<bevel_core::display::Picture>>,
+    /// a thread of its own, never here. Known by its reading's number; a large picture is let go
+    /// once the desktop has made its own picture from it (`let_go_large`), and asked for again when
+    /// that must be made anew (`pictures::needed_again`).
+    pub picture: Option<crate::pictures::Got>,
 }
 
 /// The look to use, handed from the bar to the desktop's thread.
@@ -297,6 +299,12 @@ fn run() {
 /// Takes the desktop away: Windows' own shows again. The window goes on its own thread.
 pub fn hide() {
     WANTED.store(false, Ordering::SeqCst);
+    // The picture handed over is not kept while the desktop is away.
+    if let Ok(mut l) = LOOK.lock()
+        && let Some(look) = l.as_mut()
+    {
+        look.picture = None;
+    }
     let hwnd = DESKTOP.swap(0, Ordering::SeqCst) as HWND;
     if !hwnd.is_null() {
         // SAFETY: a message to our own window; nothing waits for it.
@@ -996,12 +1004,30 @@ fn work_area(screen: &RECT) -> RECT {
     RECT { left: w.left - screen.left, top: w.top - screen.top, right: w.right - screen.left, bottom: w.bottom - screen.top }
 }
 
-/// The same picture read (the very same, not an equal one: a picture read again is drawn again).
-fn same_picture(a: &Option<std::sync::Arc<bevel_core::display::Picture>>, b: &Option<std::sync::Arc<bevel_core::display::Picture>>) -> bool {
+/// The same picture read (the same reading, not an equal picture: a picture read again is drawn
+/// again; one let go is still the same reading).
+fn same_picture(a: &Option<crate::pictures::Got>, b: &Option<crate::pictures::Got>) -> bool {
     match (a, b) {
-        (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+        (Some(a), Some(b)) => a.reading == b.reading,
         (None, None) => true,
         _ => false,
+    }
+}
+
+/// A large picture is let go once the desktop's own picture is made from it: from the state's look
+/// and from the look handed over (`LOOK`), if that is still the same reading.
+fn let_go_large(look: &mut Look) {
+    let Some(got) = look.picture.as_mut() else { return };
+    if !got.picture.as_deref().is_some_and(crate::pictures::is_large) {
+        return;
+    }
+    got.picture = None;
+    let reading = got.reading;
+    if let Ok(mut l) = LOOK.lock()
+        && let Some(g) = l.as_mut().and_then(|l| l.picture.as_mut())
+        && g.reading == reading
+    {
+        g.picture = None;
     }
 }
 
@@ -1066,6 +1092,9 @@ fn rebuild(hwnd: HWND, force: bool) {
                 && same_picture(&st.look.picture, &look.picture)
                 && std::ptr::eq(st.look.theme, look.theme);
             if same_picture && st.view.area() == area && !force {
+                // The bar may have handed the same large picture over again: not kept.
+                let mut look = look;
+                let_go_large(&mut look);
                 return;
             }
             keep_picture = same_picture && !force;
@@ -1098,8 +1127,13 @@ fn rebuild(hwnd: HWND, force: bool) {
         if !keep_picture {
             view.set_background(None);
             let started = Instant::now();
-            let background =
-                bevel_core::display::background_on(look.theme, &look.background, look.picture.as_deref(), &screens, size.0, size.1);
+            // A large picture let go after the last time: the bar reads it again, and until it
+            // has come the desktop shows its color or pattern (as at the start).
+            if let Some(got) = look.picture.as_ref().filter(|g| g.picture.is_none()) {
+                crate::pictures::needed_again(got.reading);
+            }
+            let read = look.picture.as_ref().and_then(|g| g.picture.as_deref());
+            let background = bevel_core::display::background_on(look.theme, &look.background, read, &screens, size.0, size.1);
             if background.is_some() {
                 log(&format!(
                     "desktop: its wallpaper and pattern drawn over {}x{} ({} screens) in {} ms",
@@ -1118,6 +1152,8 @@ fn rebuild(hwnd: HWND, force: bool) {
         };
         let mut st = State { look, view, fb, screens, last_press: None, right_hit: None, pointer: None, timer: None, blink_on: true };
         st.look.scale = s;
+        // What is made from a large picture has been made: it goes.
+        let_go_large(&mut st.look);
         repaint(hwnd, &mut st, Rect::new(0, 0, size.0, size.1));
         *borrow = Some(st);
     });

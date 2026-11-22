@@ -683,33 +683,67 @@ pub fn in_monitor(w: i32, h: i32) -> (i32, i32) {
 /// wallpaper scaled as the screen is (`in_monitor`), centered, tiled or stretched over the small
 /// screen. A JPEG and a person's own picture (`read`, once read) by the same rule as the BMPs.
 pub fn paint_monitor(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice: &Choice, read: Option<&Picture>) {
+    let era = theme.era;
+    let layer = picture_of(choice, era, read).map(|p| monitor_layer(era, &p, choice.show));
+    paint_monitor_layer(fb, theme, x, y, choice, layer.as_ref());
+}
+
+/// `paint_monitor` with the wallpaper's small copy made already (`monitor_layer`): Display
+/// Properties makes it once per picture and way of showing, not at every paint.
+pub fn paint_monitor_layer(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice: &Choice, layer: Option<&Picture>) {
     let monitor = decode(MONITOR);
     lay(fb, theme, &monitor, x, y);
-    let era = theme.era;
     let s = MONITOR_SCREEN;
     let mut screen = Framebuffer::new(s.w, s.h, theme.colors.desktop);
-    fill_ground(&mut screen, theme, choice.pattern_shown(era), (s.x, s.y));
-    if let Some(picture) = picture_of(choice, era, read).filter(|p| p.width > 0 && p.height > 0) {
-        let picture: &Picture = &picture;
+    fill_ground(&mut screen, theme, choice.pattern_shown(theme.era), (s.x, s.y));
+    if let Some(layer) = layer {
+        lay(&mut screen, theme, layer, 0, 0);
+    }
+    fb.blit(&screen, x + s.x, y + s.y);
+}
+
+/// What the monitor's small screen shows of the wallpaper `picture` shown `show` in `era`: its
+/// 152 x 112 pixels, see-through (0) where the wallpaper does not reach (the ground shows there).
+/// The picture scaled as the screen is (`in_monitor`) and centered or tiled, or stretched over the
+/// small screen (98, 2000; 95's Stretch is no choice: centered). Only the pixels that show are
+/// made, so a large photo gives no large copy.
+pub fn monitor_layer(era: Era, picture: &Picture, show: Show) -> Picture {
+    let s = MONITOR_SCREEN;
+    let mut pixels = vec![0u32; (s.w * s.h) as usize];
+    if picture.width > 0 && picture.height > 0 {
+        // 2000 counts the columns from the right too (`stretched`).
+        let from_right = era == Era::Win2000;
         let (w, h) = in_monitor(picture.width, picture.height);
-        match choice.show {
-            Show::Stretch if era != Era::Win95 => lay(&mut screen, theme, &stretched(era, picture, s.w, s.h), 0, 0),
+        let mut put = |x: i32, y: i32, p: u32| pixels[(y * s.w + x) as usize] = p;
+        match show {
+            Show::Stretch if era != Era::Win95 => {
+                let (mx, my) = (steps(era, picture.width, s.w, from_right), steps(era, picture.height, s.h, true));
+                for y in 0..s.h {
+                    for x in 0..s.w {
+                        put(x, y, picture.get(mx[x as usize], my[y as usize]));
+                    }
+                }
+            }
             Show::Tile => {
-                let small = stretched(era, picture, w, h);
-                for ty in (0..s.h).step_by(h as usize) {
-                    for tx in (0..s.w).step_by(w as usize) {
-                        lay(&mut screen, theme, &small, tx, ty);
+                let (mx, my) = (steps(era, picture.width, w, from_right), steps(era, picture.height, h, true));
+                for y in 0..s.h {
+                    for x in 0..s.w {
+                        put(x, y, picture.get(mx[(x % w) as usize], my[(y % h) as usize]));
                     }
                 }
             }
             _ => {
-                let small = stretched(era, picture, w, h);
+                let (mx, my) = (steps(era, picture.width, w, from_right), steps(era, picture.height, h, true));
                 let (cx, cy) = centered(s.w, s.h, w, h);
-                lay(&mut screen, theme, &small, cx, cy);
+                for y in cy.max(0)..(cy + h).min(s.h) {
+                    for x in cx.max(0)..(cx + w).min(s.w) {
+                        put(x, y, picture.get(mx[(x - cx) as usize], my[(y - cy) as usize]));
+                    }
+                }
             }
         }
     }
-    fb.blit(&screen, x + s.x, y + s.y);
+    Picture { width: s.w, height: s.h, pixels }
 }
 
 /// The name of background.txt, where each look's choice is kept (the data folder).
@@ -731,16 +765,24 @@ pub fn parse(text: &str) -> [Choice; 3] {
     Era::ALL.map(|era| parse_one(text, era).unwrap_or_default())
 }
 
+/// `text` without the plain spaces and tabs at its ends (nothing else: `str::trim` would also take
+/// other alphabets' spaces, which a file's name may end in).
+fn plain_trim(text: &str) -> &str {
+    text.trim_matches([' ', '\t'])
+}
+
 fn parse_one(text: &str, era: Era) -> Option<Choice> {
     let [wk, dk, pk] = keys(era);
     let mut choice = Choice::default();
     for line in text.lines() {
-        let line = line.trim();
+        // Only plain spaces and tabs are taken off the ends: a file's name may end in another
+        // alphabet's space (U+00A0, U+3000), which is part of its path.
+        let line = plain_trim(line);
         if line.starts_with('#') {
             continue;
         }
         let Some((key, value)) = line.split_once('=') else { continue };
-        let (key, value) = (key.trim(), value.trim());
+        let (key, value) = (plain_trim(key), plain_trim(value));
         if key.eq_ignore_ascii_case(&wk) {
             // "(None)", a person's own picture by its file's full path (kept whole, whether the
             // file is there now or not: it is read again at each start), or a name of the look's.
