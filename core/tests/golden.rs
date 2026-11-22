@@ -2681,12 +2681,12 @@ fn draw_readme_start_menus() {
 /// window, the network icon, the speaker and the clock; the Start menu open on Programs, the
 /// pointer on Google Chrome.
 ///
-/// The screen's size is `BEVEL95_SITE_SIZE`: `1024x768` (without it), `800x600` or `640x480`, each
-/// arranged by eye for its size (`site_layout`: at 800 x 600 without Explorer, at 640 x 480 only
-/// Minesweeper of the windows).
+/// The screen's size is `BEVEL95_SITE_SIZE`: `1024x768` (without it) or `600x450` (the size the
+/// README's column shows on whole screen pixels at 100, 125, 150 and 200%), each arranged by eye
+/// (`site_layout`: at 600 x 450 only Minesweeper of the windows).
 ///
-/// `BEVEL95_SITE_STEP` (1 to 5) draws one step of the website's short animation instead, at 640 x
-/// 480 (`site_step`), on a PC where the person chose their picture earlier in each look: Bevel95
+/// `BEVEL95_SITE_STEP` (1 to 5) draws one step of the website's short animation instead, at 600 x
+/// 450 (`site_step`), on a PC where the person chose their picture earlier in each look: Bevel95
 /// just started, the Start menu opened to Minesweeper, its own programs open, then the same
 /// desktop in the 2000 and the 95 look.
 ///
@@ -2718,9 +2718,8 @@ fn draw_site_desktop() {
         Err(_) => {
             let size = match std::env::var("BEVEL95_SITE_SIZE").as_deref() {
                 Err(_) | Ok("1024x768") => (1024, 768),
-                Ok("800x600") => (800, 600),
-                Ok("640x480") => (640, 480),
-                Ok(other) => panic!("BEVEL95_SITE_SIZE is 1024x768, 800x600 or 640x480, not {other}"),
+                Ok("600x450") => (600, 450),
+                Ok(other) => panic!("BEVEL95_SITE_SIZE is 1024x768 or 600x450, not {other}"),
             };
             site_scene(assets.as_ref(), &site_layout(size))
         }
@@ -2789,9 +2788,7 @@ fn site_layout(size: (i32, i32)) -> SiteScene {
         // The look's own down the left column, the two shortcuts at the top of the second (in the
         // first ChatGPT's name would lie under the Start menu).
         (1024, _) => [(0, 0), (0, C), (0, 2 * C), (C, 0), (C, C)],
-        // The Start menu reaches up to about y 190: the icons in one row across the top.
-        (800, _) => [(0, 0), (C, 0), (2 * C, 0), (3 * C, 0), (4 * C, 0)],
-        _ => SITE_640_ICONS,
+        _ => SITE_SMALL_ICONS,
     };
     let icons = ids.into_iter().zip(cells).collect();
     let base = SiteScene {
@@ -2814,23 +2811,20 @@ fn site_layout(size: (i32, i32)) -> SiteScene {
             calculator: Some(((556, 452), false)),
             ..base
         },
-        // Explorer is left out: beside the Calculator and Minesweeper it covered the wallpaper's
-        // bloom, and at the 420 pixels across that was left its toolbar was cut.
-        (800, _) => SiteScene { minesweeper: Some(((616, 24), false)), calculator: Some(((520, 292), false)), ..base },
-        // The Start menu fills the left from y 72: Minesweeper between the Programs menu and the
-        // icons down the right edge.
-        _ => SiteScene { minesweeper: Some((SITE_640_MINESWEEPER, false)), ..base },
+        // The Start menu fills the left from about y 42: Minesweeper between the Programs menu and
+        // the icons down the right edge.
+        _ => SiteScene { minesweeper: Some((SITE_SMALL_MINESWEEPER, false)), ..base },
     }
 }
 
-/// The 640 x 480 icons down the right edge: My Computer, My Documents, Recycle Bin, Google Chrome,
-/// ChatGPT. ChatGPT's picture is black: swapped with Chrome's, it stands in the fourth cell, the
-/// lightest ground of the column under the person's picture (measured: mean brightness 201 of
-/// 255 there, 35 in the fifth cell, where it was swallowed by dark blue).
-const SITE_640_ICONS: [(i32, i32); 5] = [(565, 0), (565, 75), (565, 150), (565, 300), (565, 225)];
-const SITE_640_MINESWEEPER: (i32, i32) = (360, 40);
+/// The 600 x 450 icons down the right edge: My Computer, My Documents, Recycle Bin, Google Chrome,
+/// ChatGPT. ChatGPT's picture is black: swapped with Chrome's, it stands in the fourth cell, a
+/// light ground of the column under the person's picture (measured: mean brightness 157 of 255
+/// there, 33 in the fifth cell, where it would be swallowed by dark blue).
+const SITE_SMALL_ICONS: [(i32, i32); 5] = [(525, 0), (525, 75), (525, 150), (525, 300), (525, 225)];
+const SITE_SMALL_MINESWEEPER: (i32, i32) = (330, 40);
 
-/// One step of the website's animation, 640 x 480, each what Bevel95 really shows at that point
+/// One step of the website's animation, 600 x 450, each what Bevel95 really shows at that point
 /// on a PC where the person chose their picture as the wallpaper earlier, in each look (a start
 /// of Bevel95 then shows it at once); the icons stand in the same cells throughout.
 /// 1. Just started: the 98 look with the person's picture, nothing open.
@@ -2844,10 +2838,10 @@ const SITE_640_MINESWEEPER: (i32, i32) = (360, 40);
 fn site_step(step: u32) -> SiteScene {
     let ids = ["::my-computer", "::my-documents", "::recycle-bin", "chrome", "chatgpt"];
     let base = SiteScene {
-        size: (640, 480),
+        size: (600, 450),
         era: Era::Win98,
         wallpaper: true,
-        icons: ids.into_iter().zip(SITE_640_ICONS).collect(),
+        icons: ids.into_iter().zip(SITE_SMALL_ICONS).collect(),
         explorer: None,
         minesweeper: None,
         calculator: None,
@@ -2855,7 +2849,7 @@ fn site_step(step: u32) -> SiteScene {
         start_to_game: false,
     };
     let programs = |front: bool| SiteScene {
-        minesweeper: Some((SITE_640_MINESWEEPER, front)),
+        minesweeper: Some((SITE_SMALL_MINESWEEPER, front)),
         calculator: Some(((40, 120), false)),
         ..site_step(1)
     };
