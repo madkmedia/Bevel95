@@ -2685,10 +2685,10 @@ fn draw_readme_start_menus() {
 /// arranged by eye for its size (`site_layout`: at 800 x 600 without Explorer, at 640 x 480 only
 /// Minesweeper of the windows).
 ///
-/// `BEVEL95_SITE_STEP` (1 to 6) draws one step of the website's short animation instead, at 640 x
+/// `BEVEL95_SITE_STEP` (1 to 5) draws one step of the website's short animation instead, at 640 x
 /// 480 (`site_step`), on a PC where the person chose their picture earlier in each look: Bevel95
-/// just started, the Start menu, its own programs open, the bar's own menu at Bevel95 > Theme,
-/// then the same desktop in the 2000 and the 95 look.
+/// just started, the Start menu opened to Minesweeper, its own programs open, then the same
+/// desktop in the 2000 and the 95 look.
 ///
 /// The only pictures from outside (the wallpaper, a 1024 x 768 8-bit RGB PNG, and the two
 /// programs' icons, 8-bit RGBA PNGs at 32 and 16 pixels) are read at run time from the folder
@@ -2712,7 +2712,7 @@ fn draw_site_desktop() {
     });
     let picture = match std::env::var("BEVEL95_SITE_STEP") {
         Ok(step) => {
-            let step: u32 = step.parse().ok().filter(|n| (1..=6).contains(n)).expect("BEVEL95_SITE_STEP is 1 to 6");
+            let step: u32 = step.parse().ok().filter(|n| (1..=5).contains(n)).expect("BEVEL95_SITE_STEP is 1 to 5");
             site_scene(assets.as_ref(), &site_step(step))
         }
         Err(_) => {
@@ -2776,9 +2776,9 @@ struct SiteScene {
     minesweeper: Option<((i32, i32), bool)>,
     calculator: Option<((i32, i32), bool)>,
     start_menu: bool,
-    /// The bar's own menu, opened by a right-click on the bar's free part (between the last task
-    /// button and the notification area), at Bevel95 > Theme, the pointer on Windows 2000.
-    bar_menu: bool,
+    /// The Start menu opened all the way to Programs > Accessories > Games, the pointer on
+    /// Minesweeper (else only Programs, the pointer on Google Chrome).
+    start_to_game: bool,
 }
 
 /// The still pictures of one size, arranged by eye (the Start menu open: no window in front).
@@ -2803,7 +2803,7 @@ fn site_layout(size: (i32, i32)) -> SiteScene {
         minesweeper: None,
         calculator: None,
         start_menu: true,
-        bar_menu: false,
+        start_to_game: false,
     };
     match size {
         // Explorer top right, Minesweeper under it at the right, the Calculator between
@@ -2834,15 +2834,13 @@ const SITE_640_MINESWEEPER: (i32, i32) = (360, 40);
 /// on a PC where the person chose their picture as the wallpaper earlier, in each look (a start
 /// of Bevel95 then shows it at once); the icons stand in the same cells throughout.
 /// 1. Just started: the 98 look with the person's picture, nothing open.
-/// 2. The Start menu open on Programs.
+/// 2. The Start menu opened to the program the next step shows: Programs > Accessories > Games,
+///    the pointer on Minesweeper.
 /// 3. Minesweeper and the Calculator open, Minesweeper in front.
-/// 4. The bar's own menu (a right-click on the bar's free part), open at Bevel95 > Theme, Windows
-///    98 marked as the look in use, the pointer on Windows 2000; the menu takes the keyboard, so no
-///    window is in front, the two programs behind.
-/// 5. The Windows 2000 look, 6. the Windows 95 look: the same desktop, picture and programs in
-///    that look's icons, bar and colors (Quick Launch as each look has it by default: none in 95);
-///    the menu gave the keyboard back to Minesweeper. 95 has no My Documents: its cell stays empty,
-///    as the icons keep their places by what they are once arranged.
+/// 4. The Windows 2000 look, 5. the Windows 95 look: the same desktop, picture and programs in
+///    that look's icons, bar and colors (Quick Launch as each look has it by default: none in 95),
+///    Minesweeper still in front. 95 has no My Documents: its cell stays empty, as the icons keep
+///    their places by what they are once arranged.
 fn site_step(step: u32) -> SiteScene {
     let ids = ["::my-computer", "::my-documents", "::recycle-bin", "chrome", "chatgpt"];
     let base = SiteScene {
@@ -2854,7 +2852,7 @@ fn site_step(step: u32) -> SiteScene {
         minesweeper: None,
         calculator: None,
         start_menu: false,
-        bar_menu: false,
+        start_to_game: false,
     };
     let programs = |front: bool| SiteScene {
         minesweeper: Some((SITE_640_MINESWEEPER, front)),
@@ -2863,10 +2861,9 @@ fn site_step(step: u32) -> SiteScene {
     };
     match step {
         1 => base,
-        2 => SiteScene { start_menu: true, ..base },
+        2 => SiteScene { start_menu: true, start_to_game: true, ..base },
         3 => programs(true),
-        4 => SiteScene { bar_menu: true, ..programs(false) },
-        5 => SiteScene { era: Era::Win2000, ..programs(true) },
+        4 => SiteScene { era: Era::Win2000, ..programs(true) },
         _ => SiteScene { era: Era::Win95, ..programs(true) },
     }
 }
@@ -2996,7 +2993,7 @@ fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
         ..Bar::default()
     };
     let mut bar = Framebuffer::new(w, theme.bar.height, 0);
-    let bar_layout = paint::paint_bar(&mut bar, theme, &fonts, &state);
+    paint::paint_bar(&mut bar, theme, &fonts, &state);
     screen.blit(&bar, 0, bar_top);
     let menu_image = |menu: &Menu, style: MenuStyle| {
         let layout = paint::layout_menu(theme, &fonts, menu, style, h);
@@ -3005,42 +3002,12 @@ fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
         (fb, layout)
     };
 
-    // The bar's own menu, as `bar_submenu_scene` draws it: opened at the right-click (between the
-    // last task button and the notification area), Bevel95 highlighted, its submenu at Theme,
-    // the Theme submenu with the look in use marked and the pointer on Windows 2000; each placed
-    // as the bar places its menus (`place_popup`, `place_submenu`, turned left at the screen's
-    // edge).
-    if scene.bar_menu {
-        let free_left = bar_layout.tasks.last().map_or(bar_layout.start.right(), |r| r.right());
-        let click = ((free_left + bar_layout.well.x) / 2, bar_top + theme.bar.height / 2);
-        let index = bar_menu::index_of(era, false, BarEntry::Bevel95).expect("the Bevel95 entry");
-        let menu = Menu { hover: Some(index), ..bar_menu::menu(era, false) };
-        let (fb, layout) = menu_image(&menu, MenuStyle::Popup);
-        let (x, y) = place_popup(click.0, click.1, fb.width, fb.height, screen_rect);
-        screen.blit(&fb, x, y);
-        let on = bar_menu::Own { desktop: true, desktop_key: true };
-        let own_index = bar_menu::own_index_of(on, BarEntry::Theme).expect("Theme");
-        let own = Menu { hover: Some(own_index), ..bar_menu::own_menu(on) };
-        let (own_fb, own_layout) = menu_image(&own, MenuStyle::Popup);
-        let parent = Rect::new(x, y, fb.width, fb.height);
-        let entry = entry_on_screen(parent, &layout, index);
-        let (ox, oy) = place_submenu(parent, entry, own_fb.width, own_fb.height, 3, theme.popup.submenu, screen_rect);
-        screen.blit(&own_fb, ox, oy);
-        let mut looks = bar_menu::theme_menu(era);
-        looks.hover = looks.entries.iter().position(|e| e.label.replace('&', "") == "Windows 2000");
-        assert!(looks.hover.is_some(), "Windows 2000 in the Theme menu");
-        let (looks_fb, _) = menu_image(&looks, MenuStyle::Popup);
-        let parent = Rect::new(ox, oy, own_fb.width, own_fb.height);
-        let entry = entry_on_screen(parent, &own_layout, own_index);
-        let (sx, sy) = place_submenu(parent, entry, looks_fb.width, looks_fb.height, 3, theme.popup.submenu, screen_rect);
-        screen.blit(&looks_fb, sx, sy);
-    }
     if !scene.start_menu {
         return screen;
     }
 
     // 5. The Start menu, open on Programs, the pointer on Google Chrome (without the assets:
-    // on Accessories).
+    // on Accessories); or opened to Programs > Accessories > Games, the pointer on Minesweeper.
     let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
     let programs_index = menu.entries.iter().position(|e| e.label == "&Programs").expect("Programs");
     menu.hover = Some(programs_index);
@@ -3063,16 +3030,29 @@ fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
         ("chatgpt", Some(a)) => Some(a.chatgpt.1.clone()),
         _ => OWN_PROGRAMS.iter().find(|p| p.file == item.target).map(|p| (p.icon)(era)),
     };
-    let mut sub = programs.menu(Some(&group), picture);
-    let wanted = if assets.is_some() { "Google Chrome" } else { "Accessories" };
-    sub.hover = sub.entries.iter().position(|e| e.label == wanted);
-    assert!(sub.hover.is_some(), "{wanted} in Programs");
-    sub.show_keys = menu.show_keys;
-    let (sub_fb, _) = menu_image(&sub, MenuStyle::Cascade);
-    let parent = Rect::new(x, y, fb.width, fb.height);
-    let entry = entry_on_screen(parent, &layout, programs_index);
-    let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
-    screen.blit(&sub_fb, sx, sy);
+    let path: &[&str] = match (scene.start_to_game, assets.is_some()) {
+        (true, _) => &["Accessories", "Games", bevel_core::minefield::form::TITLE],
+        (false, true) => &["Google Chrome"],
+        (false, false) => &["Accessories"],
+    };
+    // Each menu beside the entry it opens from, placed as the bar places a cascading menu
+    // (`place_submenu` against the screen: turned left or moved up where it would not fit).
+    let mut parent = Rect::new(x, y, fb.width, fb.height);
+    let mut entry = entry_on_screen(parent, &layout, programs_index);
+    let mut at: Vec<usize> = Vec::new();
+    for wanted in path {
+        let folder = programs.folder_at(&at).expect("folder");
+        let mut sub = folder.menu(Some(&group), picture);
+        let index = sub.entries.iter().position(|e| e.label == *wanted).unwrap_or_else(|| panic!("{wanted} in the menu"));
+        sub.hover = Some(index);
+        sub.show_keys = menu.show_keys;
+        let (sub_fb, sub_layout) = menu_image(&sub, MenuStyle::Cascade);
+        let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
+        screen.blit(&sub_fb, sx, sy);
+        parent = Rect::new(sx, sy, sub_fb.width, sub_fb.height);
+        entry = entry_on_screen(parent, &sub_layout, index);
+        at.push(index);
+    }
     screen
 }
 
