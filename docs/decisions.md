@@ -1926,6 +1926,8 @@ it, but write nothing).
     and 9 ms after the message back, 008080 again, in the same window. The same through
     Bevel95 Settings' Look and Apply (`desktop-look-live.ps1`, real clicks) was not run.
   - Not tried live: Win+D and a second screen (the owner's checklist).
+- **Properties opens Display Properties** since 2026-11-21 ("Display Properties and wallpapers"),
+  unless Bevel95 Settings' Desktop page says Windows' own display settings. Before that:
 - **Properties opens Windows' own Display settings** (2026-11-20; a first report after the
   release: a person looked for the screen resolution under the desktop's Properties, where
   Windows 95 to XP had it, and got Bevel95 Settings). Properties on the empty desktop's menu,
@@ -5697,6 +5699,136 @@ exact, the default left to us (even, the mock-ups' B1).
   size and a way, its own windows photographed, its repaint timed), `bar-switch.ps1` (the one switch
   of the owner's bar, settings.txt compared after), `make-fixtures.ps1` (the test pictures from the
   definition), `make-built-sheet.ps1` (the owner's sheet, compared with the mock-up).
+
+## Display Properties and wallpapers (2026-11-21, the owner: "I think people would like wallpapers")
+What the owner asked for: "the original pattern based wallpapers and the color options", and for a
+person who wants Windows 11's settings there, "a setting that says the desktop properties point to
+the real system". Measured first on the three Reference PCs (`private/probes/display/survey.md`,
+captures `private/reference/refs/vm/<pc>-truecolor-display-*`, the wallpaper files copied off the
+disks into `refs/files/<pc>/wallpapers`); the numbers are in theme-spec.md, "Display Properties and
+wallpapers". This first step: the classic desktop draws each look's own wallpapers and patterns, and
+Display Properties' Background page chooses them.
+- **The pictures** (`art/src/display.rs`): every BMP wallpaper of each look's list (95: 12, 98: 20,
+  2000: 11; the 11 that 95 and 98 both had are the same bytes on both disks and kept once), each
+  look's patterns with their eight numbers (95 and 98 the same 19, 2000 its 13), the little monitor
+  (one 184x170 picture in all three) and 98's and 2000's small list pictures. The wallpapers are kept
+  pixel for pixel in a compact form (`*.wlp`: the colors used, the pixels packed at the fewest bits
+  that hold them, run-length coded where that is shorter): 956,699 bytes for the 32 files (the BMPs:
+  1,167,418). `art/tests/one_place.rs` knows the new kind of file. Only the bar carries them: the
+  lookups are in `core::display`, which only the bar uses (its file grew by 1,167,360 bytes; every
+  other program by at most 2 KB, the code laid out differently).
+- **The drawing** (`core::display`), exact against the PCs' own files (34 comparison cases
+  `vm-<pc>-wallpaper-*`, every pixel but the mouse pointer): the desktop color, or the pattern's
+  8x8 bits from the screen's top-left corner (a set bit black, a clear one the desktop color); a
+  wallpaper tiled from the top-left corner, centered on the whole screen (half the difference, cut
+  toward zero as C did: a larger picture is cut equally on all sides; the pattern or the color around
+  a smaller one), or stretched over the whole screen (98, 2000) by Windows' own stepping: source pixel
+  s covers the screen pixels from round(s * screen / picture) to where the next one starts, the
+  columns from the left (2000: from the right; on 800 columns both give the same), the rows from the
+  bottom (a BMP lies bottom-up). A plain nearest rule differs by one source pixel in about 15% of the
+  pixels. With Tile or Stretch no pattern shows. "The whole screen" is the classic desktop's own
+  area in the look's 1x pixels (all screens together, as the desktop window covers them), which
+  Bevel95 enlarges like everything else.
+- **Icon names over it**: in a box of the desktop color with white letters, a selected one in the
+  selection color's box (98 with its dotted frame): `desktop_icons` already drew the boxes so; it
+  now copies the desktop's picture under the icons (`Desktop::set_background`). The plain desktop
+  has no picture at all (`display::background` gives `None`): its pixels, memory and time are as
+  before, and no earlier golden picture of it changed.
+- **The monitor** shows the choice as each Windows scaled it: a wallpaper 152/800 across and 112/600
+  down, each side rounded; 95 and 98 squeeze by taking the last source pixel of each span (its end
+  rounded, halves and a hair less going up), 2000 the one under each pixel's centre (every centered
+  close-up of the PCs exact with its own rule, not with the other's); the pattern 1:1 from the
+  monitor picture's corner; Tile tiles the scaled picture, Stretch fills the small screen.
+- **Display Properties** (`core::display::form`, `platform/win/src/display_window.rs`): the 404x448
+  window, each look's own Background page from its Windows' dialog template (dialog units 1.5 px
+  across, 1.625 down, from the page's origin 13, 51): 95's two lists (Pattern, Wallpaper), Edit
+  Pattern..., Browse..., Display: Tile and Center (no Stretch: 95 had none); 98's and 2000's list of
+  wallpapers with their small pictures, Browse..., Pattern... and the Display (2000: Picture Display)
+  list Center, Tile, Stretch, grayed (showing Center) while (None) is chosen; Pattern... grayed under
+  a tiled or stretched wallpaper. OK, Cancel, Apply (grayed until something changed). The keyboard
+  as the kit gives it (Tab, the lists' arrows, Home, End, Page keys and first letters, Alt+letters,
+  F4 and Alt+Down on the Display list). Each list's names in Windows' order: "(None)", then by name
+  without case (`display::windows_order`; an entry added later takes its place by the same rule).
+  **Only the tabs that work show, Background for now: the owner's decision of 2026-11-21 ("Yes only
+  show tabs that work")**; the tab strip takes more pages without changing the window.
+- **Found on the PCs while making it exact** (18 comparison cases `display-*`, every one exact
+  outside the masks): Windows 2000's Display Properties uses MS Sans Serif ("MS Shell Dlg"), not
+  Tahoma (`text::ms_sans_serif`); the lists' focus dots and scroll bars line up with the list's own
+  window; a list view's selected label is the text and 6 more pixels; a combo's focused entry has its
+  dots with black between; 98 leaves the Display label black when the list grays, 2000 grays it
+  (etched, cut at the control's height); 95's option buttons put their circle 1 in and the words 18
+  in; under the chosen tab the page's light line is not drawn; 98's Pattern window opens on "(None)"
+  with only the focus rectangle (2000 highlights it); its preview lines the pattern up with the
+  window's inside. Masked, each with its reason in `reference.rs`: the other tabs, Browse... (grayed
+  here), the PCs' list entries Bevel95 leaves out (98's HTML page changes its scroll thumb, 2000's 13
+  JPEG pictures), an Edit Pattern... the PC had usable, 95's tiled capture with an earlier pattern
+  still chosen.
+- **Grayed for now, each a later step**: Browse... (the person's own pictures: for the next brief,
+  in every look, JPEG and PNG too, the owner 2026-11-21) and Edit Pattern... (the Pattern Editor).
+  **Left out of the lists for now**: Windows 2000's 13 JPEG pictures and its Sample, 98's HTML page,
+  98's Desktop Themes pictures. The way stays open for a person's own picture: the choice is kept as
+  a name, so a later step can add a picture of a file beside Windows' own in the same lists and the
+  same file, and the desktop's picture is made in one place of its own (`display::background`), so a
+  later step can make it at the screen's own pixels.
+- **The Pattern window** (98, 2000; `core::display::pattern`): the sentence, the Pattern list, the
+  Preview (the pattern 1:1 in black on the desktop color), OK, Cancel, Edit Pattern... (grayed); a
+  dialog of Display Properties, at its owner's inside corner as Windows put it. Its OK gives the page
+  the pattern (Apply turns on).
+- **Remembered per look** in `background.txt` in the data folder: `<look> wallpaper = <name or
+  (None)>`, `<look> display = center|tile|stretch`, `<look> pattern = <name or (None)>`, three lines
+  per look, written through `winkit::state_file::change` (read again for every change, only that
+  look's lines changed, never written while it cannot be read; in `OWN_FILES` and Setup's Remove).
+  A name the look does not have, a way it does not offer (95's Stretch) or any other nonsense value
+  means the plain desktop for that look, and the file is kept as it is. A person who never opens the
+  window has no such file and the plain desktop. Switching the look shows that look's own choice;
+  an open Display Properties closes with a change of look, colors or size (it shows the old look's
+  lists; what was applied stays).
+- **Apply, OK, Cancel**: Apply puts the page's choice into effect at once (saved, and the desktop
+  draws it) and grays; OK the same and closes; Cancel and the X close and apply nothing, so Cancel
+  after Apply keeps what Apply did.
+- **The desktop's picture is made when the choice, the look, the colors, the size or the screen
+  change** (`desktop::rebuild`), not at every paint. Measured (`display::tests::how_much_a_wallpaper_costs`,
+  release build, this PC): on the owner's 2560x1440 at Size 2 (1280x720 1x pixels) it holds
+  3,686,400 bytes and is made in 1.4 to 4.7 ms (Clouds stretched the slowest); a full repaint of the
+  desktop (the icons over the whole picture, enlarged) took 5.6 to 5.9 ms with a picture and 5.4 ms
+  plain. At Size 1 on the same screen: 14,745,600 bytes, made in 5.6 to 13.7 ms, a full repaint 14.4
+  ms with a picture and 12.3 ms plain. The plain desktop is neither slower nor heavier than before
+  (no picture; its path is the old one).
+- **16 and 256 Colors**: the wallpapers, the monitor and the small pictures go through the rules the
+  project has for pictures without their own drawing (`colors16::convert`; 2000 keeps its face and
+  desktop at 256). Nothing was measured for wallpapers in those modes (todo).
+- **Properties on the desktop's menu** (and Alt+Enter on the empty desktop) opens Display
+  Properties (it opened Windows' Display settings since 2026-11-20: "The desktop, first step"). A
+  check box under "Properties" on Bevel95 Settings' Desktop page, "Open Windows' own display
+  settings" with the line "Off: Bevel95's Display Properties (wallpapers)." (PROVISIONAL wording),
+  makes it open Windows' own display settings instead; off by default. Its setting is
+  `windows_display_settings = yes|no`, the name the same meaning had for a day (2026-11-19, never in
+  a release): a settings.txt that kept that line means what it meant then, and a new name would have
+  left such a line unknown beside a second one. Written only when changed. The Desktop page's three
+  golden pictures changed for it (nothing else on them).
+- **For live tests**: `Bevel95.Bar.Display` (WM_APP + 43, never a number: new with Display
+  Properties): wParam 0 opens Display Properties, 1 closes it and the Pattern window applying
+  nothing, 2 opens the Pattern window over it, 3 shows the look's wallpaper number lParam tiled on
+  the desktop, 4 its pattern number lParam, 5 takes that away again. A test's choice is never saved
+  and never changes the person's own. `private/probes/display/build72/live.ps1`.
+- Proof: unit tests (tiling, centering smaller, larger and odd, Stretch's stepping against the
+  survey's numbers, a pattern's bits and place, the pattern around a centered picture and hidden
+  under a tiled one, each look's lists in Windows' order, the choice kept per look and its fallbacks,
+  Apply and Cancel, the grayed controls not acting, the Display list, the Pattern window, the file
+  saved and read back in a scratch folder); 22 new golden pictures (`<look>-desktop-wallpaper-tile`,
+  `-desktop-pattern`, `-desktop-wallpaper-center`, `-desktop-wallpaper-stretch` (98, 2000),
+  `-display-background`, `-display-wallpaper`, `-display-pattern`, `-display-pattern-window` (98,
+  2000)), the Desktop page's three changed, no other; 52 new comparison cases; the full `cargo
+  compare-refs` of 2026-11-21: 888 cases, 0 differing pixels (one skipped for a missing capture, as
+  before). Live on the installed bar (98 look, Size 2), by the test message only: both windows
+  opened, photographed alone and closed; 20 openings of both: the bar's GDI objects 43 before and
+  after, USER objects 34 and 32; after 16 s without the owner's input a test wallpaper (1stboot
+  tiled) and a test pattern (Bricks) showed on the desktop, each 2,278 of 2,278 counted pixels as
+  expected (the desktop window rendered into memory, nothing kept), and the plain desktop again after
+  (2,278 of 2,278). No background.txt was written; the owner's files were as before.
+- Not tried live: Apply, OK and the file written by the installed bar (the owner's checklist; the
+  save is tested in a scratch folder), real clicks and keys in the windows, the 95 and 2000 looks
+  live, 16 and 256 Colors, two screens.
 
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean

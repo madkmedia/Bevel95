@@ -32,7 +32,9 @@ look you choose.
   choose how it is drawn: even pixels with mixed edges (the default), the same mixed by light,
   sharp but uneven pixels, or smooth.
 - **A classic desktop** with its icons (it can be switched off), **folder windows** and **Windows
-  Explorer** with the tree of folders, in each look.
+  Explorer** with the tree of folders, in each look. Right-click the desktop and choose
+  **Properties** for **Display Properties**: each look's own wallpapers and patterns (tiled,
+  centered or, in 98 and 2000, stretched), drawn as that Windows drew them.
 - **Minesweeper, Solitaire and the Calculator**, each in the look you use, with their Help.
 - **Quick Search**: press the Windows key, type a few letters of a program's name, press Enter.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
@@ -123,6 +125,7 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
   safety copy of that list.
 - `desktop.txt` and `folders.txt`: where the classic desktop's icons lie, and each folder
   window's place, size and view.
+- `background.txt`: the wallpaper and pattern chosen for each look in Display Properties.
 - `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
   of recent file operations, the order of the task buttons, the commands typed into Run, the
   width of Quick Search's Name column.

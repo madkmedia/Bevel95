@@ -1784,3 +1784,34 @@ differ (the 95 clock is 1 row lower than this table).
 | 95 clock (no nudge) | Microsoft Sans Serif | 4–11 | 12 |
 | 2000 task / Start label | Tahoma | 4–11 | 12 |
 | 2000 clock | Tahoma | 5–12 | 13 |
+
+## Display Properties and wallpapers (measured 2026-11-21, `private/probes/display/survey.md`)
+All on the Reference PCs at 800x600 True Color, Small Fonts; every value checked by a comparison case.
+- **Desktop**: pattern bits from (0,0) of the screen, bit 7 of row 0 the top-left pixel, set =
+  000000, clear = the desktop color (008080 in 95 and 98, 3A6EA5 in 2000). Tile from (0,0). Center at
+  ((W - w) / 2, (H - h) / 2) of the whole screen, the taskbar's strip included (Bubbles 64x64 at
+  368,268; Red Blocks 54x96 at 373,252; Zapotec 96x96 at 352,252; 98's 1024x768 JPEG cut 112 and 84).
+  Stretch: source pixel s from round(s * W / w) (halves up) to the next start; columns from the left
+  (98; 2000 from the right, the same at 800), rows from the bottom: Clouds 640 -> 800 doubles columns
+  1, 5, 9, ... and rows 2, 6, 10, ... (from the top). Icon names: a box of the desktop color, white
+  letters; selected 000080 (2000 0A246A), 98's dotted frame inverted (FFFF7F).
+- **Window**: 404x448 in all three; tabs from x 11, y 31, 18 high, 6 either side of the words; the
+  chosen tab drawn from (9, 29), its page's light line not drawn under it; page frame (9, 49, 386,
+  360); OK, Cancel, Apply at (158 / 239 / 320, 415), 75x23. The page's template from (13, 51): x =
+  13 + MulDiv(du, 6, 4), y = 51 + MulDiv(du, 13, 8) (2000's too: its pages use MS Sans Serif).
+  Monitor control 63,4 du (2000: 63,7), the picture 2 in: (110, 60) (2000: (110, 64)), 184x170, its
+  screen (16, 17, 152, 112).
+- **Lists**: 95's list boxes rows 13, words 2 in, the selection across the row; 98's and 2000's list
+  views rows 17, picture 2 in, the label box from x 18 of the inside, the words 2 in, 8 wider than the
+  words. Focus dots counted from the list's inside corner (the odd ones); scroll bar track's
+  checkerboard counted from the list's own corner. Display combo 21 high; grayed: face inside, words
+  808080 plain, arrow 808080 over FFFFFF one pixel right and down; focused entry: dots inverted from
+  its corner, black between.
+- **95's option buttons**: circle at x + 1 of the control, words at x + 18; focus frame (words - 1,
+  control top, words + 2, 13), drawn over the access key's line as Windows' XOR (face where it meets).
+- **Monitor's scaling**: w * 152 / 800 and h * 112 / 600, each rounded (Clouds 122x90, Forest 49x48,
+  Metal Links 38x34, 1stboot 10x9, Zapotec 18x18, Bubbles 12x12); squeezed in 95 and 98: column d
+  shows source ((2(d+1)w + W + 1) / 2W) - 1; in 2000 source ((2d + 1) w / 2W).
+- **Pattern window** (98, 2000): 318x205, template from (3, 22); list at (14, 110, 120, 81) rows 13;
+  preview (144, 110, 75, 81) black frame, the pattern lined up with the window's inside (3, 22); OK,
+  Cancel, Edit Pattern... at (230, 33 / 63 / 92), 75x23.

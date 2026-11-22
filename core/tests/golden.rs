@@ -3009,3 +3009,71 @@ fn web_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer
     w.paint(&mut fb, theme, fonts);
     fb
 }
+/// The owner's sheet of wallpapers (not a golden image, and not public), laid out as the survey's
+/// `backgrounds.png`: per look the Background page as it opens beside three 800x600 desktops (a
+/// tiled wallpaper, a pattern, a centered picture: the survey's own choices), Bevel95's own icons,
+/// the bar, every picture at true size, labels outside the pictures; drawn by the real code. Written
+/// to the file named by BEVEL95_SHEET: `BEVEL95_SHEET=<file> cargo test -p bevel-core --test golden
+/// -- --ignored --exact draw_display_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of wallpapers to BEVEL95_SHEET; run it on request"]
+fn draw_display_sheet() {
+    use bevel_core::desktop_icons::Desktop;
+    use bevel_core::display::form::DisplayProperties;
+    use bevel_core::display::{self, Choice, Show};
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    let (sw, sh, gap, label) = (800, 600, 16, 20);
+    let label_font = load_font(&WIN95, false);
+    let bold = load_font(&WIN95, true);
+    let width = gap + 404 + 3 * (gap + sw) + gap;
+    let height = 3 * (label + sh + gap) + 20;
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    let c = |w: Option<&str>, s: Show, p: Option<&str>| Choice { wallpaper: w.map(str::to_string), show: s, pattern: p.map(str::to_string) };
+    for (row, era) in Era::ALL.into_iter().enumerate() {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let y = 4 + row as i32 * (label + sh + gap);
+        let look = era.title();
+        bold.draw(&mut sheet, gap, y, &format!("{look}: Background page as it opens"), rgb(0x000000));
+        let p = DisplayProperties::new(era, Choice::plain());
+        let mut window = Framebuffer::new(404, 448, 0);
+        p.paint(&mut window, theme, &fonts);
+        sheet.blit(&window, gap, y + label);
+        let desktops: [(String, Choice); 3] = match era {
+            Era::Win95 => [
+                ("Bubbles, Tile".into(), c(Some("Bubbles"), Show::Tile, None)),
+                ("Pattern Plaid, no wallpaper".into(), c(None, Show::Center, Some("Plaid"))),
+                ("Setup, Center (pattern Plaid around it)".into(), c(Some("Setup"), Show::Center, Some("Plaid"))),
+            ],
+            Era::Win98 => [
+                ("Forest, Tile".into(), c(Some("Forest"), Show::Tile, None)),
+                ("Pattern Bricks, no wallpaper".into(), c(None, Show::Center, Some("Bricks"))),
+                ("Red Blocks, Center".into(), c(Some("Red Blocks"), Show::Center, None)),
+            ],
+            Era::Win2000 => [
+                ("Zapotec, Tile".into(), c(Some("Zapotec"), Show::Tile, None)),
+                ("Pattern Scottie, no wallpaper".into(), c(None, Show::Center, Some("Scottie"))),
+                ("Zapotec, Center".into(), c(Some("Zapotec"), Show::Center, None)),
+            ],
+        };
+        for (k, (name, choice)) in desktops.iter().enumerate() {
+            let x = gap + 404 + gap + k as i32 * (sw + gap);
+            label_font.draw(&mut sheet, x, y, &format!("{look}: {name}"), rgb(0x000000));
+            let mut screen = display::background(theme, choice, sw, sh).expect("a wallpaper or a pattern");
+            let mut bar = Framebuffer::new(sw, theme.bar.height, 0);
+            paint::paint_bar(&mut bar, theme, &fonts, &Bar { clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() });
+            let area = Rect::new(0, 0, sw, sh - bar.height);
+            let mut d = Desktop::new(era, area);
+            d.set_background(Some(std::sync::Arc::new(screen.clone())));
+            d.paint(&mut screen, theme, &fonts, area);
+            screen.blit(&bar, 0, sh - bar.height);
+            sheet.blit(&screen, x, y + label);
+        }
+    }
+    label_font.draw(&mut sheet, gap, height - 16, "Every picture at true size (view at 100%). Drawn by Bevel95's own code, its own icons; lay it beside private\\probes\\display\\backgrounds.png.", rgb(0x808080));
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
