@@ -2685,10 +2685,10 @@ fn draw_readme_start_menus() {
 /// arranged by eye for its size (`site_layout`: at 800 x 600 without Explorer, at 640 x 480 only
 /// Minesweeper of the windows).
 ///
-/// `BEVEL95_SITE_STEP` (1 to 7) draws one step of the website's short animation instead, at 640 x
-/// 480 (`site_step`): Bevel95 just started on the look's plain desktop, the Start menu, its own
-/// programs open, Display Properties with the person's picture chosen, the picture applied, then
-/// the same desktop after switching to the 2000 and the 95 look.
+/// `BEVEL95_SITE_STEP` (1 to 6) draws one step of the website's short animation instead, at 640 x
+/// 480 (`site_step`), on a PC where the person chose their picture earlier in each look: Bevel95
+/// just started, the Start menu, its own programs open, the bar's own menu at Bevel95 > Theme,
+/// then the same desktop in the 2000 and the 95 look.
 ///
 /// The only pictures from outside (the wallpaper, a 1024 x 768 8-bit RGB PNG, and the two
 /// programs' icons, 8-bit RGBA PNGs at 32 and 16 pixels) are read at run time from the folder
@@ -2712,7 +2712,7 @@ fn draw_site_desktop() {
     });
     let picture = match std::env::var("BEVEL95_SITE_STEP") {
         Ok(step) => {
-            let step: u32 = step.parse().ok().filter(|n| (1..=7).contains(n)).expect("BEVEL95_SITE_STEP is 1 to 7");
+            let step: u32 = step.parse().ok().filter(|n| (1..=6).contains(n)).expect("BEVEL95_SITE_STEP is 1 to 6");
             site_scene(assets.as_ref(), &site_step(step))
         }
         Err(_) => {
@@ -2776,8 +2776,9 @@ struct SiteScene {
     minesweeper: Option<((i32, i32), bool)>,
     calculator: Option<((i32, i32), bool)>,
     start_menu: bool,
-    /// Display Properties open, in front, at this place, the person's picture chosen.
-    display: Option<(i32, i32)>,
+    /// The bar's own menu, opened by a right-click on the bar's free part (between the last task
+    /// button and the notification area), at Bevel95 > Theme, the pointer on Windows 2000.
+    bar_menu: bool,
 }
 
 /// The still pictures of one size, arranged by eye (the Start menu open: no window in front).
@@ -2802,7 +2803,7 @@ fn site_layout(size: (i32, i32)) -> SiteScene {
         minesweeper: None,
         calculator: None,
         start_menu: true,
-        display: None,
+        bar_menu: false,
     };
     match size {
         // Explorer top right, Minesweeper under it at the right, the Calculator between
@@ -2829,57 +2830,53 @@ fn site_layout(size: (i32, i32)) -> SiteScene {
 const SITE_640_ICONS: [(i32, i32); 5] = [(565, 0), (565, 75), (565, 150), (565, 300), (565, 225)];
 const SITE_640_MINESWEEPER: (i32, i32) = (360, 40);
 
-/// One step of the website's animation, 640 x 480, each what Bevel95 really shows at that point;
-/// the icons stand in the same cells throughout.
-/// 1. Just started: the look's plain color (no wallpaper chosen yet), nothing open.
+/// One step of the website's animation, 640 x 480, each what Bevel95 really shows at that point
+/// on a PC where the person chose their picture as the wallpaper earlier, in each look (a start
+/// of Bevel95 then shows it at once); the icons stand in the same cells throughout.
+/// 1. Just started: the 98 look with the person's picture, nothing open.
 /// 2. The Start menu open on Programs.
 /// 3. Minesweeper and the Calculator open, Minesweeper in front.
-/// 4. Display Properties (the desktop's Properties) in front, where the bar opens it, the
-///    person's picture "Bloom" chosen with Browse... and shown in the little monitor; the desktop
-///    still plain, the two programs behind.
-/// 5. Applied (OK): the picture centered on the desktop, Minesweeper in front again.
-/// 6. Switched to the 2000 look; 7. to the 95 look: each look keeps its own wallpaper and none was
-///    chosen there, so each shows its own plain color, with its own icons, bar and colors (Quick
-///    Launch as each look has it by default: none in 95); the programs follow the look.
+/// 4. The bar's own menu (a right-click on the bar's free part), open at Bevel95 > Theme, Windows
+///    98 marked as the look in use, the pointer on Windows 2000; the menu takes the keyboard, so no
+///    window is in front, the two programs behind.
+/// 5. The Windows 2000 look, 6. the Windows 95 look: the same desktop, picture and programs in
+///    that look's icons, bar and colors (Quick Launch as each look has it by default: none in 95);
+///    the menu gave the keyboard back to Minesweeper. 95 has no My Documents: its cell stays empty,
+///    as the icons keep their places by what they are once arranged.
 fn site_step(step: u32) -> SiteScene {
     let ids = ["::my-computer", "::my-documents", "::recycle-bin", "chrome", "chatgpt"];
-    let calculator = (40, 120);
     let base = SiteScene {
         size: (640, 480),
         era: Era::Win98,
-        wallpaper: false,
+        wallpaper: true,
         icons: ids.into_iter().zip(SITE_640_ICONS).collect(),
         explorer: None,
         minesweeper: None,
         calculator: None,
         start_menu: false,
-        display: None,
+        bar_menu: false,
     };
     let programs = |front: bool| SiteScene {
         minesweeper: Some((SITE_640_MINESWEEPER, front)),
-        calculator: Some((calculator, false)),
+        calculator: Some(((40, 120), false)),
         ..site_step(1)
     };
     match step {
         1 => base,
         2 => SiteScene { start_menu: true, ..base },
         3 => programs(true),
-        // Where `display_window::open` puts it: 44 pixels in from the screen's corner, and no
-        // lower than its own height above the bar.
-        4 => SiteScene { display: Some((44, 4)), ..programs(false) },
-        5 => SiteScene { wallpaper: true, ..programs(true) },
-        6 => SiteScene { era: Era::Win2000, ..programs(true) },
+        4 => SiteScene { bar_menu: true, ..programs(false) },
+        5 => SiteScene { era: Era::Win2000, ..programs(true) },
         _ => SiteScene { era: Era::Win95, ..programs(true) },
     }
 }
-
 /// The name the person's picture is read under (the list shows it without its ending: "Bloom").
 const SITE_WALLPAPER: &str = "C:\\Users\\Public\\Pictures\\Bloom.png";
 
 /// Draws one picture of the website (`SiteScene`).
 fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
     use bevel_core::desktop_icons::{Desktop, Item as DeskItem, Picture};
-    use bevel_core::display::{self, Choice, PictureId, Show};
+    use bevel_core::display::{self, Choice, Show};
     use bevel_core::kit::Form;
     use bevel_core::programs::{OWN_PROGRAMS, add_own_programs};
     use bevel_core::status::{self, Network};
@@ -2983,23 +2980,6 @@ fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
     for (fb, at, _) in &windows {
         screen.blit(fb, at.0, at.1);
     }
-    if let Some(at) = scene.display {
-        // Display Properties, its Background page: the person's picture chosen with Browse..., in
-        // the list by its name, on the monitor as the look scales a picture; Apply usable.
-        let mut p = bevel_core::display::form::DisplayProperties::new(era, Choice::plain());
-        match &own_picture {
-            Some(picture) => {
-                p.set_shown(Choice { wallpaper: Some(SITE_WALLPAPER.into()), show: Show::Center, pattern: None });
-                p.set_read(PictureId::Own(SITE_WALLPAPER.into()), Some(std::sync::Arc::new(picture.clone())));
-            }
-            None => p.set_shown(Choice { wallpaper: Some("Clouds".into()), show: Show::Center, pattern: None }),
-        }
-        p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
-        let mut fb = Framebuffer::new(404, 448, 0);
-        p.paint(&mut fb, theme, &fonts);
-        screen.blit(&fb, at.0, at.1);
-    }
-
     // 4. The taskbar (Quick Launch as the look has it by default).
     let quick_launch = bevel_core::quick_launch::on_by_default(era).then(|| {
         let icons = bevel_core::quick_launch::builtins(era).iter().map(|&b| bevel_core::quick_launch::picture(era, b)).collect();
@@ -3016,20 +2996,51 @@ fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
         ..Bar::default()
     };
     let mut bar = Framebuffer::new(w, theme.bar.height, 0);
-    paint::paint_bar(&mut bar, theme, &fonts, &state);
+    let bar_layout = paint::paint_bar(&mut bar, theme, &fonts, &state);
     screen.blit(&bar, 0, bar_top);
-    if !scene.start_menu {
-        return screen;
-    }
-
-    // 5. The Start menu, open on Programs, the pointer on Google Chrome (without the assets:
-    // on Accessories).
     let menu_image = |menu: &Menu, style: MenuStyle| {
         let layout = paint::layout_menu(theme, &fonts, menu, style, h);
         let mut fb = Framebuffer::new(layout.width, layout.height, 0);
         paint::paint_menu(&mut fb, theme, &fonts, menu, style, &layout);
         (fb, layout)
     };
+
+    // The bar's own menu, as `bar_submenu_scene` draws it: opened at the right-click (between the
+    // last task button and the notification area), Bevel95 highlighted, its submenu at Theme,
+    // the Theme submenu with the look in use marked and the pointer on Windows 2000; each placed
+    // as the bar places its menus (`place_popup`, `place_submenu`, turned left at the screen's
+    // edge).
+    if scene.bar_menu {
+        let free_left = bar_layout.tasks.last().map_or(bar_layout.start.right(), |r| r.right());
+        let click = ((free_left + bar_layout.well.x) / 2, bar_top + theme.bar.height / 2);
+        let index = bar_menu::index_of(era, false, BarEntry::Bevel95).expect("the Bevel95 entry");
+        let menu = Menu { hover: Some(index), ..bar_menu::menu(era, false) };
+        let (fb, layout) = menu_image(&menu, MenuStyle::Popup);
+        let (x, y) = place_popup(click.0, click.1, fb.width, fb.height, screen_rect);
+        screen.blit(&fb, x, y);
+        let on = bar_menu::Own { desktop: true, desktop_key: true };
+        let own_index = bar_menu::own_index_of(on, BarEntry::Theme).expect("Theme");
+        let own = Menu { hover: Some(own_index), ..bar_menu::own_menu(on) };
+        let (own_fb, own_layout) = menu_image(&own, MenuStyle::Popup);
+        let parent = Rect::new(x, y, fb.width, fb.height);
+        let entry = entry_on_screen(parent, &layout, index);
+        let (ox, oy) = place_submenu(parent, entry, own_fb.width, own_fb.height, 3, theme.popup.submenu, screen_rect);
+        screen.blit(&own_fb, ox, oy);
+        let mut looks = bar_menu::theme_menu(era);
+        looks.hover = looks.entries.iter().position(|e| e.label.replace('&', "") == "Windows 2000");
+        assert!(looks.hover.is_some(), "Windows 2000 in the Theme menu");
+        let (looks_fb, _) = menu_image(&looks, MenuStyle::Popup);
+        let parent = Rect::new(ox, oy, own_fb.width, own_fb.height);
+        let entry = entry_on_screen(parent, &own_layout, own_index);
+        let (sx, sy) = place_submenu(parent, entry, looks_fb.width, looks_fb.height, 3, theme.popup.submenu, screen_rect);
+        screen.blit(&looks_fb, sx, sy);
+    }
+    if !scene.start_menu {
+        return screen;
+    }
+
+    // 5. The Start menu, open on Programs, the pointer on Google Chrome (without the assets:
+    // on Accessories).
     let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
     let programs_index = menu.entries.iter().position(|e| e.label == "&Programs").expect("Programs");
     menu.hover = Some(programs_index);
