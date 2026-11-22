@@ -8,9 +8,9 @@
 //!   (the Pattern window, `pattern`), and a Display (2000: Picture Display) list: Center, Tile,
 //!   Stretch.
 //!
-//! The 404x448 window with OK, Cancel and Apply (grayed until something changes). Only the
-//! Background tab is on it for now (PROVISIONAL: the owner decides whether the other tabs show
-//! before they work); the tab strip takes more pages without changing the window. Grayed for now,
+//! The 404x448 window with OK, Cancel and Apply (grayed until something changes). It shows only
+//! the tabs that work, Background for now (the owner's decision, 2026-11-21: "Yes only show tabs
+//! that work"); the tab strip takes more pages without changing the window. Grayed for now,
 //! each a later step: Browse... (the person's own pictures) and Edit Pattern... (the Pattern Editor).
 
 use crate::dialog::{self, OPTION_OFF, OPTION_ON, TitleButtons};

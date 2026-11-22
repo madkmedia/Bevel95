@@ -46,6 +46,10 @@ pub struct Config {
     /// without the line: the look decides (`quick_launch::on_by_default`: 98 and 2000 yes, 95 no).
     /// Its line is written only when the person changes it.
     pub quick_launch: Option<bool>,
+    /// Properties on the classic desktop's menu opens Windows' own display settings instead of
+    /// Bevel95's Display Properties (Bevel95 Settings, Desktop page). Off unless switched on; the
+    /// name it had for a day in 2026-11-19 (the same meaning), written only when it changes.
+    pub windows_display_settings: bool,
 }
 
 impl Config {
@@ -179,6 +183,7 @@ impl Default for Config {
             quick_search: QuickSearch::Programs,
             battery_percent: false,
             quick_launch: None,
+            windows_display_settings: false,
         }
     }
 }
@@ -350,6 +355,11 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 "yes" | "true" | "on" | "1" => config.battery_percent = true,
                 "no" | "false" | "off" | "0" => config.battery_percent = false,
                 _ => warn("battery_percent must be yes or no"),
+            },
+            "windows_display_settings" => match value.as_str() {
+                "yes" | "true" | "on" | "1" => config.windows_display_settings = true,
+                "no" | "false" | "off" | "0" => config.windows_display_settings = false,
+                _ => warn("windows_display_settings must be yes or no"),
             },
             "quick_launch" => match value.as_str() {
                 "yes" | "true" | "on" | "1" => config.quick_launch = Some(true),
@@ -600,18 +610,22 @@ mod tests {
     }
 
     #[test]
-    fn a_setting_no_longer_known_is_skipped_and_kept() {
-        // `windows_display_settings` was on the Desktop page for a day (never in a release):
-        // a file that has it keeps its other settings, and a save leaves its line as it is.
+    fn the_desktops_properties_opens_bevel95s_window_unless_told_otherwise() {
+        // Off by default: Properties opens Bevel95's Display Properties.
+        assert!(!Config::default().windows_display_settings);
+        assert!(!parse(DEFAULT_FILE).0.windows_display_settings);
+        // `windows_display_settings` had this meaning for a day (2026-11-19, never in a release):
+        // a file that kept the line means the same again.
         let text = "era = win2000\nwindows_display_settings = yes\ndesktop = no\n";
         let (c, w) = parse(text);
-        assert_eq!((c.era, c.desktop), (Era::Win2000, false));
-        assert_eq!(w.len(), 1, "{w:?}");
-        assert!(w[0].starts_with("line 2:"), "{w:?}");
-        let saved = with_setting(text, "desktop", "yes");
-        assert_eq!(saved, "era = win2000\nwindows_display_settings = yes\ndesktop = yes\n");
+        assert_eq!((c.era, c.desktop, c.windows_display_settings), (Era::Win2000, false, true));
+        assert!(w.is_empty(), "{w:?}");
+        let (c, w) = parse("windows_display_settings = sometimes\n");
+        assert!(!c.windows_display_settings && w.len() == 1);
+        // Saving another setting leaves its line as it is; the yes/no settings never write it.
+        assert_eq!(with_setting(text, "desktop", "yes"), "era = win2000\nwindows_display_settings = yes\ndesktop = yes\n");
+        assert!(!flag_settings(&c).iter().any(|(k, _)| *k == "windows_display_settings"));
     }
-
     #[test]
     fn with_setting_changes_only_that_line() {
         let text = "# Size: scale = something in a comment\nera = win2000\nscale = auto  # mine\n";

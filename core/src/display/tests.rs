@@ -287,3 +287,48 @@ fn wallpapers_take_the_looks_rule_in_16_and_256_colors() {
     let fb = background(theme, &choice(Some("Zapotec"), Show::Center, None), 300, 300).unwrap();
     assert_eq!(fb.get(0, 0), WIN2000.colors.desktop);
 }
+
+/// What the desktop's picture costs on a large screen (the owner's 2560x1440 at Size 2, and at
+/// Size 1): how long making the picture takes, what it holds, and a full repaint (the icons painted
+/// over the whole desktop, then enlarged as the desktop window does) with and without it. Run on
+/// request: `cargo test -p bevel-core --release --lib -- --ignored --nocapture how_much_a_wallpaper_costs`.
+#[test]
+#[ignore = "measures time; run on request"]
+fn how_much_a_wallpaper_costs() {
+    use crate::desktop_icons::Desktop;
+    use crate::text::{Font, Fonts};
+    use std::time::Instant;
+    let font = Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px.font")).unwrap();
+    let fonts = Fonts { regular: &font, bold: &font };
+    let theme = &WIN98;
+    let choices = [
+        ("plain", Choice::plain()),
+        ("Forest tiled", choice(Some("Forest"), Show::Tile, None)),
+        ("Clouds stretched", choice(Some("Clouds"), Show::Stretch, None)),
+        ("Red Blocks on Waffle's Revenge", choice(Some("Red Blocks"), Show::Center, Some("Waffle's Revenge"))),
+    ];
+    for scale in [2, 1] {
+        let (w, h) = (2560 / scale, 1440 / scale);
+        for (name, c) in &choices {
+            let runs = 10;
+            let t = Instant::now();
+            let mut bg = None;
+            for _ in 0..runs {
+                bg = background(theme, c, w, h);
+            }
+            let make = t.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+            let bytes = bg.as_ref().map_or(0, |b| b.pixels.len() * 4);
+            let mut d = Desktop::new(Era::Win98, Rect::new(0, 0, w, h - 28));
+            d.set_background(bg.map(std::sync::Arc::new));
+            let mut fb = Framebuffer::new(w, h, theme.colors.desktop);
+            let t = Instant::now();
+            for _ in 0..runs {
+                d.paint(&mut fb, theme, &fonts, Rect::new(0, 0, w, h));
+                let big = crate::scale::upscale(&fb, scale);
+                std::hint::black_box(&big);
+            }
+            let repaint = t.elapsed().as_secs_f64() * 1000.0 / f64::from(runs);
+            println!("size {scale}, {w}x{h}: {name}: picture made in {make:.1} ms, holds {bytes} bytes; full repaint {repaint:.1} ms");
+        }
+    }
+}

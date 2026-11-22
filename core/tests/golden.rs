@@ -362,6 +362,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         windows_key: bevel_core::config::WindowsKey::Find,
         quick_search_all: false,
         battery_percent: false,
+        windows_display: false,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -391,6 +392,7 @@ fn quarter_size_scene(theme: &Theme, era: Era, fonts: &Fonts, open: Option<prope
         windows_key: bevel_core::config::WindowsKey::Find,
         quick_search_all: false,
         battery_percent: false,
+        windows_display: false,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -504,6 +506,7 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         windows_key: bevel_core::config::WindowsKey::Find,
         quick_search_all: false,
         battery_percent: false,
+        windows_display: false,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };

@@ -76,7 +76,7 @@ pub const POWER_KEY: tray::Key = (-95, 2);
 const NETWORK_TICKS: u32 = 2;
 /// Windows' own Display settings (the screen's resolution and scale): what Properties on the
 /// desktop's menu opens, where Windows 95 to XP had their Display Properties.
-const WINDOWS_DISPLAY_SETTINGS: &str = "ms-settings:display";
+pub const WINDOWS_DISPLAY_SETTINGS: &str = "ms-settings:display";
 
 /// Not in windows-sys; WinUser.h defines them as HSHELL_REDRAW | HSHELL_HIGHBIT and
 /// HSHELL_WINDOWACTIVATED | HSHELL_HIGHBIT.
@@ -151,10 +151,13 @@ pub static WM_BAR_COLORS: Private = Private::new("Bevel95.Bar.Colors");
 /// those start the person's real programs and act on their windows, and a test command acts on
 /// test items only (the review before 0.1.2, A1).
 pub static WM_QUICK_LAUNCH: Private = Private::new("Bevel95.Bar.QuickLaunch");
+/// Display Properties for live tests (`display_window::test_message`): opens and closes it and the
+/// Pattern window, and shows a test's wallpaper or pattern on the desktop without saving it.
+pub static WM_DISPLAY: Private = Private::new("Bevel95.Bar.Display");
 
 /// Every message of the bar registered by name, with the `WM_APP + n` it was before (the names
 /// `tools\dev\postbar.ps1` knows and decisions.md lists).
-pub static BAR_MESSAGES: [(&Private, u32); 12] = [
+pub static BAR_MESSAGES: [(&Private, u32); 13] = [
     (&WM_APPBAR, 1),
     (&WM_BAR_COMMAND, 3),
     (&WM_BAR_SIZE, 4),
@@ -167,6 +170,7 @@ pub static BAR_MESSAGES: [(&Private, u32); 12] = [
     (&WM_BAR_COLORS, 40),
     (&own_icon::WM_OWN_ICON, 41),
     (&WM_QUICK_LAUNCH, 42),
+    (&WM_DISPLAY, 43),
 ];
 
 /// Registers them all at the start, so that no thread (the keyboard hook's least of all) asks
@@ -304,6 +308,9 @@ pub struct App {
     pub quick_search: QuickSearch,
     /// The battery's percentage stands beside its icon (Bevel95 Settings, Taskbar page).
     pub battery_percent: bool,
+    /// Properties on the desktop's menu opens Windows' own display settings (Bevel95 Settings,
+    /// Desktop page), not Display Properties.
+    pub windows_display_settings: bool,
     /// Quick Launch: whether it shows, its icons, the one under the pointer and the one held down.
     pub ql: quick_launch::State,
     /// Auto hide: how many pixels of the bar are on the screen now, how many it is sliding
@@ -511,6 +518,8 @@ fn mark_restart() {
 pub fn run() -> u32 {
     crate::log::started();
     register_messages();
+    // Each look's wallpaper and pattern, before the desktop first shows.
+    crate::display_window::load();
     // SAFETY: plain Win32 calls.
     unsafe {
         // (Already set if Bevel95 Setup showed first: Windows then answers "access denied".)
@@ -655,6 +664,7 @@ pub fn run() -> u32 {
             group: settings.group,
             quick_search: settings.quick_search,
             battery_percent: settings.battery_percent,
+            windows_display_settings: settings.windows_display_settings,
             ql: quick_launch::State::new(settings.quick_launch),
             shown_px: 0,
             target_px: 0,
@@ -926,13 +936,14 @@ fn show_ours(bar: HWND) {
 
 /// Bevel95's own desktop shows while it is switched on and our bar is showing, in the color of
 /// the look in use; otherwise it is taken away (Windows' own desktop shows).
-fn sync_desktop() {
+pub fn sync_desktop() {
     let Some(look) = with_app(|app| {
         (app.ours && app.desktop).then(|| desktop::Look {
             era: app.era,
             theme: app.theme,
             font: app.regular.clone(),
             scale: app.scale,
+            background: crate::display_window::choice(app.era),
         })
     }) else {
         return;
@@ -1053,10 +1064,7 @@ fn run_desktop_command_now(code: usize, by_keyboard: bool, ticket: u32) {
         // Windows' own Display settings, started as the Start menu's Settings entries start
         // Windows' pages (a failure is logged there). Bevel95 Settings stays on the menu's
         // Bevel95 entry.
-        Some(DesktopCommand::Properties) => {
-            log("desktop: Properties opens Windows' display settings");
-            window_list::launch(WINDOWS_DISPLAY_SETTINGS);
-        }
+        Some(DesktopCommand::Properties) => crate::display_window::open_from_desktop(),
         // Its Desktop page, where the desktop is switched on and off.
         Some(DesktopCommand::Settings) => properties_window::open_settings_on(Page::Desktop),
         Some(DesktopCommand::Arrange(by)) => desktop::arrange(by),
@@ -2246,6 +2254,12 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
         save_setting("battery_percent", if battery_percent { "yes" } else { "no" });
         log(&format!("the battery's percentage is now {}", if battery_percent { "shown" } else { "hidden" }));
     }
+    // Written only when changed, as the battery's.
+    let windows_display = values.windows_display;
+    if with_app(|app| std::mem::replace(&mut app.windows_display_settings, windows_display) != windows_display).unwrap_or(false) {
+        save_setting("windows_display_settings", if windows_display { "yes" } else { "no" });
+        log(&format!("the desktop's Properties now opens {}", if windows_display { "Windows' display settings" } else { "Display Properties" }));
+    }
     if with_app(|app| app.clock_offset != values.clock_offset).unwrap_or(false) {
         set_clock_offset(values.clock_offset);
     }
@@ -2695,6 +2709,7 @@ fn size_changed(bar: HWND) {
     properties_window::look_changed();
     find_window::look_changed();
     about_window::look_changed();
+    crate::display_window::look_changed();
 }
 
 /// Theme menu: switches to another look at once (its colors, sizes and font) and remembers
@@ -2748,6 +2763,7 @@ fn set_era(bar: HWND, era: Era) {
     properties_window::look_changed();
     find_window::look_changed();
     about_window::look_changed();
+    crate::display_window::look_changed();
 }
 
 /// Colors menu: switches between True Color, 256 Colors and 16 Colors at once (the look's colors, patterns
@@ -2776,6 +2792,7 @@ fn set_colors(bar: HWND, depth: Depth) {
     properties_window::look_changed();
     find_window::look_changed();
     about_window::look_changed();
+    crate::display_window::look_changed();
 }
 
 /// Ends this bar and starts a fresh one: through the watchdog if it is running (it restores
@@ -3267,6 +3284,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             if let Some(&era) = Era::ALL.get(wparam) {
                 set_era(bar, era);
             }
+            return 0;
+        }
+        m if m == WM_DISPLAY.id() => {
+            crate::display_window::test_message(wparam, lparam);
             return 0;
         }
         m if m == WM_QUICK_LAUNCH.id() => {

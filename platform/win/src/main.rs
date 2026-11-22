@@ -23,6 +23,7 @@ mod autostart;
 mod confirm_window;
 mod bar;
 mod datetime_window;
+mod display_window;
 mod desktop;
 mod desktop_items;
 mod dialogs;

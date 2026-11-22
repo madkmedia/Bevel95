@@ -112,6 +112,7 @@ fn current_values() -> Option<(Values, bevel_core::theme::Era)> {
             group: app.group,
             quick_search_all: app.quick_search == bevel_core::config::QuickSearch::Everything,
             battery_percent: app.battery_percent,
+            windows_display: app.windows_display_settings,
             quick_launch: app.quick_launch_on(),
         };
         (values, app.era)

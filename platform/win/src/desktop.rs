@@ -156,6 +156,8 @@ pub struct Look {
     pub theme: &'static Theme,
     pub font: Font,
     pub scale: bevel_core::scale::Scale,
+    /// The look's wallpaper and pattern (`display_window::choice`).
+    pub background: bevel_core::display::Choice,
 }
 
 /// The look to use, handed from the bar to the desktop's thread.
@@ -1010,7 +1012,11 @@ fn rebuild(hwnd: HWND, force: bool) {
     STATE.with(|c| {
         let mut borrow = c.borrow_mut();
         if let Some(st) = borrow.as_ref() {
-            let same = st.look.era == look.era && st.look.scale == s && st.view.area() == area && (st.fb.width, st.fb.height) == size;
+            let same = st.look.era == look.era
+                && st.look.scale == s
+                && st.view.area() == area
+                && (st.fb.width, st.fb.height) == size
+                && st.look.background == look.background;
             if same && !force && std::ptr::eq(st.look.theme, look.theme) {
                 return;
             }
@@ -1036,6 +1042,14 @@ fn rebuild(hwnd: HWND, force: bool) {
             RECYCLE_FULL.store(snapshot.recycle_full, Ordering::SeqCst);
         }
         save_if_changed(&mut view);
+        // The wallpaper and pattern over the whole desktop, made now (a new choice, look, colors,
+        // size or screen), not at every paint; the plain desktop has none.
+        let started = Instant::now();
+        let background = bevel_core::display::background(look.theme, &look.background, size.0, size.1);
+        if background.is_some() {
+            log(&format!("desktop: its wallpaper and pattern drawn over {}x{} in {} ms", size.0, size.1, started.elapsed().as_millis()));
+        }
+        view.set_background(background.map(std::sync::Arc::new));
         let fb = Framebuffer::new(size.0, size.1, look.theme.colors.desktop);
         let mut st = State { look, view, fb, last_press: None, right_hit: None, pointer: None, timer: None, blink_on: true };
         st.look.scale = s;
