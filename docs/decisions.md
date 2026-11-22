@@ -5943,6 +5943,84 @@ Display Properties' Background page chooses them.
     a JPEG).
   - Golden pictures: 2000's `display-background`, `display-wallpaper` and `display-pattern` changed
     (their list now has the JPEG rows; nothing else on them); new `win2000-display-jpeg-list`.
+- **Browse... and the person's own picture as the choice** (brief 73):
+  - **Browse...** works in all three looks. It opens Windows 11's own window for choosing a file
+    (`GetOpenFileNameW`): **a stand-in**, as Bevel95 has no file window of its own yet (95's was
+    "Browsing for wallpaper" in the Windows 3.1 style, 98's and 2000's the Open window). Titled as
+    each Windows titled it ("Browsing for wallpaper" in 95, "Browse" in 98 and 2000), offering
+    `*.bmp;*.dib;*.jpg;*.jpeg;*.png;*.gif` as "Background Files" (98, 2000; 2000 also "All Picture
+    Files"), "Pictures" in 95 (PROVISIONAL: 95 offered only "Bitmaps"). **How it runs**
+    (`platform/win/src/wallpaper_browse.rs`): on a thread of its own (COM apartment-threaded),
+    owned by a hidden topmost window of that thread at Display Properties' place, so that it comes
+    over the bar's windows; nothing of it is owned by a window of the bar's thread, so the two
+    threads' input is never joined and a file window held up by the shell (a slow drive, a shell
+    extension) holds up only its own thread, never the bar or the desktop. A shell extension that
+    crashes inside it still ends the bar's process, as for Run's Browse... (which runs on the bar's
+    own thread). Display Properties waits behind it, disabled (as behind the Pattern window), and
+    is enabled again when the answer comes by `Bevel95.Bar.Browsed` (the bar's own) with a ticket;
+    an answer of an earlier opening or after Display Properties closed is dropped. A change of
+    look, colors or size, or Display Properties closing, asks the file window to go (WM_CLOSE:
+    Cancel); when the bar ends, the thread ends with the process. A clicked Display Properties
+    does not bring the file window forward (its owner is the hidden window). A chosen name that is
+    not valid text (a lone UTF-16 half) is refused as "cannot be shown", never kept lossily.
+  - **The chosen picture** is read on its own thread first; once it can be shown it comes into the
+    list by its name without the ending (`display::own_name`, cut at characters), where Windows'
+    order puts it (by name without case; of two of the same name the look's own first), selected,
+    and the monitor shows it by the BMPs' rule. It stays in the list while it is the look's choice
+    or was chosen in this opening of the window (PROVISIONAL: not measured how long the old Windows
+    listed it; the survey saw 98 add a browsed picture at the end of its list, unsorted; the brief
+    chose Windows' order). Its small picture in 98's and 2000's list: a BMP or DIB the bitmap's, any
+    other kind the picture file's (PNG and GIF: the JPEG's, PROVISIONAL).
+  - **Drawn** by the rules that are built: tiled, centered (cut equally when larger), and in 98 and
+    2000 stretched by Windows' own stepping, in the look's 1x pixels; 16 and 256 Colors by the
+    project's rules for pictures without their own drawing (nothing measured: known and left).
+  - **Kept** in background.txt as the file's full path on the look's wallpaper line (nothing is
+    copied into the data folder: the old Windows kept the path too). A path is told from one of
+    Windows' names by its form (`display::is_own`): it starts with a drive letter, colon and
+    backslash, or with two backslashes (a network path); Windows' names never hold a backslash or a
+    colon. The value is everything after the first `=`, trimmed (a file's name cannot end with a
+    space in Windows); letters of any alphabet, `#`, `=`, spaces and several dots come back whole
+    (tested; text is never cut by byte counts). At the bar's start the picture is read on its own
+    thread; the desktop shows its color or pattern until it is there. A picture that cannot be read
+    at the start (the file gone, the drive not there) leaves the look plain **and its line as it
+    is**: it is tried again at the next start, and Display Properties lists it as the choice
+    (PROVISIONAL). The log says "the person's own picture", never its name or path
+    (`Choice::wallpaper_said`).
+  - **A picture that cannot be shown** when chosen: the look's message window (`confirm_window::
+    message`), title "Display Properties", "This file cannot be shown as wallpaper. It may be
+    damaged, or it is not a picture Bevel95 can read." or, beyond the limits, "This picture is too
+    large to be used as wallpaper." (PROVISIONAL words, nothing measured); the choice unchanged.
+  - Edit Pattern... stays grayed (the Pattern Editor is a later step).
+  - The comparison cases no longer mask Browse... (usable as on the PCs): every Display
+    Properties case exact. Golden pictures: every look's `display-background`, `-wallpaper` and
+    `-pattern` (and 2000's `display-jpeg-list`) changed for Browse... no longer grayed, nothing
+    else; new `<look>-display-own-picture`.
+  - For live tests, `Bevel95.Bar.Display` wParam 6: the test picture `bevel95-test-picture.png` of
+    the data folder (made by the test and taken away again), lParam 0 tiled, 1 centered, 2
+    stretched; never saved.
+  - Live on the installed bar (98 look, Size 2), by test messages only, after the owner's 15 s
+    without input (`private/probes/display/build73/live.ps1`): the test picture tiled, read on
+    its own thread, 9,112 of 9,112 counted pixels as expected; the look's own desktop again, 9,112
+    of 9,112 as before. 20 rounds of the test picture shown and taken away and Display Properties
+    opened and closed: the bar's GDI objects 43 to 46, USER objects 32 to 35, handles 575 to 578
+    after the first rounds (GDI+ starting once in the process), and in a second 20 rounds no growth
+    (GDI 46, USER 35, handles 578 to 580). Browse... was not tried live (the owner's checklist: no
+    file window is operated on the owner's PC).
+- **The screen's full sharpness (job 4): not built.** The owner: "with setting for full res
+  maybe". What stands in the way: the desktop paints its icons, names, selection, the dotted
+  selection rectangle (inverted over what lies under it), cut and hidden fading and the drag
+  picture into one 1x picture together with the wallpaper under them, and shows it enlarged
+  (`desktop::present`). A picture in the screen's own pixels under enlarged icons needs the icons
+  painted apart from the ground, with a record of which pixels are theirs, and joined with a
+  screen-sized wallpaper at every repaint: a second way of painting the desktop. The inverted
+  dots and fading would have to be done again at the screen's pixels, and at a size between
+  whole numbers (even, smooth) the enlarging mixes an icon's edge with the ground it lies on, so
+  the joined picture would differ from today's. It would make neither the plain desktop nor the
+  ordinary wallpaper slower (a path of its own), but it would make the desktop's drawing less
+  exact or double it. What it would take: `desktop_icons::paint` drawing onto a see-through layer
+  (the label boxes opaque, the icons with their masks), the inverted dots done by the layer's
+  owner over the joined picture, a screen-sized wallpaper made where the 1x one is, and `present`
+  joining the two only when the setting is on and the size is whole.
 
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean

@@ -16,7 +16,7 @@ use bevel_core::display::form::{DisplayProperties, DisplayWindow, Part};
 use bevel_core::display::pattern::{self, PatternWindow};
 use bevel_core::display::{self, Choice, Picture, PictureId};
 
-use crate::pictures;
+use crate::{picture_file, pictures, wallpaper_browse};
 use bevel_core::theme::Era;
 use bevel_winkit::state_file;
 
@@ -24,6 +24,9 @@ use crate::bar::{self, with_app};
 use crate::kit::{self, Hosted};
 use crate::log::{data_dir, log, path_kind};
 use crate::util::take_focus;
+
+/// The live tests' picture (test message 6): a file of the test's own making in the data folder.
+const TEST_PICTURE: &str = "bevel95-test-picture.png";
 
 /// Each look's choice in effect (95, 98, 2000), as read from background.txt.
 static CHOICES: Mutex<Option<[Choice; 3]>> = Mutex::new(None);
@@ -89,11 +92,12 @@ fn put_in_effect(era: Era, choice: Choice) {
         // The choice holds for this run (the desktop shows it); the file stays as it was.
         log(&format!("could not save the wallpaper and pattern to {}: {e}", path_kind(&path)));
     }
-    // Windows' own names, Bevel95's data: no text from outside Bevel95.
+    // Windows' own names, Bevel95's data: no text from outside Bevel95 (a person's own picture
+    // never by its file's name or path).
     log(&format!(
         "display: {} wallpaper {}, {}, pattern {}",
         era.title(),
-        choice.wallpaper.as_deref().unwrap_or("(None)"),
+        choice.wallpaper_said(),
         choice.show.word(),
         choice.pattern.as_deref().unwrap_or("(None)")
     ));
@@ -112,6 +116,7 @@ fn wanted(extra: Option<PictureId>) -> Vec<PictureId> {
     if let Some(Some(id)) = kit::with::<DisplayHost, _>(|h| h.form.props.to_read()) {
         ids.push(id);
     }
+    ids.extend(browsed_id());
     ids.extend(extra);
     ids
 }
@@ -134,6 +139,87 @@ pub fn picture_for(era: Era, choice: &Choice) -> Option<Arc<Picture>> {
     pictures::ready(&id)
 }
 
+/// The person's own picture chosen with Browse... while it is being read (its file's full path).
+static BROWSED: Mutex<Option<String>> = Mutex::new(None);
+
+fn browsed_id() -> Option<PictureId> {
+    BROWSED.lock().ok().and_then(|b| b.clone()).map(PictureId::Own)
+}
+
+/// Browse...: Windows' own file window over Display Properties, which waits behind it
+/// (`wallpaper_browse`: its own thread).
+fn browse() {
+    if wallpaper_browse::is_open() {
+        return;
+    }
+    let Some(hwnd) = kit::hwnd::<DisplayHost>() else { return };
+    let Some(era) = kit::with::<DisplayHost, _>(|h| h.form.props.era) else { return };
+    // SAFETY: our own window; enabled again when the answer comes or it closes.
+    unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow(hwnd, 0) };
+    if wallpaper_browse::open(era, hwnd).is_some() {
+        log("Browse: Windows' file window opened");
+    } else {
+        // SAFETY: as above.
+        unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow(hwnd, 1) };
+    }
+}
+
+/// The file window has gone (`wallpaper_browse::WM_BROWSED`): Display Properties is usable again;
+/// a file chosen is read on its own thread and comes into the list once it can be shown.
+pub fn browsed(ticket: u64) {
+    let Some(answer) = wallpaper_browse::answer(ticket) else { return };
+    if let Some(hwnd) = kit::hwnd::<DisplayHost>() {
+        // SAFETY: our own window.
+        unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow(hwnd, 1) };
+        take_focus(hwnd);
+    }
+    let Some(path) = answer else { return };
+    if !display::is_own(&path) {
+        cannot_be_shown(picture_file::Refused::Unreadable);
+        return;
+    }
+    if let Ok(mut b) = BROWSED.lock() {
+        *b = Some(path);
+    }
+    ask(None);
+    take_browsed();
+}
+
+/// The picture chosen with Browse..., once read: into the list and onto the monitor; or, if it
+/// cannot be shown, the look's message and the choice unchanged.
+fn take_browsed() {
+    let Some(id) = browsed_id() else { return };
+    let PictureId::Own(path) = id.clone() else { return };
+    match pictures::state(&id) {
+        pictures::State::Ready(p) => {
+            if let Ok(mut b) = BROWSED.lock() {
+                *b = None;
+            }
+            kit::update::<DisplayHost>(|h| {
+                h.form.props.add_own(&path);
+                h.form.props.set_read(id, Some(p));
+            });
+        }
+        pictures::State::Failed(why) => {
+            if let Ok(mut b) = BROWSED.lock() {
+                *b = None;
+            }
+            cannot_be_shown(why);
+        }
+        _ => {}
+    }
+}
+
+/// The look's message for a picture chosen that cannot be shown (PROVISIONAL words: nothing
+/// measured).
+fn cannot_be_shown(why: picture_file::Refused) {
+    let text = match why {
+        picture_file::Refused::TooLarge => "This picture is too large to be used as wallpaper.",
+        picture_file::Refused::Unreadable => "This file cannot be shown as wallpaper. It may be damaged, or it is not a picture Bevel95 can read.",
+    };
+    crate::confirm_window::message("Display Properties", text);
+}
+
 /// Display Properties' monitor gets the picture it waits for, if it has come.
 fn feed_window() {
     let need = kit::with::<DisplayHost, _>(|h| h.form.props.to_read().filter(|id| !h.form.props.has_read(id))).flatten();
@@ -148,6 +234,7 @@ fn feed_window() {
 /// and the desktop take what came.
 pub fn pictures_came() {
     ask(None);
+    take_browsed();
     feed_window();
     bar::sync_desktop();
 }
@@ -242,6 +329,11 @@ pub fn open() {
 
 /// Closes Display Properties and its Pattern window, applying nothing.
 pub fn close() {
+    // An open file window of Browse... goes too; a picture being read for it is dropped.
+    wallpaper_browse::close();
+    if let Ok(mut b) = BROWSED.lock() {
+        *b = None;
+    }
     kit::close::<PatternHost>();
     kit::close::<DisplayHost>();
     // Its monitor's picture is let go (unless the desktop draws it).
@@ -295,6 +387,7 @@ fn activate(part: Part) {
         Part::Cancel | Part::TitleClose => close(),
         Part::TitleHelp => crate::window_list::launch("https://support.microsoft.com/windows"),
         Part::PatternButton => open_pattern(),
+        Part::Browse => browse(),
         _ => {}
     }
 }
@@ -338,7 +431,9 @@ fn activate_pattern(part: pattern::Part) {
 /// 4 the look's pattern number lParam, 5 takes a test's choice away again. A test's choice is never
 /// saved and never changes the person's own: the desktop shows it until 5, a restart, a change of
 /// look, colors or size, or the person's Apply or OK. 2 opens the Pattern window only where a
-/// person could (98 and 2000, Pattern... not grayed).
+/// person could (98 and 2000, Pattern... not grayed). 6 shows the test picture
+/// `bevel95-test-picture.png` of the data folder (a file the test makes and takes away again):
+/// lParam 0 tiled, 1 centered, 2 stretched; it is read on its own thread like a person's picture.
 pub fn test_message(wparam: usize, lparam: isize) {
     let Some(era) = with_app(|app| app.era) else { return };
     match wparam {
@@ -364,6 +459,24 @@ pub fn test_message(wparam: usize, lparam: isize) {
             bar::sync_desktop();
         }
         5 if drop_test() => bar::sync_desktop(),
+        // The test picture of a live test (a file of the test's own making in the data folder,
+        // by its fixed name: never a path of the person's), lParam 0 tiled, 1 centered, 2
+        // stretched (95: centered).
+        6 => {
+            let mut c = Choice::plain();
+            c.wallpaper = Some(data_dir().join(TEST_PICTURE).to_string_lossy().into_owned());
+            c.show = match lparam {
+                1 => display::Show::Center,
+                2 if era != Era::Win95 => display::Show::Stretch,
+                2 => display::Show::Center,
+                _ => display::Show::Tile,
+            };
+            log(&format!("display: a live test shows its test picture {} (not saved)", c.show.word()));
+            if let Ok(mut t) = TEST.lock() {
+                *t = Some((era, c));
+            }
+            bar::sync_desktop();
+        }
         _ => {}
     }
 }
@@ -375,6 +488,7 @@ mod tests {
 
     #[test]
     fn a_choice_is_saved_for_its_look_only_and_read_back() {
+        let _turn = pictures::TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let dir = data_dir();
         assert!(!dir.to_string_lossy().contains("AppData\\Local\\Bevel95"), "a scratch data folder");
         let path = file();
@@ -408,6 +522,40 @@ mod tests {
         assert_eq!(saved(Era::Win98), Choice::plain());
         assert!(state_file::change(&path, "", |t| display::with_choice(t, Era::Win98, &forest)).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), [0xFF, 0xFE, 0x41, 0x00]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A person's own picture that cannot be read at the start (the file gone, the drive not
+    /// there): the look stays plain, its line is kept as it is (tried again at the next start),
+    /// and Display Properties shows it in the list as the choice.
+    #[test]
+    fn a_missing_picture_at_the_start_keeps_its_line() {
+        let _turn = pictures::TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let path = file();
+        let gone = "Z:\\No such drive\\Фото #1=2.v2.jpg";
+        let text = format!("# mine\nwin2000 wallpaper = {gone}\nwin2000 display = stretch\nwin2000 pattern = (None)\n");
+        std::fs::write(&path, &text).unwrap();
+        load();
+        let c = saved(Era::Win2000);
+        assert_eq!(c.wallpaper.as_deref(), Some(gone));
+        let id = c.to_read(Era::Win2000).unwrap();
+        pictures::want(&id);
+        for _ in 0..500 {
+            if !matches!(pictures::state(&id), pictures::State::Reading) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(matches!(pictures::state(&id), pictures::State::Failed(_)));
+        // The desktop: plain (no picture, no pattern).
+        let theme = bevel_core::theme::theme_in(Era::Win2000, bevel_core::theme::Depth::TrueColor);
+        assert!(display::background_on(theme, &c, pictures::ready(&id).as_deref(), &[], 64, 48).is_none());
+        // The file is as it was; Display Properties lists the picture by its name, chosen.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        let p = DisplayProperties::new(Era::Win2000, c.clone());
+        assert_eq!(p.shown.wallpaper.as_deref(), Some(gone));
+        assert!(!p.changed());
+        pictures::keep_only(&[]);
         let _ = std::fs::remove_file(&path);
     }
 }

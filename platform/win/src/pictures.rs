@@ -30,8 +30,8 @@ pub enum State {
     Absent,
     Reading,
     Ready(Arc<Picture>),
-    // Why it failed (Browse... says it in its message: the next step).
-    Failed(#[allow(dead_code)] Refused),
+    /// Why it failed (Browse... says it in its message).
+    Failed(Refused),
 }
 
 /// Every picture wanted now, with where it stands (a handful at most: the desktop's, Display
@@ -129,6 +129,10 @@ fn read(id: PictureId) {
     }
 }
 
+/// The tests that touch the slots (which are the process's) take turns.
+#[cfg(test)]
+pub(crate) static TESTS: Mutex<()> = Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +152,7 @@ mod tests {
     /// picture still wanted gets its answer.
     #[test]
     fn a_late_answer_is_dropped() {
+        let _turn = TESTS.lock().unwrap_or_else(|e| e.into_inner());
         let late = PictureId::Windows(Era::Win2000, "Windows 2000");
         let kept = PictureId::Windows(Era::Win2000, "Fly Away");
         want(&late);

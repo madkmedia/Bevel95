@@ -36,7 +36,10 @@ look you choose.
   Windows is set to show hidden items (File Explorer > View > Show > Hidden items); protected
   system files only when Windows does not hide them. Right-click the desktop and choose
   **Properties** for **Display Properties**: each look's own wallpapers and patterns (tiled,
-  centered or, in 98 and 2000, stretched), drawn as that Windows drew them.
+  centered or, in 98 and 2000, stretched), drawn as that Windows drew them, Windows 2000's
+  JPEG pictures too. **Browse...** takes a picture of your own in every look (BMP, DIB, JPEG,
+  PNG or GIF, at most 16,384 pixels a side and 50 million pixels), drawn in the look's big
+  pixels like everything else; Bevel95 remembers where the file is and does not copy it.
 - **Minesweeper, Solitaire and the Calculator**, each in the look you use, with their Help.
 - **Quick Search**: press the Windows key, type a few letters of a program's name, press Enter.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is

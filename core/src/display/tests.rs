@@ -457,6 +457,41 @@ fn a_persons_own_picture_is_a_path() {
     assert!(!size_taken(16_385, 1) && !size_taken(0, 5) && !size_taken(10_000, 5_001) && !size_taken(-1, 1));
 }
 
+/// A person's own picture is kept in background.txt as its file's whole path, on the look's
+/// wallpaper line, and comes back whole: letters of any alphabet, `#`, `=`, spaces, several dots.
+/// A path whose file is gone is kept as it is (it is read again at the next start).
+#[test]
+fn a_paths_round_trip_through_background_txt() {
+    let hard = [
+        "C:\\Users\\Ана\\Фото\\日本の写真 #1=2 (copy).v1.final.JPG",
+        "D:\\a b\\c#d=e.f.g.png",
+        "\\\\server\\share\\Ελληνικά\\x.gif",
+        "C:\\😀 emoji\\pic.bmp",
+        "E:\\gone\\never was here.jpeg",
+    ];
+    for path in hard {
+        let mut text = String::new();
+        for era in Era::ALL {
+            text = with_choice(&text, era, &choice(Some(path), Show::Stretch, Some(if era == Era::Win2000 { "Weave" } else { "Bricks" })));
+        }
+        let [c95, c98, c2000] = parse(&text);
+        // 95 has no Stretch: that look is plain, as for any way it does not offer.
+        assert_eq!(c95, Choice::plain(), "{text}");
+        assert_eq!(c98.wallpaper.as_deref(), Some(path), "{text}");
+        assert_eq!(c2000.wallpaper.as_deref(), Some(path), "{text}");
+        assert!(text.contains(&format!("win98 wallpaper = {path}\n")));
+        // Written again unchanged, nothing else moves.
+        let again = with_choice(&text, Era::Win98, &c98);
+        assert_eq!(again, text);
+        assert_eq!(c98.wallpaper_said(), "the person's own picture");
+    }
+    let [c95, ..] = parse("win95 wallpaper = C:\\x\\y.jpg\nwin95 display = tile\n");
+    assert_eq!(c95, choice(Some("C:\\x\\y.jpg"), Show::Tile, None));
+    // A relative name or other text that is neither a path nor a name of the look's: plain.
+    assert_eq!(parse("win98 wallpaper = pictures\\me.jpg\n")[1], Choice::plain());
+    assert_eq!(choice(Some("Forest"), Show::Tile, None).wallpaper_said(), "Forest");
+}
+
 /// A picture to read (a JPEG, a person's own) is drawn once it is there; until then the ground
 /// shows (the pattern around a centered one), or nothing at all (the plain desktop).
 #[test]

@@ -735,6 +735,27 @@ fn wallpaper_desktop_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) 
     screen
 }
 
+/// A photo-like test picture of the tests' own making: an evening sky's gradient, a sun, and fine
+/// lines (every 9th column and row a dark line) that show how it is scaled.
+fn test_photo(w: i32, h: i32) -> bevel_core::display::Picture {
+    let mut pixels = Vec::with_capacity((w * h) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let t = y * 255 / h.max(1);
+            let (mut r, mut g, mut b) = (40 + t * 200 / 255, 60 + t * 120 / 255, 160 - t * 100 / 255);
+            let (dx, dy) = (x - w * 2 / 3, y - h * 3 / 5);
+            if dx * dx + dy * dy < (h / 6) * (h / 6) {
+                (r, g, b) = (255, 220, 120);
+            }
+            if x % 9 == 0 || y % 9 == 0 {
+                (r, g, b) = (r / 3, g / 3, b / 3);
+            }
+            pixels.push(0xFF00_0000 | (r as u32) << 16 | (g as u32) << 8 | b as u32);
+        }
+    }
+    bevel_core::display::Picture { width: w, height: h, pixels }
+}
+
 /// Display Properties' Background page, or the Pattern window, in the look's own design.
 fn display_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
     use bevel_core::display::form::DisplayProperties;
@@ -759,6 +780,14 @@ fn display_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebu
             p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
         }
         "display-pattern" => p.set_shown(Choice { wallpaper: None, show: Show::Center, pattern: Some(pattern_name.into()) }),
+        // A person's own picture chosen with Browse... (a test picture made here), in the list by
+        // its name and on the monitor by the BMPs' rule, Center.
+        "display-own-picture" => {
+            let path = "C:\\Users\\Someone\\Pictures\\Evening Sky.jpg";
+            p.set_shown(Choice { wallpaper: Some(path.into()), show: Show::Center, pattern: None });
+            p.set_read(bevel_core::display::PictureId::Own(path.into()), Some(std::sync::Arc::new(test_photo(640, 400))));
+            p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
+        }
         // 2000's JPEG entries, one chosen as on the Reference PC (its monitor shows the desktop
         // color: a golden picture is drawn without the bar's reader of JPEGs).
         "display-jpeg-list" => {
@@ -1700,6 +1729,11 @@ fn scenes() -> Vec<Scene> {
                 add(state, caption, display_scene(theme, era, &fonts, state));
             }
         }
+        add(
+            "display-own-picture",
+            "Display Properties with a picture of the person's own chosen with Browse... (a test picture): in the list by its name where Windows' order puts it, on the monitor scaled as each Windows scaled its pictures",
+            display_scene(theme, era, &fonts, "display-own-picture"),
+        );
         if era == Era::Win2000 {
             add(
                 "display-jpeg-list",
@@ -3098,6 +3132,67 @@ fn draw_display_sheet() {
         }
     }
     label_font.draw(&mut sheet, gap, height - 16, "Every picture at true size (view at 100%). Drawn by Bevel95's own code, its own icons; lay it beside private\\probes\\display\\backgrounds.png.", rgb(0x808080));
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
+
+/// The owner's sheet of a person's own picture (brief 73; not a golden image, not public): per
+/// look the Background page with a test picture of the tests' own making chosen with Browse...,
+/// beside 800x600 desktops showing it tiled, centered and (98, 2000) stretched, every picture at
+/// true size, labels outside the pictures; drawn by the real code. `BEVEL95_SHEET=<file> cargo
+/// test -p bevel-core --test golden -- --ignored --exact draw_own_picture_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of own pictures to BEVEL95_SHEET; run it on request"]
+fn draw_own_picture_sheet() {
+    use bevel_core::desktop_icons::Desktop;
+    use bevel_core::display::form::DisplayProperties;
+    use bevel_core::display::{self, Choice, PictureId, Show};
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    let (sw, sh, gap, label) = (800, 600, 16, 20);
+    let label_font = load_font(&WIN95, false);
+    let bold = load_font(&WIN95, true);
+    let width = gap + 404 + 3 * (gap + sw) + gap;
+    let height = 3 * (label + sh + gap) + 20;
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    let file = "C:\\Users\\Someone\\Pictures\\Evening Sky.jpg";
+    let photo = std::sync::Arc::new(test_photo(320, 200));
+    for (row, era) in Era::ALL.into_iter().enumerate() {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let y = 4 + row as i32 * (label + sh + gap);
+        let look = era.title();
+        bold.draw(&mut sheet, gap, y, &format!("{look}: Background page, \"Evening Sky\" chosen"), rgb(0x000000));
+        let mut p = DisplayProperties::new(era, Choice::plain());
+        p.set_shown(Choice { wallpaper: Some(file.into()), show: Show::Center, pattern: None });
+        p.set_read(PictureId::Own(file.into()), Some(photo.clone()));
+        p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
+        let mut window = Framebuffer::new(404, 448, 0);
+        p.paint(&mut window, theme, &fonts);
+        sheet.blit(&window, gap, y + label);
+        let ways: &[(&str, Show)] = if era == Era::Win95 {
+            &[("tiled", Show::Tile), ("centered", Show::Center)]
+        } else {
+            &[("tiled", Show::Tile), ("centered", Show::Center), ("stretched", Show::Stretch)]
+        };
+        for (k, (name, show)) in ways.iter().enumerate() {
+            let x = gap + 404 + gap + k as i32 * (sw + gap);
+            label_font.draw(&mut sheet, x, y, &format!("{look}: the test picture (320x200) {name}"), rgb(0x000000));
+            let choice = Choice { wallpaper: Some(file.into()), show: *show, pattern: None };
+            let mut screen = display::background_on(theme, &choice, Some(&photo), &[], sw, sh).expect("the picture");
+            let mut bar = Framebuffer::new(sw, theme.bar.height, 0);
+            paint::paint_bar(&mut bar, theme, &fonts, &Bar { clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() });
+            let area = Rect::new(0, 0, sw, sh - bar.height);
+            let mut d = Desktop::new(era, area);
+            d.set_background(Some(std::sync::Arc::new(screen.clone())));
+            d.paint(&mut screen, theme, &fonts, area);
+            screen.blit(&bar, 0, sh - bar.height);
+            sheet.blit(&screen, x, y + label);
+        }
+    }
+    label_font.draw(&mut sheet, gap, height - 16, "Every picture at true size (view at 100%), drawn by Bevel95's own code at the look's 1x pixels. The test picture is one the test draws itself (a gradient, a sun, a dark line every 9 pixels).", rgb(0x808080));
     write_png(Path::new(&path), &sheet);
     println!("wrote the sheet");
 }

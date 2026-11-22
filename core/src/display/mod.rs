@@ -252,6 +252,16 @@ impl Choice {
         self.wallpaper.as_deref().filter(|v| is_own(v))
     }
 
+    /// The wallpaper as the log may name it: Windows' own by name, a person's own picture never by
+    /// its file's name or path.
+    pub fn wallpaper_said(&self) -> &str {
+        match self.wallpaper.as_deref() {
+            None => NONE,
+            Some(v) if is_own(v) => "the person's own picture",
+            Some(name) => name,
+        }
+    }
+
     /// A wallpaper is chosen: one of the look's own, or a person's own picture.
     pub fn has_wallpaper(&self, era: Era) -> bool {
         self.wallpaper_in(era).is_some() || self.own().is_some()
@@ -732,7 +742,15 @@ fn parse_one(text: &str, era: Era) -> Option<Choice> {
         let Some((key, value)) = line.split_once('=') else { continue };
         let (key, value) = (key.trim(), value.trim());
         if key.eq_ignore_ascii_case(&wk) {
-            choice.wallpaper = if value == NONE { None } else { Some(wallpaper(era, value)?.name.to_string()) };
+            // "(None)", a person's own picture by its file's full path (kept whole, whether the
+            // file is there now or not: it is read again at each start), or a name of the look's.
+            choice.wallpaper = if value == NONE {
+                None
+            } else if is_own(value) {
+                Some(value.to_string())
+            } else {
+                Some(wallpaper(era, value)?.name.to_string())
+            };
         } else if key.eq_ignore_ascii_case(&dk) {
             let show = Show::from_word(value)?;
             if !Show::offered(era).contains(&show) {
@@ -747,7 +765,7 @@ fn parse_one(text: &str, era: Era) -> Option<Choice> {
 }
 
 /// The first lines of a new background.txt.
-const HEADER: &str = "# Bevel95's wallpaper and pattern for each look (desktop menu > Properties, Background page).\n# Each look keeps its own: (None) or a name from that look's lists; display = center, tile or stretch.\n# A note needs a line of its own, starting with #: after a value it would be taken as part of it.\n";
+const HEADER: &str = "# Bevel95's wallpaper and pattern for each look (desktop menu > Properties, Background page).\n# Each look keeps its own: (None), a name from that look's lists or a picture file's full path; display = center, tile or stretch.\n# A note needs a line of its own, starting with #: after a value it would be taken as part of it.\n";
 
 /// `text` with `era`'s three lines set to `choice` (added if missing): the first line of each key
 /// takes the value and later lines of the same key go, so that exactly one line per key is left

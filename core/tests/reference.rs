@@ -3983,7 +3983,7 @@ fn wallpaper_desktop_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
 /// Display Properties' Background page and the Pattern window against the Reference PCs
 /// (`vm/<pc>-truecolor-display-background`, `-bg-*`, `-pattern-window*`; survey.md, sections 1 to
 /// 3): the whole window where the PC shows it. Masked, each for its reason: the other tabs
-/// (Bevel95 shows only Background for now); Browse... (grayed for now, usable on the PCs); in 98
+/// (Bevel95 shows only Background for now); in 98
 /// the list's scroll bar (the PC's list has the HTML page as a 22nd entry, so its thumb differs);
 /// in 2000 the list's scroll bar (the PC's list has Sample, the PC user's own picture, as a 25th
 /// entry, so its thumb differs; every row shown is the same); in 2000's JPEG cases the monitor's
@@ -4029,12 +4029,8 @@ fn display_window_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         }
         let mut ours = Framebuffer::new(404, 448, 0);
         p.paint(&mut ours, theme, fonts);
+        // Browse... is usable as on the PCs (brief 73): no mask.
         let mut masks = vec![Rect::new(83, 29, 312, 20)];
-        masks.push(match era {
-            Era::Win95 => Rect::new(279, 335, 92, 23),
-            Era::Win98 => Rect::new(294, 285, 75, 23),
-            Era::Win2000 => Rect::new(306, 282, 75, 23),
-        });
         // With a pattern chosen 95's Edit Pattern... is usable on the PC, grayed in Bevel95 for now.
         if era == Era::Win95 && pattern.is_some() {
             masks.push(Rect::new(96, 335, 92, 23));

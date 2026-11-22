@@ -10,8 +10,9 @@
 //!
 //! The 404x448 window with OK, Cancel and Apply (grayed until something changes). It shows only
 //! the tabs that work, Background for now (the owner's decision, 2026-11-21: "Yes only show tabs
-//! that work"); the tab strip takes more pages without changing the window. Grayed for now,
-//! each a later step: Browse... (the person's own pictures) and Edit Pattern... (the Pattern Editor).
+//! that work"); the tab strip takes more pages without changing the window. Browse... chooses a
+//! person's own picture (the host opens Windows' file window); Edit Pattern... is grayed for now
+//! (the Pattern Editor, a later step).
 
 use crate::dialog::{self, OPTION_OFF, OPTION_ON, TitleButtons};
 use crate::display::{self, Choice, Show};
@@ -553,8 +554,8 @@ impl DisplayProperties {
 
     pub fn enabled(&self, part: Part) -> bool {
         match part {
-            // Later steps: the person's own pictures and the Pattern Editor.
-            Part::Browse | Part::EditPattern => false,
+            // A later step: the Pattern Editor.
+            Part::EditPattern => false,
             Part::Apply => self.changed(),
             // 98 and 2000 gray Pattern... whenever a wallpaper is tiled or stretched.
             Part::PatternButton => self.shown.wallpaper.is_none() || self.shown.show == Show::Center,
@@ -1381,12 +1382,9 @@ mod tests {
     fn the_grayed_controls_do_not_act() {
         let mut w = window(Era::Win98, Choice::plain());
         let mut c = Controller::default();
-        // Browse... is grayed: a click, Alt+B and Tab never reach it.
-        let (x, y) = centre(&w, Part::Browse);
-        assert!(c.mouse_down(&mut w, x, y).is_empty());
-        assert!(c.mouse_up(&mut w, x, y).is_empty());
-        assert!(c.access(&mut w, 'b').is_empty());
-        assert!(!w.tab_stops().contains(&Part::Browse));
+        // Browse... works now: Alt+B reaches the host, and Tab stops on it.
+        assert!(c.access(&mut w, 'b') == vec![Effect::Activate(Part::Browse)]);
+        assert!(w.tab_stops().contains(&Part::Browse));
         // The Display list is grayed while no wallpaper is chosen.
         assert!(!w.props.enabled(Part::ShowList));
         assert!(!w.props.choose(Part::ShowRow(1)));
@@ -1398,7 +1396,7 @@ mod tests {
         assert_eq!(w.props.shown.show, Show::Tile);
         assert!(!w.props.enabled(Part::PatternButton));
         assert!(c.access(&mut w, 'p').is_empty());
-        // 95: Edit Pattern... is grayed for now, Browse... too.
+        // 95: Edit Pattern... is grayed for now.
         let mut w = window(Era::Win95, Choice::plain());
         relayout(&mut w);
         let (x, y) = centre(&w, Part::EditPattern);
@@ -1458,6 +1456,47 @@ mod tests {
         c.key(&mut w, Key::Up, Mods::default());
         c.key(&mut w, Key::Escape, Mods::default());
         assert_eq!((w.props.drop, w.props.shown.show), (None, Show::Stretch));
+    }
+
+    /// A person's own picture comes into the list by its name without the ending, where Windows'
+    /// order puts it, selected; it stays while it is the choice or was chosen in this opening.
+    #[test]
+    fn a_persons_own_picture_takes_its_place_in_the_list() {
+        let mut w = window(Era::Win98, Choice::plain());
+        let me = "C:\\Pictures\\Garden.2024.jpg";
+        w.props.add_own(me);
+        let at = w.props.wallpaper_names.iter().position(|n| n == "Garden.2024").unwrap();
+        assert_eq!((w.props.wallpaper_names[at - 1].as_str(), w.props.wallpaper_names[at + 1].as_str()), ("Forest", "Gold Weave"));
+        assert_eq!((w.props.selected(Which::Wallpaper), w.props.shown.wallpaper.as_deref()), (Some(at), Some(me)));
+        assert_eq!(w.props.wallpaper_kinds[at], Kind::Picture);
+        assert!(w.props.enabled(Part::Apply) && w.props.enabled(Part::ShowList));
+        assert_eq!(w.props.to_read(), Some(display::PictureId::Own(me.into())));
+        // Another entry chosen: the picture stays in the list (chosen in this opening).
+        let mut c = Controller::default();
+        c.key(&mut w, Key::Home, Mods::default());
+        assert_eq!(w.props.shown.wallpaper, None);
+        assert!(w.props.wallpaper_names.iter().any(|n| n == "Garden.2024"));
+        // A second one chosen with Browse...: both listed; a BMP gets the bitmap's small picture.
+        w.props.add_own("D:\\Old\\Aardvark.BMP");
+        assert_eq!((w.props.wallpaper_names[1].as_str(), w.props.wallpaper_names[2].as_str()), ("1stboot", "Aardvark"));
+        assert_eq!(w.props.wallpaper_kinds[2], Kind::Bitmap);
+        assert_eq!(w.props.wallpaper_names.len(), 23);
+        // A window opening on the look's own picture lists it, selected, nothing to apply.
+        let w = window(Era::Win95, Choice { wallpaper: Some(me.into()), show: Show::Tile, pattern: None });
+        assert_eq!(w.props.shown.wallpaper.as_deref(), Some(me));
+        assert_eq!(w.props.wallpaper_names[w.props.selected(Which::Wallpaper).unwrap()], "Garden.2024");
+        assert!(!w.props.enabled(Part::Apply));
+        // A path is never taken for one of Windows' names, nor the other way round.
+        let mut w = window(Era::Win98, Choice::plain());
+        w.props.add_own("Forest");
+        assert_eq!(w.props.shown.wallpaper, None);
+        // The monitor's picture is taken only for what it shows.
+        w.props.add_own(me);
+        let p = std::sync::Arc::new(display::Picture { width: 2, height: 2, pixels: vec![0xFF00_0000; 4] });
+        w.props.set_read(display::PictureId::Own("C:\\other.png".into()), Some(p.clone()));
+        assert!(w.props.read_now().is_none());
+        w.props.set_read(display::PictureId::Own(me.into()), Some(p));
+        assert!(w.props.read_now().is_some() && w.props.has_read(&display::PictureId::Own(me.into())));
     }
 
     #[test]

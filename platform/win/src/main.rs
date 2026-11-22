@@ -46,6 +46,7 @@ mod status;
 mod tip;
 mod tray;
 mod volume_popup;
+mod wallpaper_browse;
 mod watchdog;
 mod window_list;
 mod zones;

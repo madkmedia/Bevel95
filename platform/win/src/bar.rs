@@ -181,6 +181,7 @@ fn register_messages() {
     }
     // The bar's own, posted by its threads only (never by a live test).
     crate::pictures::WM_PICTURE.id();
+    crate::wallpaper_browse::WM_BROWSED.id();
 }
 /// The timer that slides an auto-hiding bar in and out, and its step.
 const SLIDE: usize = 2;
@@ -3301,6 +3302,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         m if m == crate::pictures::WM_PICTURE.id() => {
             crate::display_window::pictures_came();
+            return 0;
+        }
+        m if m == crate::wallpaper_browse::WM_BROWSED.id() => {
+            crate::display_window::browsed(wparam as u64);
             return 0;
         }
         m if m == WM_QUICK_LAUNCH.id() => {
