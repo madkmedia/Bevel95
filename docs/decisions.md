@@ -6120,7 +6120,15 @@ sharable").
   table `bevel_core::programs::OWN_PROGRAMS` and `add_own_programs`, moved into the core from
   `start_menu.rs` for this, unchanged), opened down to Games. Run it again with `cargo test -p
   bevel-core --test golden -- --ignored --exact draw_readme_start_menus`; it is not a golden
-  image and no test compares it. Also CONTRIBUTING.md, `docs/roadmap.md`, the bug report form
+  image and no test compares it. **A website's picture** (2026-11-21, brief 76): the ignored
+  tests `draw_site_desktop` and `draw_site_desktop_95` in the same file draw one whole desktop at
+  1024 x 768 by the same rule (98: Clouds stretched, the look's own icons, My Computer with its
+  web view, Minesweeper in mid-game, the bar with Quick Launch, two task buttons, the tray and the
+  clock, the Start menu open on Programs > Accessories > Games; 95: its plain teal, its plain My
+  Computer, Solitaire in mid-game, no Quick Launch). With the Start menu open no window is in
+  front, as on the real bar (the menu takes the keyboard): both title bars inactive, both task
+  buttons raised. They write `site/desktop.png` and `site/desktop-95.png`, or the files named by
+  `BEVEL95_SITE_PICTURE` and `BEVEL95_SITE_PICTURE_95`. Also CONTRIBUTING.md, `docs/roadmap.md`, the bug report form
   (`.github/ISSUE_TEMPLATE/bug_report.yml`) and a build-and-test workflow
   (`.github/workflows/test.yml`, untried). The owner's checklists moved unchanged to
   `private/checklists.md`. The art guard allows `docs/img/`.

@@ -2671,6 +2671,331 @@ fn draw_readme_start_menus() {
     println!("wrote {}", path.display());
 }
 
+/// The website's picture (`site/desktop.png`, or the file named by `BEVEL95_SITE_PICTURE`): one
+/// whole Windows 98 desktop at 1024 x 768, True Color, every pixel drawn by Bevel95's own code from
+/// its own tables (never a golden scene that copies an old Windows screen, never anyone's screen).
+/// Bottom to top: Clouds stretched over the screen; the look's own desktop icons; My Computer with
+/// its web view, C: selected; Minesweeper in mid-game (Beginner, 47 seconds, two flags); the
+/// taskbar with Start pressed, Quick Launch's own icons, two task buttons, the network icon, the
+/// speaker and the clock; the Start menu open on Programs > Accessories > Games, the pointer on
+/// Minesweeper (the Programs menu as the bar builds it for Bevel95's own programs). With the Start
+/// menu open no window is in front, as on the real bar (the menu takes the keyboard): both title
+/// bars inactive, both task buttons raised. Not a golden image (no test compares it). Run it with
+/// `cargo test -p bevel-core --test golden -- --ignored --exact draw_site_desktop`.
+#[test]
+#[ignore = "rewrites site/desktop.png, the website's picture; run it on request"]
+fn draw_site_desktop() {
+    let theme = bevel_core::theme::theme_in(Era::Win98, Depth::TrueColor);
+    let picture = site_desktop(Era::Win98, theme);
+    let path = site_picture_path("BEVEL95_SITE_PICTURE", "desktop.png");
+    write_png(&path, &picture);
+    println!("wrote {}", path.display());
+}
+
+/// Where a picture of the website goes: the file named by `variable`, or `site/<name>` at the
+/// repository's root (the folder made if missing).
+fn site_picture_path(variable: &str, name: &str) -> PathBuf {
+    match std::env::var_os(variable) {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("site");
+            std::fs::create_dir_all(&dir).unwrap();
+            dir.join(name)
+        }
+    }
+}
+
+/// A whole 1024 x 768 desktop of the look (`draw_site_desktop`): 98 with Clouds, My Computer's web
+/// view and Minesweeper; 95 on its plain teal with its plain My Computer and Solitaire.
+fn site_desktop(era: Era, theme: &Theme) -> Framebuffer {
+    use bevel_core::desktop_icons::Desktop;
+    use bevel_core::display::{self, Choice, Show};
+    use bevel_core::kit::Form;
+    use bevel_core::programs::{OWN_PROGRAMS, add_own_programs};
+    use bevel_core::status::{self, Network};
+    const W: i32 = 1024;
+    const H: i32 = 768;
+    let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let screen_rect = Rect::new(0, 0, W, H);
+    let bar_top = H - theme.bar.height;
+
+    // 1. The wallpaper (98: Clouds stretched; 95 had none by default: its plain teal).
+    let background = match era {
+        Era::Win95 => None,
+        _ => display::background(theme, &Choice { wallpaper: Some("Clouds".into()), show: Show::Stretch, pattern: None }, W, H),
+    };
+    let mut screen = background.clone().unwrap_or_else(|| Framebuffer::new(W, H, theme.colors.desktop));
+
+    // 2. The look's own desktop icons, nothing of anyone's own, nothing selected.
+    let area = Rect::new(0, 0, W, bar_top);
+    let mut desk = Desktop::new(era, area);
+    desk.set_background(background.map(std::sync::Arc::new));
+    desk.set_files(vec![]);
+    desk.active = false;
+    desk.paint(&mut screen, theme, &fonts, area);
+
+    // 3. My Computer, behind.
+    let (folder, folder_at) = match era {
+        Era::Win95 => (folder_scene_window(&fonts), (92, 12)),
+        _ => (my_computer_web(theme, era, &fonts, (640, 340)), (92, 12)),
+    };
+    screen.blit(&folder, folder_at.0, folder_at.1);
+
+    // 4. The game, in mid-play.
+    let game = match era {
+        Era::Win95 => site_solitaire(theme, era, &fonts),
+        _ => {
+            let mut w = minefield_in_play(era, &fonts);
+            w.set_active(false);
+            w.layout(&fonts);
+            let (gw, gh) = w.size();
+            let mut fb = Framebuffer::new(gw, gh, 0);
+            w.paint(&mut fb, theme, &fonts);
+            fb
+        }
+    };
+    let game_at = match era {
+        Era::Win95 => (W - game.width - 8, 44),
+        _ => (776, 250),
+    };
+    screen.blit(&game, game_at.0, game_at.1);
+
+    // 5. The taskbar.
+    let own = |title: &str, icon: Icon| Task { title: title.to_string(), icon: Some(icon), state: TaskState::Normal };
+    let game_task = match era {
+        Era::Win95 => own(SOLITAIRE, bevel_core::solitaire::art::icon(era, 16)),
+        _ => own(bevel_core::minefield::form::TITLE, bevel_core::minefield::art::icon(era, 16)),
+    };
+    let quick_launch = (era != Era::Win95).then(|| {
+        let icons = bevel_core::quick_launch::builtins(era).iter().map(|&b| bevel_core::quick_launch::picture(era, b)).collect();
+        bevel_core::quick_launch::Band { icons, ..Default::default() }
+    });
+    let net = Network { connected: true, ..Network::default() };
+    let state = Bar {
+        start_pressed: true,
+        tasks: vec![own("My Computer", window_icons::icon(era, ClassicWindow::MyComputer)), game_task],
+        tray: vec![Some(status::network_icon(era, &net)), Some(icons::speaker(false))],
+        clock: CLOCK.to_string(),
+        clock_widest: WIDEST.to_string(),
+        quick_launch,
+        ..Bar::default()
+    };
+    let mut bar = Framebuffer::new(W, theme.bar.height, 0);
+    paint::paint_bar(&mut bar, theme, &fonts, &state);
+    screen.blit(&bar, 0, bar_top);
+
+    // 6. The Start menu, open on Programs > Accessories > Games, the pointer on the game.
+    let menu_image = |menu: &Menu, style: MenuStyle| {
+        let layout = paint::layout_menu(theme, &fonts, menu, style, H);
+        let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+        paint::paint_menu(&mut fb, theme, &fonts, menu, style, &layout);
+        (fb, layout)
+    };
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
+    let programs_index = menu.entries.iter().position(|e| e.label == "&Programs").expect("Programs");
+    menu.hover = Some(programs_index);
+    menu.show_keys = era.always_shows_keys();
+    let (fb, layout) = menu_image(&menu, MenuStyle::Start);
+    let button = layout::start_button(theme, &fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+    let mut programs = Folder::default();
+    add_own_programs(&mut programs, era, |program| Some(program.file.to_string()));
+    programs.sort();
+    let group = icons::program_group(era);
+    let picture = |item: &Item| OWN_PROGRAMS.iter().find(|p| p.file == item.target).map(|p| (p.icon)(era));
+    let game_title = if era == Era::Win95 { SOLITAIRE } else { bevel_core::minefield::form::TITLE };
+    let mut parent = Rect::new(x, y, fb.width, fb.height);
+    let mut entry = entry_on_screen(parent, &layout, programs_index);
+    let mut path: Vec<usize> = Vec::new();
+    for wanted in ["Accessories", "Games", game_title] {
+        let folder = programs.folder_at(&path).expect("folder");
+        let mut sub = folder.menu(Some(&group), picture);
+        let index = sub.entries.iter().position(|e| e.label == wanted).unwrap_or_else(|| panic!("{wanted}"));
+        sub.hover = Some(index);
+        sub.show_keys = menu.show_keys;
+        let (sub_fb, sub_layout) = menu_image(&sub, MenuStyle::Cascade);
+        let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
+        screen.blit(&sub_fb, sx, sy);
+        parent = Rect::new(sx, sy, sub_fb.width, sub_fb.height);
+        entry = entry_on_screen(parent, &sub_layout, index);
+        path.push(index);
+    }
+    screen
+}
+
+/// The website's second picture, for the owner to choose (`site/desktop-95.png`, or the file
+/// named by `BEVEL95_SITE_PICTURE_95`): the 95 look at 1024 x 768 on 95's plain teal desktop (it had
+/// no wallpaper by default) with its own icons, 95's plain My Computer, Solitaire in mid-game and
+/// the Start menu open on Programs > Accessories > Games; no Quick Launch (95 had none). Drawn as
+/// `draw_site_desktop` draws the 98 one. Run it with
+/// `cargo test -p bevel-core --test golden -- --ignored --exact draw_site_desktop_95`.
+#[test]
+#[ignore = "rewrites site/desktop-95.png, the website's second picture; run it on request"]
+fn draw_site_desktop_95() {
+    let theme = bevel_core::theme::theme_in(Era::Win95, Depth::TrueColor);
+    let picture = site_desktop(Era::Win95, theme);
+    let path = site_picture_path("BEVEL95_SITE_PICTURE_95", "desktop-95.png");
+    write_png(&path, &picture);
+    println!("wrote {}", path.display());
+}
+
+/// 95's plain My Computer window (`folder_scene`'s), with the look's own items only: the floppy,
+/// the hard disk (C: selected), Control Panel and Printers; inactive.
+fn folder_scene_window(fonts: &Fonts) -> Framebuffer {
+    use bevel_core::desktop_art::Art;
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::{FolderWindow, Space};
+    use bevel_core::kit::Form;
+    let item = |id: &str, name: &str, picture: Picture| Item {
+        id: id.to_string(),
+        name: name.to_string(),
+        picture,
+        shortcut: false,
+        folder: false,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    let mut w = FolderWindow::new(Era::Win95, "My Computer", art::small(Era::Win95, Small::MyComputer), false, (320, 240));
+    w.layout(fonts);
+    w.set_items(vec![
+        item("A:\\", "3\u{bd} Floppy (A:)", Picture::Art(Art::Drive(DriveKind::Floppy))),
+        item("C:\\", "(C:)", Picture::Art(Art::Drive(DriveKind::Fixed))),
+        item("::control-panel", "Control Panel", Picture::Art(Art::ControlPanel)),
+        item("::printers", "Printers", Picture::Art(Art::Printers)),
+    ]);
+    w.spaces.insert("C:\\".into(), Space { free: 300 << 20, capacity: 1 << 30 });
+    w.view.select_only(Some(1));
+    w.set_active(false);
+    w.layout(fonts);
+    let (ww, wh) = w.size_now();
+    let mut fb = Framebuffer::new(ww, wh, 0);
+    w.paint(&mut fb, &WIN95, fonts);
+    fb
+}
+
+/// Solitaire in mid-game (a deal of its own, the stock turned a few times, what can go up gone up,
+/// 95 seconds on the clock), as `reference.rs`'s Solitaire cases draw it; inactive.
+fn site_solitaire(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
+    use bevel_core::kit::Form;
+    use bevel_core::solitaire::form::SolitaireWindow;
+    use bevel_core::solitaire::game::Game;
+    use bevel_core::solitaire::settings::Settings;
+    use bevel_core::solitaire::game::{Pile, Source};
+    let settings = Settings::default();
+    let mut game = Game::new(SITE_SOLITAIRE_SEED, settings.rules);
+    // A plain player's first moves: a column's face-up run onto another column when that turns a
+    // card or takes the waste's card, the waste's card onto a column, what can go up goes up, else
+    // the stock is turned.
+    for _ in 0..SITE_SOLITAIRE_MOVES {
+        let mut moved = false;
+        'look: for from in 0..7 {
+            let column = &game.tableau()[from];
+            if column.cards.len() <= column.hidden || column.hidden == 0 {
+                continue;
+            }
+            let run = Source::Tableau { column: from, index: column.hidden };
+            for to in (0..7).filter(|&to| to != from) {
+                if game.move_cards(run, Pile::Tableau(to)) {
+                    game.turn(from);
+                    moved = true;
+                    break 'look;
+                }
+            }
+        }
+        if !moved {
+            moved = (0..7).any(|to| game.move_cards(Source::Waste, Pile::Tableau(to)));
+        }
+        moved |= game.auto_all();
+        if !moved {
+            game.draw_stock();
+        }
+    }
+    game.auto_all();
+    let mut window = SolitaireWindow::new(era, game, usize::from(settings.deck), true, false);
+    window.set_screen(0, 0);
+    window.layout(fonts);
+    window.tick(95);
+    window.repaint_board();
+    window.set_active(false);
+    window.layout(fonts);
+    let (w, h) = window.size();
+    let mut fb = Framebuffer::new(w, h, 0);
+    window.paint(&mut fb, theme, fonts);
+    fb
+}
+/// Solitaire's title and its name in the Programs menu (`programs::OWN_PROGRAMS`).
+const SOLITAIRE: &str = "Solitaire";
+const SITE_SOLITAIRE_SEED: u64 = 7;
+const SITE_SOLITAIRE_MOVES: usize = 12;
+
+/// Minesweeper in mid-game: `minefield_scene`'s "play" board (Beginner, its mines), its squares
+/// opened and a few more, three flags on mines, 47 seconds, and no square held down, so the face
+/// smiles.
+fn minefield_in_play(era: Era, fonts: &Fonts) -> bevel_core::minefield::form::MinefieldWindow {
+    use bevel_core::kit::Form;
+    use bevel_core::minefield::form::MinefieldWindow;
+    use bevel_core::minefield::game::{Field, Game, Level};
+    let custom = Field { width: 20, height: 12, mines: 40 };
+    let mut w = MinefieldWindow::new(era, Level::Beginner, custom, true, 1);
+    w.layout(fonts);
+    let field = w.field();
+    w.game = Game::with_mines(field.width, field.height, &FIELD_MINES);
+    for (x, y) in [(0, 0), (6, 2), (5, 4), (6, 5), (3, 3), (4, 2), (2, 3), (3, 4), (4, 3), (2, 2), (4, 1)] {
+        assert!(!FIELD_MINES.contains(&(x, y)), "a safe square");
+        w.game.open(x, y);
+    }
+    for (x, y) in [(3, 0), (5, 3), (7, 1)] {
+        w.game.mark(x, y, true);
+    }
+    w.game.set_seconds(47);
+    w
+}
+
+/// My Computer in a 98 or 2000 folder window of `size` with its web view, C: selected and its free
+/// space shown, as `web_scene`'s "folder-web-drive", inactive.
+fn my_computer_web(theme: &Theme, era: Era, fonts: &Fonts, size: (i32, i32)) -> Framebuffer {
+    use bevel_core::desktop_art::{self, Art};
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::web::Kind;
+    use bevel_core::folder::{FolderWindow, Space};
+    use bevel_core::kit::Form;
+    let title = "My Computer";
+    let icon16 = art::small(era, Small::MyComputer);
+    let mut w = FolderWindow::new(era, title, icon16.clone(), false, size);
+    w.layout(fonts);
+    w.show_place(title, icon16, false, title, art::listed(era, Small::MyComputer));
+    w.web.fonts = Some(web_fonts(era, fonts));
+    w.set_web_place(Kind::MyComputer, desktop_art::picture(era, Art::MyComputer, false, 0), None, false, None);
+    w.set_web(true);
+    let drive = |id: &str, name: &str, kind: DriveKind| Item {
+        id: id.into(),
+        name: name.into(),
+        picture: Picture::Art(Art::Drive(kind)),
+        shortcut: false,
+        folder: false,
+        type_name: String::new(),
+        size: 0,
+        modified: 0,
+    };
+    w.spaces.insert("C:\\".into(), Space { free: 300 << 20, capacity: 1 << 30 });
+    w.set_items(vec![
+        drive("A:\\", "3\u{bd} Floppy (A:)", DriveKind::Floppy),
+        drive("C:\\", if era == Era::Win2000 { "Local Disk (C:)" } else { " (C:)" }, DriveKind::Fixed),
+    ]);
+    w.view.select_only(Some(1));
+    w.set_active(false);
+    w.layout(fonts);
+    let mut fb = Framebuffer::new(size.0, size.1, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
+}
+
 /// One look's screen for the README: the bar with three windows of Bevel95's own programs (My
 /// Computer, Minesweeper active, Calculator) and their own pictures, Start pressed, the Start
 /// menu open on Programs, and the Programs menu put together as the bar does it when it shows
