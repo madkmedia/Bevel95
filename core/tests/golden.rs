@@ -2685,12 +2685,17 @@ fn draw_readme_start_menus() {
 /// arranged by eye for its size (`site_layout`: at 800 x 600 without Explorer, at 640 x 480 only
 /// Minesweeper of the windows).
 ///
+/// `BEVEL95_SITE_STEP` (1 to 7) draws one step of the website's short animation instead, at 640 x
+/// 480 (`site_step`): Bevel95 just started on the look's plain desktop, the Start menu, its own
+/// programs open, Display Properties with the person's picture chosen, the picture applied, then
+/// the same desktop after switching to the 2000 and the 95 look.
+///
 /// The only pictures from outside (the wallpaper, a 1024 x 768 8-bit RGB PNG, and the two
 /// programs' icons, 8-bit RGBA PNGs at 32 and 16 pixels) are read at run time from the folder
 /// named by `BEVEL95_SITE_ASSETS` and are never in the repository. The wallpaper is the person's
-/// own picture, centered (a smaller screen cuts it equally on all sides, as Bevel95 draws a
-/// centered picture larger than the screen). Without the folder the scene has Clouds stretched
-/// and nothing of Chrome or ChatGPT, so the test runs anywhere.
+/// own picture ("Bloom"), centered (a smaller screen cuts it equally on all sides, as Bevel95
+/// draws a centered picture larger than the screen). Without the folder the scene has Clouds
+/// stretched and nothing of Chrome or ChatGPT, so the test runs anywhere.
 ///
 /// With the Start menu open no window is in front, as on the real bar (the root menu takes the
 /// keyboard, `popup.rs`; the bar then marks no task button as the one in front): every title bar
@@ -2705,13 +2710,21 @@ fn draw_site_desktop() {
         chrome: (read_icon_png(&dir.join("chrome-32.png")).unwrap(), read_icon_png(&dir.join("chrome-16.png")).unwrap()),
         chatgpt: (read_icon_png(&dir.join("chatgpt-32.png")).unwrap(), read_icon_png(&dir.join("chatgpt-16.png")).unwrap()),
     });
-    let size = match std::env::var("BEVEL95_SITE_SIZE").as_deref() {
-        Err(_) | Ok("1024x768") => (1024, 768),
-        Ok("800x600") => (800, 600),
-        Ok("640x480") => (640, 480),
-        Ok(other) => panic!("BEVEL95_SITE_SIZE is 1024x768, 800x600 or 640x480, not {other}"),
+    let picture = match std::env::var("BEVEL95_SITE_STEP") {
+        Ok(step) => {
+            let step: u32 = step.parse().ok().filter(|n| (1..=7).contains(n)).expect("BEVEL95_SITE_STEP is 1 to 7");
+            site_scene(assets.as_ref(), &site_step(step))
+        }
+        Err(_) => {
+            let size = match std::env::var("BEVEL95_SITE_SIZE").as_deref() {
+                Err(_) | Ok("1024x768") => (1024, 768),
+                Ok("800x600") => (800, 600),
+                Ok("640x480") => (640, 480),
+                Ok(other) => panic!("BEVEL95_SITE_SIZE is 1024x768, 800x600 or 640x480, not {other}"),
+            };
+            site_scene(assets.as_ref(), &site_layout(size))
+        }
     };
-    let picture = site_desktop(assets.as_ref(), size);
     let path = match std::env::var_os("BEVEL95_SITE_PICTURE") {
         Some(path) => PathBuf::from(path),
         None => {
@@ -2746,58 +2759,132 @@ fn read_icon_png(path: &Path) -> Result<Icon, String> {
     Ok(Icon { width: info.width as i32, height: info.height as i32, pixels })
 }
 
-/// Where things go on the website's picture of one size, arranged by eye: the desktop icons' cells
-/// (My Computer, My Documents, Recycle Bin, Google Chrome, ChatGPT; desktop pixels, steps of 75),
-/// and each window's place (Explorer with its size), or none where it does not fit well.
-struct SiteLayout {
-    icons: [(i32, i32); 5],
+/// One picture of the website: its size and look, what is on the desktop, which windows are open
+/// where (and whether in front), whether the Start menu or Display Properties is open.
+struct SiteScene {
+    size: (i32, i32),
+    era: Era,
+    /// The person's picture (or, without the assets, Clouds) on the desktop; else the look's
+    /// plain color.
+    wallpaper: bool,
+    /// The desktop icons' cells by what they are (`::my-computer`, ..., `chrome`, `chatgpt`;
+    /// desktop pixels, steps of 75); an icon of the look's own not named takes the next free cell
+    /// below the last one named.
+    icons: Vec<(&'static str, (i32, i32))>,
     explorer: Option<((i32, i32), (i32, i32))>,
-    minesweeper: Option<(i32, i32)>,
-    calculator: Option<(i32, i32)>,
+    /// A window's place, and whether it is in front.
+    minesweeper: Option<((i32, i32), bool)>,
+    calculator: Option<((i32, i32), bool)>,
+    start_menu: bool,
+    /// Display Properties open, in front, at this place, the person's picture chosen.
+    display: Option<(i32, i32)>,
 }
 
-fn site_layout(size: (i32, i32)) -> SiteLayout {
+/// The still pictures of one size, arranged by eye (the Start menu open: no window in front).
+fn site_layout(size: (i32, i32)) -> SiteScene {
     const C: i32 = bevel_core::desktop_icons::CELL;
-    match size {
+    let ids = ["::my-computer", "::my-documents", "::recycle-bin", "chrome", "chatgpt"];
+    let cells: [(i32, i32); 5] = match size {
         // The look's own down the left column, the two shortcuts at the top of the second (in the
-        // first ChatGPT's name would lie under the Start menu); Explorer top right, Minesweeper
-        // under it at the right, the Calculator between Minesweeper and the Programs menu.
-        (1024, _) => SiteLayout {
-            icons: [(0, 0), (0, C), (0, 2 * C), (C, 0), (C, C)],
-            explorer: Some(((452, 300), (556, 12))),
-            minesweeper: Some((840, 360)),
-            calculator: Some((556, 452)),
-        },
+        // first ChatGPT's name would lie under the Start menu).
+        (1024, _) => [(0, 0), (0, C), (0, 2 * C), (C, 0), (C, C)],
         // The Start menu reaches up to about y 190: the icons in one row across the top.
+        (800, _) => [(0, 0), (C, 0), (2 * C, 0), (3 * C, 0), (4 * C, 0)],
+        _ => SITE_640_ICONS,
+    };
+    let icons = ids.into_iter().zip(cells).collect();
+    let base = SiteScene {
+        size,
+        era: Era::Win98,
+        wallpaper: true,
+        icons,
+        explorer: None,
+        minesweeper: None,
+        calculator: None,
+        start_menu: true,
+        display: None,
+    };
+    match size {
+        // Explorer top right, Minesweeper under it at the right, the Calculator between
+        // Minesweeper and the Programs menu.
+        (1024, _) => SiteScene {
+            explorer: Some(((452, 300), (556, 12))),
+            minesweeper: Some(((840, 360), false)),
+            calculator: Some(((556, 452), false)),
+            ..base
+        },
         // Explorer is left out: beside the Calculator and Minesweeper it covered the wallpaper's
         // bloom, and at the 420 pixels across that was left its toolbar was cut.
-        (800, _) => SiteLayout {
-            icons: [(0, 0), (C, 0), (2 * C, 0), (3 * C, 0), (4 * C, 0)],
-            explorer: None,
-            minesweeper: Some((616, 24)),
-            calculator: Some((520, 292)),
-        },
-        // The Start menu fills the left from y 72: the icons down the right edge, Minesweeper
-        // between them and the Programs menu.
-        _ => SiteLayout {
-            icons: [(565, 0), (565, C), (565, 2 * C), (565, 3 * C), (565, 4 * C)],
-            explorer: None,
-            minesweeper: Some((360, 40)),
-            calculator: None,
-        },
+        (800, _) => SiteScene { minesweeper: Some(((616, 24), false)), calculator: Some(((520, 292), false)), ..base },
+        // The Start menu fills the left from y 72: Minesweeper between the Programs menu and the
+        // icons down the right edge.
+        _ => SiteScene { minesweeper: Some((SITE_640_MINESWEEPER, false)), ..base },
     }
 }
 
-/// The whole desktop of `draw_site_desktop` at `size`.
-fn site_desktop(assets: Option<&SiteAssets>, size: (i32, i32)) -> Framebuffer {
+/// The 640 x 480 icons down the right edge: My Computer, My Documents, Recycle Bin, Google Chrome,
+/// ChatGPT. ChatGPT's picture is black: swapped with Chrome's, it stands in the fourth cell, the
+/// lightest ground of the column under the person's picture (measured: mean brightness 201 of
+/// 255 there, 35 in the fifth cell, where it was swallowed by dark blue).
+const SITE_640_ICONS: [(i32, i32); 5] = [(565, 0), (565, 75), (565, 150), (565, 300), (565, 225)];
+const SITE_640_MINESWEEPER: (i32, i32) = (360, 40);
+
+/// One step of the website's animation, 640 x 480, each what Bevel95 really shows at that point;
+/// the icons stand in the same cells throughout.
+/// 1. Just started: the look's plain color (no wallpaper chosen yet), nothing open.
+/// 2. The Start menu open on Programs.
+/// 3. Minesweeper and the Calculator open, Minesweeper in front.
+/// 4. Display Properties (the desktop's Properties) in front, where the bar opens it, the
+///    person's picture "Bloom" chosen with Browse... and shown in the little monitor; the desktop
+///    still plain, the two programs behind.
+/// 5. Applied (OK): the picture centered on the desktop, Minesweeper in front again.
+/// 6. Switched to the 2000 look; 7. to the 95 look: each look keeps its own wallpaper and none was
+///    chosen there, so each shows its own plain color, with its own icons, bar and colors (Quick
+///    Launch as each look has it by default: none in 95); the programs follow the look.
+fn site_step(step: u32) -> SiteScene {
+    let ids = ["::my-computer", "::my-documents", "::recycle-bin", "chrome", "chatgpt"];
+    let calculator = (40, 120);
+    let base = SiteScene {
+        size: (640, 480),
+        era: Era::Win98,
+        wallpaper: false,
+        icons: ids.into_iter().zip(SITE_640_ICONS).collect(),
+        explorer: None,
+        minesweeper: None,
+        calculator: None,
+        start_menu: false,
+        display: None,
+    };
+    let programs = |front: bool| SiteScene {
+        minesweeper: Some((SITE_640_MINESWEEPER, front)),
+        calculator: Some((calculator, false)),
+        ..site_step(1)
+    };
+    match step {
+        1 => base,
+        2 => SiteScene { start_menu: true, ..base },
+        3 => programs(true),
+        // Where `display_window::open` puts it: 44 pixels in from the screen's corner, and no
+        // lower than its own height above the bar.
+        4 => SiteScene { display: Some((44, 4)), ..programs(false) },
+        5 => SiteScene { wallpaper: true, ..programs(true) },
+        6 => SiteScene { era: Era::Win2000, ..programs(true) },
+        _ => SiteScene { era: Era::Win95, ..programs(true) },
+    }
+}
+
+/// The name the person's picture is read under (the list shows it without its ending: "Bloom").
+const SITE_WALLPAPER: &str = "C:\\Users\\Public\\Pictures\\Bloom.png";
+
+/// Draws one picture of the website (`SiteScene`).
+fn site_scene(assets: Option<&SiteAssets>, scene: &SiteScene) -> Framebuffer {
     use bevel_core::desktop_icons::{Desktop, Item as DeskItem, Picture};
-    use bevel_core::display::{self, Choice, Show};
+    use bevel_core::display::{self, Choice, PictureId, Show};
     use bevel_core::kit::Form;
     use bevel_core::programs::{OWN_PROGRAMS, add_own_programs};
     use bevel_core::status::{self, Network};
-    let (w, h) = size;
-    let place = site_layout(size);
-    let era = Era::Win98;
+    let (w, h) = scene.size;
+    let era = scene.era;
     let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
     let (regular, bold) = (load_font(theme, false), load_font(theme, true));
     let fonts = Fonts { regular: &regular, bold: &bold };
@@ -2805,31 +2892,41 @@ fn site_desktop(assets: Option<&SiteAssets>, size: (i32, i32)) -> Framebuffer {
     let bar_top = h - theme.bar.height;
 
     // 1. The wallpaper: the person's own picture centered (cut equally on a smaller screen), or
-    // Clouds stretched.
-    let background = match assets {
-        Some(a) => {
-            let own = "C:\\Users\\Public\\Pictures\\Wallpaper.png";
-            let picture = display::Picture { width: a.wallpaper.width, height: a.wallpaper.height, pixels: a.wallpaper.pixels.clone() };
-            let choice = Choice { wallpaper: Some(own.into()), show: Show::Center, pattern: None };
-            display::background_on(theme, &choice, Some(&picture), &[screen_rect], w, h).expect("the wallpaper")
+    // Clouds stretched; or the look's plain color.
+    let own_picture = assets.map(|a| display::Picture { width: a.wallpaper.width, height: a.wallpaper.height, pixels: a.wallpaper.pixels.clone() });
+    let background = match (&own_picture, scene.wallpaper) {
+        (_, false) => None,
+        (Some(picture), true) => {
+            let choice = Choice { wallpaper: Some(SITE_WALLPAPER.into()), show: Show::Center, pattern: None };
+            display::background_on(theme, &choice, Some(picture), &[screen_rect], w, h)
         }
-        None => display::background(theme, &Choice { wallpaper: Some("Clouds".into()), show: Show::Stretch, pattern: None }, w, h)
-            .expect("Clouds"),
+        (None, true) => display::background(theme, &Choice { wallpaper: Some("Clouds".into()), show: Show::Stretch, pattern: None }, w, h),
     };
-    let mut screen = background.clone();
+    let mut screen = background.clone().unwrap_or_else(|| Framebuffer::new(w, h, theme.colors.desktop));
 
     // 2. The desktop icons in their cells, nothing selected.
     let area = Rect::new(0, 0, w, bar_top);
     let mut desk = Desktop::new(era, area);
-    desk.set_background(Some(std::sync::Arc::new(background)));
+    desk.set_background(background.map(std::sync::Arc::new));
     let chrome = "C:\\Users\\Public\\Desktop\\Google Chrome.lnk";
     let chatgpt = "C:\\Users\\Public\\Desktop\\ChatGPT.lnk";
-    let places: String = ["::my-computer", "::my-documents", "::recycle-bin", chrome, chatgpt]
-        .iter()
-        .zip(place.icons)
-        .map(|(id, (x, y))| format!("{x} {y} {id}\n"))
-        .collect();
-    desk.load_places(&places);
+    let id_of = |name: &str| match name {
+        "chrome" => chrome.to_string(),
+        "chatgpt" => chatgpt.to_string(),
+        other => other.to_string(),
+    };
+    let mut places: Vec<(String, (i32, i32))> = scene.icons.iter().map(|&(name, cell)| (id_of(name), cell)).collect();
+    // The look's own icons not named take the next cells below the last one named.
+    let own_ids: Vec<String> = desk.items.iter().map(|item| item.id.clone()).collect();
+    let mut next = places.iter().map(|&(_, (x, y))| (x, y)).max_by_key(|&(x, y)| (x, y)).unwrap_or((0, 0));
+    for id in own_ids {
+        if !places.iter().any(|(p, _)| *p == id) {
+            next.1 += bevel_core::desktop_icons::CELL;
+            places.push((id, next));
+        }
+    }
+    let text: String = places.iter().map(|(id, (x, y))| format!("{x} {y} {id}\n")).collect();
+    desk.load_places(&text);
     let shortcut = |id: &str, name: &str, picture: &Icon| DeskItem {
         id: id.to_string(),
         name: name.to_string(),
@@ -2847,50 +2944,83 @@ fn site_desktop(assets: Option<&SiteAssets>, size: (i32, i32)) -> Framebuffer {
     desk.active = false;
     desk.paint(&mut screen, theme, &fonts, area);
 
-    // 3. The windows, none in front.
-    let task = |title: &str, icon: Icon| Task { title: title.to_string(), icon: Some(icon), state: TaskState::Normal };
+    // 3. The windows. Google Chrome runs, minimized (its button only). With the Start menu or
+    // Display Properties open no task button is the one in front (both are the bar's own windows).
+    let task = |title: &str, icon: Icon, front: bool| Task {
+        title: title.to_string(),
+        icon: Some(icon),
+        state: if front { TaskState::Active } else { TaskState::Normal },
+    };
     let mut tasks = Vec::new();
     if let Some(a) = assets {
-        tasks.push(task("Google Chrome", a.chrome.1.clone()));
+        tasks.push(task("Google Chrome", a.chrome.1.clone(), false));
     }
     // Explorer: 98's status bar has fixed parts (240 and 218 pixels), so the drive's free space,
     // in the middle part, would need about 660 pixels across; narrower, the middle part has no
     // room and stays out (a part cut in the middle of a word looks broken).
-    if let Some((explorer_size, at)) = place.explorer {
+    if let Some((explorer_size, at)) = scene.explorer {
         let explorer = site_explorer(theme, era, &fonts, explorer_size);
         screen.blit(&explorer, at.0, at.1);
-        tasks.push(task("Exploring - My Computer", bevel_core::folder::tree_art::explorer(era)));
+        tasks.push(task("Exploring - My Computer", bevel_core::folder::tree_art::explorer(era), false));
     }
-    if let Some(at) = place.minesweeper {
+    // The one in front is drawn last.
+    let mut windows: Vec<(Framebuffer, (i32, i32), bool)> = Vec::new();
+    if let Some((at, front)) = scene.minesweeper {
         let mut game = minefield_in_play(era, &fonts);
-        game.set_active(false);
-        screen.blit(&form_image(&mut game, theme, &fonts), at.0, at.1);
-        tasks.push(task(bevel_core::minefield::form::TITLE, bevel_core::minefield::art::icon(era, 16)));
+        game.set_active(front);
+        windows.push((form_image(&mut game, theme, &fonts), at, front));
+        tasks.push(task(bevel_core::minefield::form::TITLE, bevel_core::minefield::art::icon(era, 16), front));
     }
-    if let Some(at) = place.calculator {
+    if let Some((at, front)) = scene.calculator {
         // Standard view, a sum done: 1024 x 768 = 786432.
         let mut calc = bevel_core::calculator::form::CalculatorWindow::new(era);
         calc.paste_text("1024*768=");
-        calc.set_active(false);
-        screen.blit(&form_image(&mut calc, theme, &fonts), at.0, at.1);
-        tasks.push(task(bevel_core::calculator::form::TITLE, bevel_core::calculator::art::icon(era, 16)));
+        calc.set_active(front);
+        windows.push((form_image(&mut calc, theme, &fonts), at, front));
+        tasks.push(task(bevel_core::calculator::form::TITLE, bevel_core::calculator::art::icon(era, 16), front));
+    }
+    windows.sort_by_key(|(_, _, front)| *front);
+    for (fb, at, _) in &windows {
+        screen.blit(fb, at.0, at.1);
+    }
+    if let Some(at) = scene.display {
+        // Display Properties, its Background page: the person's picture chosen with Browse..., in
+        // the list by its name, on the monitor as the look scales a picture; Apply usable.
+        let mut p = bevel_core::display::form::DisplayProperties::new(era, Choice::plain());
+        match &own_picture {
+            Some(picture) => {
+                p.set_shown(Choice { wallpaper: Some(SITE_WALLPAPER.into()), show: Show::Center, pattern: None });
+                p.set_read(PictureId::Own(SITE_WALLPAPER.into()), Some(std::sync::Arc::new(picture.clone())));
+            }
+            None => p.set_shown(Choice { wallpaper: Some("Clouds".into()), show: Show::Center, pattern: None }),
+        }
+        p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
+        let mut fb = Framebuffer::new(404, 448, 0);
+        p.paint(&mut fb, theme, &fonts);
+        screen.blit(&fb, at.0, at.1);
     }
 
-    // 4. The taskbar.
-    let icons_ql = bevel_core::quick_launch::builtins(era).iter().map(|&b| bevel_core::quick_launch::picture(era, b)).collect();
+    // 4. The taskbar (Quick Launch as the look has it by default).
+    let quick_launch = bevel_core::quick_launch::on_by_default(era).then(|| {
+        let icons = bevel_core::quick_launch::builtins(era).iter().map(|&b| bevel_core::quick_launch::picture(era, b)).collect();
+        bevel_core::quick_launch::Band { icons, ..Default::default() }
+    });
     let net = Network { connected: true, ..Network::default() };
     let state = Bar {
-        start_pressed: true,
+        start_pressed: scene.start_menu,
         tasks,
         tray: vec![Some(status::network_icon(era, &net)), Some(icons::speaker(false))],
         clock: CLOCK.to_string(),
         clock_widest: WIDEST.to_string(),
-        quick_launch: Some(bevel_core::quick_launch::Band { icons: icons_ql, ..Default::default() }),
+        quick_launch,
         ..Bar::default()
     };
     let mut bar = Framebuffer::new(w, theme.bar.height, 0);
     paint::paint_bar(&mut bar, theme, &fonts, &state);
     screen.blit(&bar, 0, bar_top);
+    if !scene.start_menu {
+        return screen;
+    }
 
     // 5. The Start menu, open on Programs, the pointer on Google Chrome (without the assets:
     // on Accessories).
