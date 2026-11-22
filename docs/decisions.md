@@ -6042,6 +6042,9 @@ Display Properties' Background page chooses them.
     the desktop knows it has drawn it. When the desktop must draw it again (a new size, look,
     colors or screens) it asks the bar (`Bevel95.Bar.PictureAgain`, the bar's own, wParam the
     reading) and shows its color or pattern until the picture has come again, as at the start.
+    While a picture the desktop has drawn is read again for another reason (Display Properties
+    opening, the same file chosen again with Browse...), the desktop keeps what it made from the
+    earlier reading until the new one has come (`pictures::got`).
     Display Properties keeps no picture at all: when one comes, the monitor's small copy is made
     for each way of showing (`display::monitor_layer`: only the 152 x 112 pixels that show, so a
     large photo gives no large copy; equal pixel for pixel to the old drawing, tested) and the
@@ -6120,15 +6123,18 @@ sharable").
   table `bevel_core::programs::OWN_PROGRAMS` and `add_own_programs`, moved into the core from
   `start_menu.rs` for this, unchanged), opened down to Games. Run it again with `cargo test -p
   bevel-core --test golden -- --ignored --exact draw_readme_start_menus`; it is not a golden
-  image and no test compares it. **A website's picture** (2026-11-21, brief 76): the ignored
-  tests `draw_site_desktop` and `draw_site_desktop_95` in the same file draw one whole desktop at
-  1024 x 768 by the same rule (98: Clouds stretched, the look's own icons, My Computer with its
-  web view, Minesweeper in mid-game, the bar with Quick Launch, two task buttons, the tray and the
-  clock, the Start menu open on Programs > Accessories > Games; 95: its plain teal, its plain My
-  Computer, Solitaire in mid-game, no Quick Launch). With the Start menu open no window is in
-  front, as on the real bar (the menu takes the keyboard): both title bars inactive, both task
-  buttons raised. They write `site/desktop.png` and `site/desktop-95.png`, or the files named by
-  `BEVEL95_SITE_PICTURE` and `BEVEL95_SITE_PICTURE_95`. Also CONTRIBUTING.md, `docs/roadmap.md`, the bug report form
+  image and no test compares it. **A website's picture** (2026-11-21, brief 76; the owner: "The
+  image looks like an old system screenshot rather than a new tool"): the ignored test
+  `draw_site_desktop` in the same file draws one whole 98 desktop at 1024 x 768 showing today's
+  PC through Bevel95: a wallpaper (Windows 11's own, made in the few-colors style of the 90s), the
+  look's own icons with shortcuts of Google Chrome and ChatGPT (their own icons, Bevel95's shortcut
+  arrow), Windows Explorer on My Computer, Minesweeper in mid-game, the bar with Quick Launch,
+  three task buttons, the tray and the clock, the Start menu open on Programs. The wallpaper and
+  the two icons are PNG files read at run time from the folder named by `BEVEL95_SITE_ASSETS` and
+  are never in the repository; without it the test draws Clouds and nothing of either program.
+  With the Start menu open no window is in front, as on the real bar (the menu takes the
+  keyboard): every title bar inactive, every task button raised. It writes `site/desktop.png`, or
+  the file named by `BEVEL95_SITE_PICTURE`. Also CONTRIBUTING.md, `docs/roadmap.md`, the bug report form
   (`.github/ISSUE_TEMPLATE/bug_report.yml`) and a build-and-test workflow
   (`.github/workflows/test.yml`, untried). The owner's checklists moved unchanged to
   `private/checklists.md`. The art guard allows `docs/img/`.

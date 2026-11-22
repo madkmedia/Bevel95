@@ -601,7 +601,7 @@ mod tests {
         let id = c.to_read(Era::Win2000).unwrap();
         pictures::want(&id);
         for _ in 0..500 {
-            if !matches!(pictures::state(&id), pictures::State::Reading(_)) {
+            if !matches!(pictures::state(&id), pictures::State::Reading(..)) {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));

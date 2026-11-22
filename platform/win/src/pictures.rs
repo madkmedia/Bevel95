@@ -61,7 +61,9 @@ pub fn is_large(picture: &Picture) -> bool {
 pub enum State {
     /// Not asked for (or no longer wanted).
     Absent,
-    Reading(u64),
+    /// Being read in this reading; with the reading it had been read in before, when it is read
+    /// again (the desktop keeps what it made from that one until the new one has come).
+    Reading(u64, Option<u64>),
     Ready(u64, Arc<Picture>),
     /// Read, and let go once what is made from it was made (a large picture): still wanted, read
     /// again only when it is needed again (`again`).
@@ -97,11 +99,13 @@ pub fn ready(id: &PictureId) -> Option<Arc<Picture>> {
     }
 }
 
-/// The picture of `id` for the desktop: read (held or let go), with its reading's number.
+/// The picture of `id` for the desktop: read (held or let go), with its reading's number. While it
+/// is read again, the reading before (so the desktop keeps what it made from that one until the
+/// new one has come, instead of showing its plain color meanwhile).
 pub fn got(id: &PictureId) -> Option<Got> {
     match state(id) {
         State::Ready(reading, p) => Some(Got { reading, picture: Some(p) }),
-        State::LetGo(reading) => Some(Got { reading, picture: None }),
+        State::LetGo(reading) | State::Reading(_, Some(reading)) => Some(Got { reading, picture: None }),
         _ => None,
     }
 }
@@ -147,9 +151,15 @@ fn start(id: &PictureId, afresh: impl Fn(&State) -> bool) {
     {
         let Ok(mut slots) = SLOTS.lock() else { return };
         match slots.iter_mut().find(|(i, _)| i == id) {
-            Some(slot) if afresh(&slot.1) => slot.1 = State::Reading(reading),
+            Some(slot) if afresh(&slot.1) => {
+                let was = match slot.1 {
+                    State::Ready(n, _) | State::LetGo(n) | State::Reading(_, Some(n)) => Some(n),
+                    _ => None,
+                };
+                slot.1 = State::Reading(reading, was);
+            }
             Some(_) => return,
-            None => slots.push((id.clone(), State::Reading(reading))),
+            None => slots.push((id.clone(), State::Reading(reading, None))),
         }
     }
     // Registered before the thread needs it (the number is asked of Windows once).
@@ -201,7 +211,7 @@ enum Put {
 fn put(id: &PictureId, reading: u64, answer: State) -> Put {
     let Ok(mut slots) = SLOTS.lock() else { return Put::NotWanted };
     match slots.iter_mut().find(|(i, _)| i == id) {
-        Some(slot) if matches!(slot.1, State::Reading(n) if n == reading) => {
+        Some(slot) if matches!(slot.1, State::Reading(n, _) if n == reading) => {
             slot.1 = answer;
             Put::Taken
         }
@@ -268,11 +278,11 @@ mod tests {
     fn wait(id: &PictureId) -> State {
         for _ in 0..500 {
             match state(id) {
-                State::Reading(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                State::Reading(..) => std::thread::sleep(std::time::Duration::from_millis(10)),
                 other => return other,
             }
         }
-        State::Reading(0)
+        State::Reading(0, None)
     }
 
     /// A picture that could not be read is read again when it is asked for anew (Browse...,
@@ -340,6 +350,8 @@ mod tests {
         assert!(matches!(state(&large), State::LetGo(_)));
         // The desktop needs it again (a new size): read again, with a new number.
         again(&large, Anew::IfLetGoIn(n));
+        // Meanwhile the desktop is still handed the reading it drew (or already the new one).
+        assert!(got(&large).is_some(), "never nothing while it is read again");
         assert!(matches!(wait(&large), State::Ready(m, _) if m != n));
         // Display Properties' monitor needs it (let go): read again.
         let_go_large(&[]);
