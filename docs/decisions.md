@@ -4938,7 +4938,7 @@ Three small changes before strangers run Bevel95, report problems and send their
     back. Ctrl+Win+T brings the bar back with the desktop as it was.
   - PROVISIONAL: the entry's two wordings and the key.
 - **About Bevel95, with a version.** One version for the whole project, the workspace's (`version =
-  "0.1.3"` in Cargo.toml's `[workspace.package]`, which every crate takes); the build is the commit
+  "0.1.4"` in Cargo.toml's `[workspace.package]`, which every crate takes); the build is the commit
   it was made from, asked of git by `platform/winkit/build.rs` (`git rev-parse --short=7 HEAD`,
   asked again when HEAD or the index changes, i.e. at every commit) and kept as
   `bevel_winkit::BUILD`; a build without git (or outside the repository) says "unknown". No new
@@ -4955,7 +4955,7 @@ Three small changes before strangers run Bevel95, report problems and send their
     "About Bevel95" (found by "about", "version", "build", "help", "licence", "license"; shown also
     for "p" in the golden Quick Search picture, by "help"). Built like the programs' About boxes
     (the shell's About): the look's frame, title bar and font, the silver B at the left, the name,
-    "Version 0.1.3 (build 1a2b3c4)", what it is ("A Windows 95, 98 and 2000 look for today's
+    "Version 0.1.4 (build 1a2b3c4)", what it is ("A Windows 95, 98 and 2000 look for today's
     Windows"), an etched line, the notice ("Not affiliated with Microsoft. Windows is a trademark of
     Microsoft Corporation; the pictures of its user interface belong to Microsoft.", wrapped to the
     window) and OK. 380 wide (the shell's About is 348; the line of what it is needs a little
@@ -4983,7 +4983,7 @@ Three small changes before strangers run Bevel95, report problems and send their
   - Decided differently from the look's own manner: Windows 2000's About boxes carried Microsoft's
     Windows 2000 banner; Bevel95's does not (it is not Microsoft's product), so the three looks
     share the 95 and 98 layout in their own frame and font.
-  - **The log's first line** at every start: `Bevel95 0.1.3 (build 1a2b3c4): bevel95.exe starting`
+  - **The log's first line** at every start: `Bevel95 0.1.4 (build 1a2b3c4): bevel95.exe starting`
     (`winkit::log::started`), written by the bar when it starts (after Setup, so a cancelled first
     run still leaves nothing behind), by `--restore` and the `--list-...` diagnoses, and by each
     program (Minesweeper, Solitaire, Calculator, the folder windows, the Help viewer) first thing.
