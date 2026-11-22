@@ -179,6 +179,8 @@ fn register_messages() {
     for (message, _) in &BAR_MESSAGES {
         message.id();
     }
+    // The bar's own, posted by its threads only (never by a live test).
+    crate::pictures::WM_PICTURE.id();
 }
 /// The timer that slides an auto-hiding bar in and out, and its step.
 const SLIDE: usize = 2;
@@ -944,10 +946,17 @@ pub fn sync_desktop() {
             font: app.regular.clone(),
             scale: app.scale,
             background: crate::display_window::choice(app.era),
+            picture: None,
         })
     }) else {
         return;
     };
+    // A picture to read (a JPEG, the person's own) is asked for on its own thread; the desktop
+    // shows its color or pattern until it has come (`display_window::pictures_came`).
+    let look = look.map(|mut l| {
+        l.picture = crate::display_window::picture_for(l.era, &l.background);
+        l
+    });
     match look {
         Some(look) => desktop::show(look),
         None => desktop::hide(),
@@ -3288,6 +3297,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         m if m == WM_DISPLAY.id() => {
             crate::display_window::test_message(wparam, lparam);
+            return 0;
+        }
+        m if m == crate::pictures::WM_PICTURE.id() => {
+            crate::display_window::pictures_came();
             return 0;
         }
         m if m == WM_QUICK_LAUNCH.id() => {

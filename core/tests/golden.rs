@@ -759,6 +759,12 @@ fn display_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebu
             p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
         }
         "display-pattern" => p.set_shown(Choice { wallpaper: None, show: Show::Center, pattern: Some(pattern_name.into()) }),
+        // 2000's JPEG entries, one chosen as on the Reference PC (its monitor shows the desktop
+        // color: a golden picture is drawn without the bar's reader of JPEGs).
+        "display-jpeg-list" => {
+            p.set_shown(Choice { wallpaper: Some("Windows 2000".into()), show: Show::Center, pattern: None });
+            p.focus = bevel_core::display::form::Part::List(bevel_core::display::form::Which::Wallpaper);
+        }
         _ => {}
     }
     let mut fb = Framebuffer::new(404, 448, 0);
@@ -1693,6 +1699,13 @@ fn scenes() -> Vec<Scene> {
             if era != Era::Win95 || state != "display-pattern-window" {
                 add(state, caption, display_scene(theme, era, &fonts, state));
             }
+        }
+        if era == Era::Win2000 {
+            add(
+                "display-jpeg-list",
+                "Windows 2000's JPEG wallpapers in its list (the picture files' small picture), Windows 2000 chosen; the monitor shows the desktop color here because a golden picture is drawn without the bar's JPEG reader",
+                display_scene(theme, era, &fonts, "display-jpeg-list"),
+            );
         }
         add(
             "desktop-menu",

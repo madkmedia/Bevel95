@@ -110,6 +110,10 @@ pub trait Hosted: Sized + 'static {
     /// The bar's look or size changed: a program reads its settings again and calls
     /// `retheme_with`. Called with nothing borrowed.
     fn look_changed() {}
+    /// The person's input changed what the form shows (a key, a click, a letter): a window that
+    /// needs something read for it (Display Properties' monitor) asks for it here. Called with
+    /// the window borrowed: it must not open, close or update windows.
+    fn input_changed(&mut self) {}
 }
 
 /// What a window paints with.
@@ -414,6 +418,7 @@ impl<H: Hosted> Host<H> {
             later.push(Later::RestartCaret);
         }
         if changed {
+            self.hosted.input_changed();
             self.relayout();
             if bounds(self.hosted.form()) != self.bounds_now() {
                 later.push(Later::Reshape);

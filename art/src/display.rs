@@ -7,8 +7,9 @@
 //! uses, then its pixels packed at the fewest bits that hold that many colors, run-length coded
 //! where that is shorter (`private/probes/display/build72/convert.ps1`, which checks each one back
 //! against the file). The eleven pictures that Windows 95 and 98 both had are the same bytes on
-//! both disks and answer for both looks. Windows 2000's JPEG pictures, 98's HTML page and its
-//! Desktop Themes pictures are not here (not built: JPEG, Active Desktop).
+//! both disks and answer for both looks. Windows 2000's twelve JPEG pictures are here as the
+//! files they are (decoded by Windows when chosen); 98's HTML page and its Desktop Themes
+//! pictures are not (Active Desktop), nor 2000's Sample (the PC user's own picture).
 //!
 //! Each entry's `what` is `wallpaper/<the name in the look's list>`; the core keeps each look's
 //! list and its order.
@@ -124,4 +125,28 @@ pub(crate) const ENTRIES: &[Entry] = &[
     file!("wallpaper/Santa Fe Stucco", &[Win2000], "wallpapers/win2000-santa-fe-stucco.wlp"),
     file!("wallpaper/Soap Bubbles", &[Win2000], "wallpapers/win2000-soap-bubbles.wlp"),
     file!("wallpaper/Zapotec", &[Win2000], "wallpapers/win2000-zapotec.wlp"),
+    // Windows 2000's JPEG wallpapers (WINNT\Web\Wallpaper\<name>.jpg), the files as they are:
+    // the bar decodes them through Windows when one is chosen. Its Sample (the PC user's own
+    // picture in My Pictures) is not Windows' and stays out.
+    file!("wallpaper/Boiling Point", &[Win2000], "wallpapers/win2000-boiling-point.jpg"),
+    file!("wallpaper/Chateau", &[Win2000], "wallpapers/win2000-chateau.jpg"),
+    file!("wallpaper/Fall Memories", &[Win2000], "wallpapers/win2000-fall-memories.jpg"),
+    file!("wallpaper/Fly Away", &[Win2000], "wallpapers/win2000-fly-away.jpg"),
+    file!("wallpaper/Gold Petals", &[Win2000], "wallpapers/win2000-gold-petals.jpg"),
+    file!("wallpaper/Ocean Wave", &[Win2000], "wallpapers/win2000-ocean-wave.jpg"),
+    file!("wallpaper/Paradise", &[Win2000], "wallpapers/win2000-paradise.jpg"),
+    file!("wallpaper/Purple Sponge", &[Win2000], "wallpapers/win2000-purple-sponge.jpg"),
+    file!("wallpaper/Snow Trees", &[Win2000], "wallpapers/win2000-snow-trees.jpg"),
+    file!("wallpaper/Solar Eclipse", &[Win2000], "wallpapers/win2000-solar-eclipse.jpg"),
+    file!("wallpaper/Water Color", &[Win2000], "wallpapers/win2000-water-color.jpg"),
+    file!("wallpaper/Windows 2000", &[Win2000], "wallpapers/win2000-windows-2000.jpg"),
+    // A picture file's small picture in the wallpaper list (a JPEG of Windows 2000's own; on 98 a
+    // JPEG chosen with Browse...): plain and selected. 98's from `display-bg-browsed-jpg1024-tile`
+    // (plain: the list without the keyboard under the Active Desktop question) and `-center`
+    // (selected) at 104,421; 2000's from `display-bg-windows2000-center` at 138,409 (Snow Trees;
+    // Solar Eclipse and Water Color the same) and 138,477 (Windows 2000, selected).
+    file!("display/picture", &[Win98], "display/win98-picture.rgb"),
+    file!("display/picture-selected", &[Win98], "display/win98-picture-selected.rgb"),
+    file!("display/picture", &[Win2000], "display/win2000-picture.rgb"),
+    file!("display/picture-selected", &[Win2000], "display/win2000-picture-selected.rgb"),
 ];

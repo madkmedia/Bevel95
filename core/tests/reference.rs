@@ -3985,8 +3985,10 @@ fn wallpaper_desktop_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
 /// 3): the whole window where the PC shows it. Masked, each for its reason: the other tabs
 /// (Bevel95 shows only Background for now); Browse... (grayed for now, usable on the PCs); in 98
 /// the list's scroll bar (the PC's list has the HTML page as a 22nd entry, so its thumb differs);
-/// in 2000 the list from its third row on and its scroll bar (the PC's list has 13 JPEG pictures
-/// between, which Bevel95 leaves out for now).
+/// in 2000 the list's scroll bar (the PC's list has Sample, the PC user's own picture, as a 25th
+/// entry, so its thumb differs; every row shown is the same); in 2000's JPEG cases the monitor's
+/// screen (Windows 2000 drew a JPEG there through its web view, not by the BMPs' rule; the core
+/// cannot decode a JPEG either).
 fn display_window_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
     use bevel_core::display::form::{DisplayProperties, Part, Which};
     use bevel_core::display::pattern::PatternWindow;
@@ -4010,6 +4012,8 @@ fn display_window_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         ("display-win98-clouds-stretch", "win98-truecolor-display-bg-clouds-stretch", Era::Win98, (66, 66), Some("Clouds"), Show::Stretch, None, Some(Part::ShowList)),
         ("display-win2000-zapotec-tile", "win2000-truecolor-display-bg-zapotec-tile", Era::Win2000, (110, 110), Some("Zapotec"), Show::Tile, None, Some(Part::ShowList)),
         ("display-win2000-zapotec-stretch", "win2000-truecolor-display-bg-zapotec-stretch", Era::Win2000, (110, 110), Some("Zapotec"), Show::Stretch, None, Some(Part::ShowList)),
+        // 2000's JPEG entries in its list, one chosen.
+        ("display-win2000-windows2000-center", "win2000-truecolor-display-bg-windows2000-center", Era::Win2000, (110, 110), Some("Windows 2000"), Show::Center, None, list),
     ];
     for &(name, file, era, at, wallpaper, show, pattern, focus) in shots {
         let (theme, fonts) = look(era, f95, f2k);
@@ -4040,13 +4044,13 @@ fn display_window_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         if name == "display-win95-bubbles-tile" {
             masks.extend([Rect::new(33, 262, 155, 68), Rect::new(96, 335, 92, 23)]);
         }
-        // 2000's list scrolled down to Zapotec shows other rows on the PC (its JPEG entries).
-        if name.starts_with("display-win2000-zapotec") {
-            masks.push(Rect::new(26, 282, 252, 110));
+        // A JPEG in the monitor: Windows 2000's web view drew it (see above).
+        if name == "display-win2000-windows2000-center" {
+            masks.push(Rect::new(126, 81, 152, 112));
         }
         match era {
             Era::Win98 => masks.push(Rect::new(265, 287, 16, 92)),
-            Era::Win2000 => masks.extend([Rect::new(26, 316, 252, 76), Rect::new(278, 282, 16, 110)]),
+            Era::Win2000 => masks.push(Rect::new(278, 282, 16, 110)),
             Era::Win95 => {}
         }
         let masks = masks.into_iter().map(|m| Rect::new(m.x + at.0, m.y + at.1, m.w, m.h)).collect();

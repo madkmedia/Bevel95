@@ -9,7 +9,7 @@ use bevel_art::{Art, Depth, Look};
 
 /// Extensions of the files Windows' pictures, sounds and fonts are kept in.
 const DATA_FILES: &[&str] =
-    &["rgb", "rgba", "pic", "idx", "idx4", "bits", "pcm", "palrle", "i4", "glyphs", "bin", "bmp", "ico", "cur", "wav", "gif", "wlp"];
+    &["rgb", "rgba", "pic", "idx", "idx4", "bits", "pcm", "palrle", "i4", "glyphs", "bin", "bmp", "ico", "cur", "wav", "gif", "wlp", "jpg", "jpeg"];
 
 /// The places allowed to hold such things although they are not in art/: the test pictures that
 /// show them (golden images, and README's pictures made from them), the font fixtures, the

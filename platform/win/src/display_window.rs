@@ -10,11 +10,13 @@
 //! effect at once: the classic desktop draws it (`bar::sync_desktop`).
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use bevel_core::display::form::{DisplayProperties, DisplayWindow, Part};
 use bevel_core::display::pattern::{self, PatternWindow};
-use bevel_core::display::{self, Choice};
+use bevel_core::display::{self, Choice, Picture, PictureId};
+
+use crate::pictures;
 use bevel_core::theme::Era;
 use bevel_winkit::state_file;
 
@@ -98,6 +100,58 @@ fn put_in_effect(era: Era, choice: Choice) {
     bar::sync_desktop();
 }
 
+/// Every picture to read that is wanted now: the desktop's (the look's choice in effect, or a live
+/// test's), Display Properties' monitor's, and `extra` (asked for by a window that is busy).
+fn wanted(extra: Option<PictureId>) -> Vec<PictureId> {
+    let mut ids = Vec::new();
+    if let Some(era) = with_app(|app| app.era)
+        && let Some(id) = choice(era).to_read(era)
+    {
+        ids.push(id);
+    }
+    if let Some(Some(id)) = kit::with::<DisplayHost, _>(|h| h.form.props.to_read()) {
+        ids.push(id);
+    }
+    ids.extend(extra);
+    ids
+}
+
+/// Lets go of the pictures no longer wanted and asks for the wanted ones (each read on a thread
+/// of its own unless it is there already).
+fn ask(extra: Option<PictureId>) {
+    let ids = wanted(extra);
+    pictures::keep_only(&ids);
+    for id in &ids {
+        pictures::want(id);
+    }
+}
+
+/// The picture the desktop draws `choice` with in `era`, when it is one to read and has been read;
+/// asked for if not (`bar::sync_desktop`).
+pub fn picture_for(era: Era, choice: &Choice) -> Option<Arc<Picture>> {
+    let id = choice.to_read(era)?;
+    ask(None);
+    pictures::ready(&id)
+}
+
+/// Display Properties' monitor gets the picture it waits for, if it has come.
+fn feed_window() {
+    let need = kit::with::<DisplayHost, _>(|h| h.form.props.to_read().filter(|id| !h.form.props.has_read(id))).flatten();
+    if let Some(id) = need
+        && let Some(p) = pictures::ready(&id)
+    {
+        kit::update::<DisplayHost>(|h| h.form.props.set_read(id, Some(p)));
+    }
+}
+
+/// A reading has finished (`pictures::WM_PICTURE`): what is no longer wanted goes, the monitor
+/// and the desktop take what came.
+pub fn pictures_came() {
+    ask(None);
+    feed_window();
+    bar::sync_desktop();
+}
+
 /// The window, while it is open (one at a time).
 pub struct DisplayHost {
     form: DisplayWindow,
@@ -116,6 +170,18 @@ impl Hosted for DisplayHost {
     }
     fn request_close() {
         close();
+    }
+    /// A JPEG or a person's own picture chosen in the list: asked for on its own thread; the
+    /// monitor shows the ground until it has come.
+    fn input_changed(&mut self) {
+        let Some(id) = self.form.props.to_read() else { return };
+        if self.form.props.has_read(&id) {
+            return;
+        }
+        ask(Some(id.clone()));
+        if let Some(p) = pictures::ready(&id) {
+            self.form.props.set_read(id, Some(p));
+        }
     }
 }
 
@@ -169,6 +235,8 @@ pub fn open() {
     };
     if kit::open(DisplayHost { form }, place).is_some() {
         log("opened Display Properties");
+        ask(None);
+        feed_window();
     }
 }
 
@@ -176,6 +244,8 @@ pub fn open() {
 pub fn close() {
     kit::close::<PatternHost>();
     kit::close::<DisplayHost>();
+    // Its monitor's picture is let go (unless the desktop draws it).
+    ask(None);
 }
 
 /// The bar's look, colors or size changed: the windows close (they show the old look's lists;

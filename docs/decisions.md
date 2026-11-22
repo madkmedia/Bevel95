@@ -5855,6 +5855,67 @@ Display Properties' Background page chooses them.
   - Left as they are: a note after a value (a value will soon be a file's path, which may hold a
     `#`; a new background.txt's header says a note needs a line of its own), and a person's own
     background.txt in a portable folder (the rule of every state file but settings.txt).
+- **Pictures read from files** (brief 73; the owner, 2026-11-21: the person's own pictures in
+  every look, JPEG and PNG too, "Ya every look is fine"; drawn in the look's big pixels like
+  everything else):
+  - **The reader** (`platform/win/src/picture_file.rs`): Windows decodes, through GDI+'s flat
+    functions (`gdiplus.dll`; windows-sys feature `Win32_Graphics_GdiPlus`, no crate). Chosen over
+    Windows' imaging component (WIC) because GDI+ is plain C functions, while WIC is COM interfaces
+    windows-sys does not describe (every method through a hand-written table); both decode BMP,
+    DIB, JPEG, PNG and GIF and give the camera's orientation. Bevel95 reads the file itself (at most
+    256 MB) and hands GDI+ the bytes in a memory stream (`SHCreateMemStream`): the size is checked
+    before anything is decoded and GDI+ never holds the file open. The kind is told by the file's
+    first bytes (BMP/DIB, JPEG, PNG, GIF); anything else GDI+ would read (TIFF, icons, metafiles) is
+    refused. **A file cut short**: GDI+ decodes it as far as it goes, fills the rest and says
+    nothing (found by the test), so the reader first checks that the file has its end (a PNG's
+    IEND, a GIF's last byte 0x3B, a JPEG's end mark after its last scan, a BMP's rows as its header
+    promises). **Upright**: the orientation a camera writes (EXIF 0x0112, numbers 1 to 8) turns the
+    picture (`display::Picture::upright`, a table test of all eight). **The limits**: a side of at
+    most 16,384 pixels and at most 50 million pixels (a 50-megapixel camera's photo; 200 MB while
+    decoded, held while it is the choice, so that a change of size or screens can draw it again
+    without reading the file), a file of at most 256 MB; beyond them the picture is refused like one
+    that cannot be read (before decoding: GDI+ gives the size first). A partly see-through pixel (a
+    PNG's or GIF's edge) is mixed with the ground under it; Windows' own pictures have none.
+  - **Never on the bar's, the desktop's or a window's thread** (`platform/win/src/pictures.rs`):
+    what is wanted is asked for by what it is (`display::PictureId`: one of a look's JPEGs by name,
+    or a person's picture by its file's full path); a thread of its own reads it and posts
+    `Bevel95.Bar.Picture` (the bar's own; no live test posts it) to the bar, which hands it to the
+    desktop (`desktop::Look::picture`: the desktop draws it on its own thread like a BMP, the same
+    `Arc` compared by pointer, so it is drawn once) and to Display Properties' monitor. Only the
+    pictures wanted now are kept (the desktop's choice, the monitor's, a Browse... answer's): an
+    answer for a picture no longer wanted finds no slot and is dropped, decided by what it is, not
+    by order (`pictures::tests::a_late_answer_is_dropped`). Until a picture has come the desktop
+    shows its color or pattern (with Tile or Stretch the color), the monitor the same. A picture
+    that cannot be read is kept as "cannot be shown" while it is wanted (not read again and again).
+    Display Properties asks for its monitor's picture after each input that changed the page (the
+    kit's new `Hosted::input_changed`, called with the window borrowed; it only starts a reading).
+  - **The log**: Windows' own pictures by name ("Windows 2000's Chateau read (800x600) in 9 ms"); a
+    person's own only as "the person's own picture", its size in pixels and how long it took.
+- **Windows 2000's JPEG wallpapers** (taken by the main session as following from the owner's
+  answer, PROVISIONAL: drawn without the old question about Active Desktop): the twelve JPEGs of
+  `WINNT\Web\Wallpaper` go into `art/` as the files they are (`art/assets/wallpapers/win2000-*.jpg`,
+  541,332 bytes; 2000's Sample, the PC user's own picture in My Pictures, stays out: the survey's
+  "13 JPEGs" counted it), into the 2000 look's list in Windows' order (by name without case), with a
+  picture file's small picture in the list (cut from the Reference PCs' captures: 2000's for its
+  JPEGs, 98's for a JPEG chosen with Browse..., plain and selected). Decoded by the same reader when
+  chosen. Only the bar carries them (`core::display` is the bar's alone): bevel95.exe grew by
+  602,112 bytes (the JPEGs, the four small pictures and the reader), every other program by at most
+  1 KB (the kit's new hook).
+  - **How close**: decoded by Windows 11's GDI+, they are Windows 2000's own pixels: against the
+    Reference PC's desktops with a JPEG (Boiling Point tiled, Fly Away stretched; captured with
+    Active Desktop on, the only way 2000 drew a JPEG), 17 of 399,700 pixels differ in each, all of
+    them the mouse pointer (`picture_file::tests::how_close_2000s_jpegs_come`, on request: it needs
+    the private captures, so it is not one of compare-refs' cases, whose core cannot decode JPEGs).
+  - **The monitor**: a JPEG by the BMPs' rule. Windows 2000 drew its JPEGs there through its web
+    view instead, larger than the rule for a small picture (Boiling Point 163x293 as 42x72, the rule
+    gives 31x55) and with the small screen's last row white; not explained, not copied.
+  - **The comparison cases**: with the JPEGs in the list, 2000's list needs no mask but its scroll
+    bar (the PC's list has Sample as a 25th entry, so its thumb differs; every row shown is the
+    same). New case `display-win2000-windows2000-center` (the JPEG entries, Windows 2000 chosen),
+    exact but for the monitor's screen (masked: the web view's drawing, and the core cannot decode
+    a JPEG).
+  - Golden pictures: 2000's `display-background`, `display-wallpaper` and `display-pattern` changed
+    (their list now has the JPEG rows; nothing else on them); new `win2000-display-jpeg-list`.
 
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean

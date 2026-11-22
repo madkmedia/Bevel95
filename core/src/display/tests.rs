@@ -31,19 +31,31 @@ fn each_look_lists_its_own_wallpapers_in_windows_order() {
             "Straw Mat", "Tiles", "Triangles", "Waves"
         ]
     );
+    // 2000: its BMPs and its twelve JPEGs, as its list had them but for Sample (the PC user's own).
     assert_eq!(
         names(Era::Win2000),
         [
-            "Blue Lace 16", "Coffee Bean", "FeatherTexture", "Gone Fishing", "Greenstone", "Prairie Wind",
-            "Rhododendron", "River Sumida", "Santa Fe Stucco", "Soap Bubbles", "Zapotec"
+            "Blue Lace 16", "Boiling Point", "Chateau", "Coffee Bean", "Fall Memories", "FeatherTexture", "Fly Away",
+            "Gold Petals", "Gone Fishing", "Greenstone", "Ocean Wave", "Paradise", "Prairie Wind", "Purple Sponge",
+            "Rhododendron", "River Sumida", "Santa Fe Stucco", "Snow Trees", "Soap Bubbles", "Solar Eclipse",
+            "Water Color", "Windows 2000", "Zapotec"
         ]
     );
+    let jpegs = wallpapers(Era::Win2000).iter().filter(|w| w.is_jpeg()).count();
+    assert_eq!(jpegs, 12);
+    // A JPEG is read on the bar's side (its file's bytes, a JPEG's own start); a BMP is decoded here.
+    let chateau = choice(Some("Chateau"), Show::Center, None);
+    let id = chateau.to_read(Era::Win2000).unwrap();
+    assert_eq!(id, PictureId::Windows(Era::Win2000, "Chateau"));
+    assert_eq!(&id.bytes().unwrap()[..3], [0xFF, 0xD8, 0xFF]);
+    assert!(wallpaper(Era::Win2000, "Chateau").unwrap().picture().is_none());
+    assert_eq!(choice(Some("Zapotec"), Show::Center, None).to_read(Era::Win2000), None);
     // The order rule places the entries left out where the PCs had them.
     let mut all = vec!["Zapotec", "Boiling Point", "Fall Memories", "FeatherTexture", "Windows 2000", "Blue Lace 16"];
     all.sort_by(|a, b| windows_order(a, b));
     assert_eq!(all, ["Blue Lace 16", "Boiling Point", "Fall Memories", "FeatherTexture", "Windows 2000", "Zapotec"]);
     // A look shows only its own: 95's Setup is 95's picture, 98's is 98's.
-    let (s95, s98) = (wallpaper(Era::Win95, "Setup").unwrap().picture(), wallpaper(Era::Win98, "Setup").unwrap().picture());
+    let (s95, s98) = (wallpaper(Era::Win95, "Setup").unwrap().picture().unwrap(), wallpaper(Era::Win98, "Setup").unwrap().picture().unwrap());
     assert_eq!((s95.width, s95.height, s98.width, s98.height), (640, 480, 640, 480));
     assert_ne!(s95.pixels, s98.pixels);
     assert!(wallpaper(Era::Win95, "Clouds").is_none() && wallpaper(Era::Win2000, "Bubbles").is_none());
@@ -70,7 +82,7 @@ fn every_wallpaper_has_the_size_of_its_file() {
         (Era::Win2000, "Zapotec", 96, 96, 63),
     ];
     for (era, name, w, h, colors) in sizes {
-        let p = wallpaper(era, name).unwrap().picture();
+        let p = wallpaper(era, name).unwrap().picture().unwrap();
         let mut used = p.pixels.clone();
         used.sort_unstable();
         used.dedup();
@@ -78,8 +90,8 @@ fn every_wallpaper_has_the_size_of_its_file() {
         assert!(p.pixels.iter().all(|&px| px >> 24 == 0xFF), "{name}: opaque");
     }
     for era in Era::ALL {
-        for w in wallpapers(era) {
-            let p = w.picture();
+        for w in wallpapers(era).into_iter().filter(|w| !w.is_jpeg()) {
+            let p = w.picture().unwrap();
             assert_eq!(p.pixels.len(), (p.width * p.height) as usize, "{}", w.name);
         }
     }
@@ -124,7 +136,7 @@ fn a_patterns_bits_start_at_the_screens_corner() {
 #[test]
 fn a_wallpaper_tiles_from_the_top_left_corner() {
     let c = choice(Some("Black Thatch"), Show::Tile, Some("Bricks"));
-    let p = wallpaper(Era::Win95, "Black Thatch").unwrap().picture();
+    let p = wallpaper(Era::Win95, "Black Thatch").unwrap().picture().unwrap();
     let fb = drawn(&WIN95, &c, 100, 70);
     for y in 0..70 {
         for x in 0..100 {
@@ -149,7 +161,7 @@ fn a_centered_wallpaper_lies_on_the_pattern_or_the_color() {
     assert_eq!(centered(800, 600, 1025, 769), (-112, -84));
     // Smaller: the pattern around it.
     let c = choice(Some("Bubbles"), Show::Center, Some("Plaid"));
-    let p = wallpaper(Era::Win95, "Bubbles").unwrap().picture();
+    let p = wallpaper(Era::Win95, "Bubbles").unwrap().picture().unwrap();
     let fb = drawn(&WIN95, &c, 100, 80);
     let (x0, y0) = centered(100, 80, 64, 64);
     assert_eq!((x0, y0), (18, 8));
@@ -171,7 +183,7 @@ fn a_centered_wallpaper_lies_on_the_pattern_or_the_color() {
     let fb = drawn(&WIN95, &choice(Some("Bubbles"), Show::Center, None), 100, 80);
     assert_eq!(fb.get(0, 0), WIN95.colors.desktop);
     // Larger: cut equally on all sides (95's Setup, 640x480, on a 600x400 screen).
-    let setup = wallpaper(Era::Win95, "Setup").unwrap().picture();
+    let setup = wallpaper(Era::Win95, "Setup").unwrap().picture().unwrap();
     let fb = drawn(&WIN95, &choice(Some("Setup"), Show::Center, Some("Plaid")), 600, 400);
     assert_eq!(fb.get(0, 0), setup.get(20, 40));
     assert_eq!(fb.get(599, 399), setup.get(619, 439));
@@ -201,7 +213,7 @@ fn stretch_steps_as_windows_did() {
     // Pixels repeated, never mixed: a stretched picture has no color the picture has not.
     let c = choice(Some("Clouds"), Show::Stretch, Some("Daisies"));
     let fb = drawn(&WIN98, &c, 800, 600);
-    let p = wallpaper(Era::Win98, "Clouds").unwrap().picture();
+    let p = wallpaper(Era::Win98, "Clouds").unwrap().picture().unwrap();
     let mut colors = p.pixels.clone();
     colors.sort_unstable();
     assert!(fb.pixels.iter().all(|px| colors.binary_search(px).is_ok()));
@@ -261,13 +273,13 @@ fn a_key_written_twice_is_left_once() {
 /// Stretch are done for each screen within its own.
 #[test]
 fn several_screens_each_center_and_stretch_their_own() {
-    let bubbles = wallpaper(Era::Win95, "Bubbles").unwrap().picture();
+    let bubbles = wallpaper(Era::Win95, "Bubbles").unwrap().picture().unwrap();
     let at = |fb: &Framebuffer, x: i32, y: i32| fb.get(x, y);
     // Two screens side by side, of different heights: the main 200x150 at the left, a 100x80 right.
     let (main, second) = (Rect::new(0, 0, 200, 150), Rect::new(200, 0, 100, 80));
     let c = choice(Some("Bubbles"), Show::Center, Some("Plaid"));
     let mut fb = Framebuffer::new(300, 150, 0);
-    draw_on(&mut fb, &WIN95, &c, &[main, second]);
+    draw_on(&mut fb, &WIN95, &c, None, &[main, second]);
     let plaid = pattern(Era::Win95, "Plaid").unwrap();
     let ground = |x: i32, y: i32, origin: (i32, i32)| if plaid.set(x - origin.0, y - origin.1) { 0xFF00_0000 } else { WIN95.colors.desktop };
     for (s, origin) in [(main, (0, 0)), (second, (0, 0))] {
@@ -282,18 +294,18 @@ fn several_screens_each_center_and_stretch_their_own() {
     }
     // A picture larger than a screen is cut to it: the 100x80 screen shows only its own part, and
     // the main screen's picture does not reach into it.
-    let setup = wallpaper(Era::Win95, "Setup").unwrap().picture();
+    let setup = wallpaper(Era::Win95, "Setup").unwrap().picture().unwrap();
     let mut fb = Framebuffer::new(300, 150, 0);
-    draw_on(&mut fb, &WIN95, &choice(Some("Setup"), Show::Center, None), &[main, second]);
+    draw_on(&mut fb, &WIN95, &choice(Some("Setup"), Show::Center, None), None, &[main, second]);
     let (mx, my) = centered(200, 150, 640, 480);
     let (sx, sy) = centered(100, 80, 640, 480);
     assert_eq!(at(&fb, 199, 10), setup.get(199 - mx, 10 - my));
     assert_eq!(at(&fb, 200, 10), setup.get(-sx, 10 - sy));
     assert_eq!(at(&fb, 250, 100), WIN95.colors.desktop, "below the shorter screen: no screen, the ground");
     // Stretch: each screen gets the whole picture.
-    let clouds = wallpaper(Era::Win98, "Clouds").unwrap().picture();
+    let clouds = wallpaper(Era::Win98, "Clouds").unwrap().picture().unwrap();
     let mut fb = Framebuffer::new(300, 150, 0);
-    draw_on(&mut fb, &WIN98, &choice(Some("Clouds"), Show::Stretch, None), &[main, second]);
+    draw_on(&mut fb, &WIN98, &choice(Some("Clouds"), Show::Stretch, None), None, &[main, second]);
     for (s, small) in [(main, stretched(Era::Win98, &clouds, 200, 150)), (second, stretched(Era::Win98, &clouds, 100, 80))] {
         for y in 0..s.h {
             for x in 0..s.w {
@@ -305,13 +317,13 @@ fn several_screens_each_center_and_stretch_their_own() {
     // the pattern and the tiles line up with the main screen's corner.
     let (main, second) = (Rect::new(100, 40, 200, 150), Rect::new(0, 0, 100, 80));
     let mut fb = Framebuffer::new(300, 190, 0);
-    draw_on(&mut fb, &WIN95, &choice(None, Show::Center, Some("Plaid")), &[main, second]);
+    draw_on(&mut fb, &WIN95, &choice(None, Show::Center, Some("Plaid")), None, &[main, second]);
     for (x, y) in [(100, 40), (0, 0), (37, 13), (299, 189), (5, 70)] {
         assert_eq!(at(&fb, x, y), ground(x, y, (100, 40)), "{x},{y}");
     }
-    let thatch = wallpaper(Era::Win95, "Black Thatch").unwrap().picture();
+    let thatch = wallpaper(Era::Win95, "Black Thatch").unwrap().picture().unwrap();
     let mut fb = Framebuffer::new(300, 190, 0);
-    draw_on(&mut fb, &WIN95, &choice(Some("Black Thatch"), Show::Tile, None), &[main, second]);
+    draw_on(&mut fb, &WIN95, &choice(Some("Black Thatch"), Show::Tile, None), None, &[main, second]);
     for y in 0..190 {
         for x in 0..300 {
             assert_eq!(at(&fb, x, y), thatch.get((x - 100).rem_euclid(31), (y - 40).rem_euclid(30)), "{x},{y}");
@@ -319,7 +331,7 @@ fn several_screens_each_center_and_stretch_their_own() {
     }
     // Centered on the second screen within it, on the main within the main.
     let mut fb = Framebuffer::new(300, 190, 0);
-    draw_on(&mut fb, &WIN95, &c, &[main, second]);
+    draw_on(&mut fb, &WIN95, &c, None, &[main, second]);
     let (x0, y0) = centered(100, 80, 64, 64);
     assert_eq!(at(&fb, x0, y0), bubbles.get(0, 0));
     let (x0, y0) = centered(200, 150, 64, 64);
@@ -327,7 +339,7 @@ fn several_screens_each_center_and_stretch_their_own() {
     // One screen over the whole area is the one-screen drawing.
     for c in [c.clone(), choice(Some("Black Thatch"), Show::Tile, Some("Bricks")), choice(Some("Setup"), Show::Center, None)] {
         let mut one = Framebuffer::new(300, 190, 0);
-        draw_on(&mut one, &WIN95, &c, &[Rect::new(0, 0, 300, 190)]);
+        draw_on(&mut one, &WIN95, &c, None, &[Rect::new(0, 0, 300, 190)]);
         assert_eq!(one.pixels, drawn(&WIN95, &c, 300, 190).pixels);
     }
 }
@@ -364,7 +376,7 @@ fn the_monitor_scales_a_wallpaper_as_the_screen_is() {
     assert_eq!(monitor.get(0, 0), 0);
     assert_eq!(monitor.get(MONITOR_SCREEN.x - 4, MONITOR_SCREEN.y + 20), 0xFFC0_C0C0);
     let mut fb = Framebuffer::new(184, 170, 0xFF11_2233);
-    paint_monitor(&mut fb, &WIN2000, 0, 0, &Choice::plain());
+    paint_monitor(&mut fb, &WIN2000, 0, 0, &Choice::plain(), None);
     assert_eq!(fb.get(0, 0), 0xFF11_2233, "the page shows around it");
     assert_eq!(fb.get(MONITOR_SCREEN.x + 5, MONITOR_SCREEN.y + 5), WIN2000.colors.desktop);
 }
@@ -378,6 +390,105 @@ fn wallpapers_take_the_looks_rule_in_16_and_256_colors() {
     let theme = crate::theme::theme_in(Era::Win2000, Depth::TwoFiftySix);
     let fb = background(theme, &choice(Some("Zapotec"), Show::Center, None), 300, 300).unwrap();
     assert_eq!(fb.get(0, 0), WIN2000.colors.desktop);
+}
+
+/// A small picture whose every pixel says where it is (x in red, y in green).
+fn where_picture(w: i32, h: i32) -> Picture {
+    let pixels = (0..h).flat_map(|y| (0..w).map(move |x| 0xFF00_0000 | (x as u32) << 16 | (y as u32) << 8)).collect();
+    Picture { width: w, height: h, pixels }
+}
+
+/// The upright rule: what a camera writes into a photo (EXIF orientation 1 to 8) turns the stored
+/// picture so that it stands as it was taken.
+#[test]
+fn a_photo_stands_upright() {
+    let p = where_picture(3, 2);
+    let at = |q: &Picture, x: i32, y: i32| ((q.get(x, y) >> 16) & 0xFF, (q.get(x, y) >> 8) & 0xFF);
+    // (orientation, size after, the stored pixel shown at the upright picture's top-left and at its
+    // top-right).
+    let cases = [
+        (1, (3, 2), (0, 0), (2, 0)),
+        (2, (3, 2), (2, 0), (0, 0)),
+        (3, (3, 2), (2, 1), (0, 1)),
+        (4, (3, 2), (0, 1), (2, 1)),
+        (5, (2, 3), (0, 0), (0, 1)),
+        (6, (2, 3), (0, 1), (0, 0)),
+        (7, (2, 3), (2, 1), (2, 0)),
+        (8, (2, 3), (2, 0), (2, 1)),
+        (0, (3, 2), (0, 0), (2, 0)),
+        (9, (3, 2), (0, 0), (2, 0)),
+    ];
+    for (o, size, top_left, top_right) in cases {
+        let q = p.clone().upright(o);
+        assert_eq!((q.width, q.height), size, "{o}");
+        assert_eq!(at(&q, 0, 0), (top_left.0 as u32, top_left.1 as u32), "{o}: top-left");
+        assert_eq!(at(&q, q.width - 1, 0), (top_right.0 as u32, top_right.1 as u32), "{o}: top-right");
+        let mut a = q.pixels.clone();
+        let mut b = p.pixels.clone();
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b, "{o}: every pixel once");
+    }
+}
+
+/// A person's own picture is told from Windows' names by being a file's full path; its name in
+/// the list is the file's name without the ending, cut at characters.
+#[test]
+fn a_persons_own_picture_is_a_path() {
+    for path in ["C:\\Pictures\\Me.jpg", "d:\\x", "\\\\server\\share\\a b#=.c.png", "C:\\Фото\\日本 #1=2.v1.final.JPG"] {
+        assert!(is_own(path), "{path}");
+    }
+    for value in ["Forest", "(None)", "C:", "C:relative.jpg", "\\single", "\\\\", "C:\\a\u{7}b.jpg", ""] {
+        assert!(!is_own(value), "{value}");
+    }
+    assert_eq!(own_name("C:\\Фото\\日本 #1=2.v1.final.JPG"), "日本 #1=2.v1.final");
+    assert_eq!(own_name("C:\\Pictures\\Me.jpg"), "Me");
+    assert_eq!(own_name("C:\\Pictures\\NoEnding"), "NoEnding");
+    assert_eq!(own_name("C:\\Pictures\\.hidden"), ".hidden");
+    let c = choice(Some("C:\\Pictures\\Me.jpg"), Show::Tile, Some("Bricks"));
+    for era in Era::ALL {
+        assert_eq!(c.to_read(era), Some(PictureId::Own("C:\\Pictures\\Me.jpg".into())));
+        assert!(c.has_wallpaper(era) && !c.is_plain(era));
+        assert_eq!(c.pattern_shown(era), None, "tiled: no pattern");
+    }
+    assert_eq!(PictureId::Own("C:\\x.jpg".into()).bytes(), None);
+    // The limits: a side of 16,384 at most, 50 million pixels at most.
+    assert!(size_taken(16_384, 3_000) && size_taken(1, 1) && size_taken(8_160, 6_120));
+    assert!(!size_taken(16_385, 1) && !size_taken(0, 5) && !size_taken(10_000, 5_001) && !size_taken(-1, 1));
+}
+
+/// A picture to read (a JPEG, a person's own) is drawn once it is there; until then the ground
+/// shows (the pattern around a centered one), or nothing at all (the plain desktop).
+#[test]
+fn a_picture_read_later_is_drawn_when_it_comes() {
+    let p = where_picture(10, 6);
+    let c = choice(Some("C:\\Pictures\\Me.png"), Show::Center, None);
+    assert!(background_on(&WIN98, &c, None, &[], 40, 30).is_none(), "not there yet: the plain desktop");
+    let fb = background_on(&WIN98, &c, Some(&p), &[], 40, 30).unwrap();
+    assert_eq!((fb.get(15, 12), fb.get(24, 17), fb.get(0, 0)), (p.get(0, 0), p.get(9, 5), WIN98.colors.desktop));
+    let with_pattern = choice(Some("C:\\Pictures\\Me.png"), Show::Center, Some("Bricks"));
+    let fb = background_on(&WIN98, &with_pattern, None, &[], 16, 16).unwrap();
+    assert_eq!(fb.pixels, drawn(&WIN98, &choice(None, Show::Center, Some("Bricks")), 16, 16).pixels);
+    // Tiled and stretched by the rules the BMPs have.
+    let fb = background_on(&WIN2000, &choice(Some("Chateau"), Show::Tile, None), Some(&p), &[], 25, 13).unwrap();
+    assert_eq!((fb.get(0, 0), fb.get(12, 7), fb.get(24, 12)), (p.get(0, 0), p.get(2, 1), p.get(4, 0)));
+    let fb = background_on(&WIN2000, &choice(Some("Chateau"), Show::Stretch, None), Some(&p), &[], 20, 12).unwrap();
+    assert_eq!(fb.pixels, stretched(Era::Win2000, &p, 20, 12).pixels);
+    // A picture read for a BMP's choice is not taken: the BMP is the look's own.
+    let fb = background_on(&WIN2000, &choice(Some("Zapotec"), Show::Tile, None), Some(&p), &[], 96, 96).unwrap();
+    assert_eq!(fb.pixels, background(&WIN2000, &choice(Some("Zapotec"), Show::Tile, None), 96, 96).unwrap().pixels);
+    // A partly see-through pixel is mixed with what lies under it.
+    let half = Picture { width: 1, height: 1, pixels: vec![0x80FF_FFFF] };
+    let fb = background_on(&WIN98, &c, Some(&half), &[], 1, 1).unwrap();
+    let d = WIN98.colors.desktop;
+    let mix = |s: u32| (0xFF * 0x80 + ((d >> s) & 0xFF) * 0x7F + 127) / 255;
+    assert_eq!(fb.get(0, 0), 0xFF00_0000 | mix(16) << 16 | mix(8) << 8 | mix(0));
+    // The monitor shows it by the BMPs' rule too.
+    let mut a = Framebuffer::new(184, 170, 0);
+    paint_monitor(&mut a, &WIN98, 0, 0, &c, Some(&p));
+    let mut b = Framebuffer::new(184, 170, 0);
+    paint_monitor(&mut b, &WIN98, 0, 0, &c, None);
+    assert_ne!(a.pixels, b.pixels);
 }
 
 /// What the desktop's picture costs on a large screen (the owner's 2560x1440 at Size 2, and at

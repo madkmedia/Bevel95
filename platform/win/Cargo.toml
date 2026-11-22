@@ -28,6 +28,8 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_Globalization",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
+    # GDI+'s flat functions: reading a wallpaper's picture file (BMP, JPEG, PNG, GIF).
+    "Win32_Graphics_GdiPlus",
     "Win32_Media",
     "Win32_Media_Audio",
     "Win32_NetworkManagement_IpHelper",

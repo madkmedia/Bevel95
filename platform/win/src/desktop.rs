@@ -158,6 +158,9 @@ pub struct Look {
     pub scale: bevel_core::scale::Scale,
     /// The look's wallpaper and pattern (`display_window::choice`).
     pub background: bevel_core::display::Choice,
+    /// Its picture once read, when it is one to read (a JPEG, the person's own picture): read on
+    /// a thread of its own, never here.
+    pub picture: Option<std::sync::Arc<bevel_core::display::Picture>>,
 }
 
 /// The look to use, handed from the bar to the desktop's thread.
@@ -993,6 +996,15 @@ fn work_area(screen: &RECT) -> RECT {
     RECT { left: w.left - screen.left, top: w.top - screen.top, right: w.right - screen.left, bottom: w.bottom - screen.top }
 }
 
+/// The same picture read (the very same, not an equal one: a picture read again is drawn again).
+fn same_picture(a: &Option<std::sync::Arc<bevel_core::display::Picture>>, b: &Option<std::sync::Arc<bevel_core::display::Picture>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 /// Every screen's rectangle in the desktop window's pixels (relative to `desktop`, the window's
 /// place), the main screen first; empty if Windows says nothing (the caller then takes the whole
 /// desktop as one screen).
@@ -1051,6 +1063,7 @@ fn rebuild(hwnd: HWND, force: bool) {
                 && (st.fb.width, st.fb.height) == size
                 && st.screens == screens
                 && st.look.background == look.background
+                && same_picture(&st.look.picture, &look.picture)
                 && std::ptr::eq(st.look.theme, look.theme);
             if same_picture && st.view.area() == area && !force {
                 return;
@@ -1084,7 +1097,8 @@ fn rebuild(hwnd: HWND, force: bool) {
         if !keep_picture {
             view.set_background(None);
             let started = Instant::now();
-            let background = bevel_core::display::background_on(look.theme, &look.background, &screens, size.0, size.1);
+            let background =
+                bevel_core::display::background_on(look.theme, &look.background, look.picture.as_deref(), &screens, size.0, size.1);
             if background.is_some() {
                 log(&format!(
                     "desktop: its wallpaper and pattern drawn over {}x{} ({} screens) in {} ms",

@@ -65,23 +65,39 @@ impl Show {
     }
 }
 
-/// One of a look's wallpapers: its name in the list and its picture (`bevel-art`, compact form).
+/// How a wallpaper of Windows' is kept in `bevel-art`.
+#[derive(Clone, Copy, Debug)]
+enum File {
+    /// The BMPs, pixel for pixel in bevel-art's compact form: decoded here.
+    Compact(&'static [u8]),
+    /// Windows 2000's JPEGs, the files as they are: decoded by Windows on the bar's side (read on
+    /// a thread of their own, like a person's own picture).
+    Jpeg(&'static [u8]),
+}
+
+/// One of a look's wallpapers: its name in the list and its picture (`bevel-art`).
 #[derive(Debug)]
 pub struct Wallpaper {
     pub name: &'static str,
-    file: &'static [u8],
+    file: File,
 }
 
 macro_rules! wallpaper {
     ($name:literal, $look:ident) => {
-        Wallpaper { name: $name, file: const { art::bytes(concat!("wallpaper/", $name), Look::$look) } }
+        Wallpaper { name: $name, file: File::Compact(const { art::bytes(concat!("wallpaper/", $name), Look::$look) }) }
     };
 }
 
-/// Each look's BMP wallpapers (the order they are listed in is `windows_order`'s, not this one).
-/// Left out for now: Windows 2000's JPEG pictures and its Sample (the owner decides how JPEGs come
-/// in), 98's HTML page (it needs Active Desktop) and its Desktop Themes pictures (Windows' own list
-/// did not have them either).
+macro_rules! jpeg {
+    ($name:literal) => {
+        Wallpaper { name: $name, file: File::Jpeg(const { art::bytes(concat!("wallpaper/", $name), Look::Win2000) }) }
+    };
+}
+
+/// Each look's wallpapers (the order they are listed in is `windows_order`'s, not this one).
+/// Left out: Windows 2000's Sample (the PC user's own picture), 98's HTML page (it needs Active
+/// Desktop) and its Desktop Themes pictures (Windows' own list did not have them either). 2000's
+/// JPEGs are drawn without the old question about Active Desktop (PROVISIONAL, brief 73).
 static WIN95_WALLPAPERS: [Wallpaper; 12] = [
     wallpaper!("Black Thatch", Win95),
     wallpaper!("Blue Rivets", Win95),
@@ -118,7 +134,19 @@ static WIN98_WALLPAPERS: [Wallpaper; 20] = [
     wallpaper!("Triangles", Win98),
     wallpaper!("Waves", Win98),
 ];
-static WIN2000_WALLPAPERS: [Wallpaper; 11] = [
+static WIN2000_WALLPAPERS: [Wallpaper; 23] = [
+    jpeg!("Boiling Point"),
+    jpeg!("Chateau"),
+    jpeg!("Fall Memories"),
+    jpeg!("Fly Away"),
+    jpeg!("Gold Petals"),
+    jpeg!("Ocean Wave"),
+    jpeg!("Paradise"),
+    jpeg!("Purple Sponge"),
+    jpeg!("Snow Trees"),
+    jpeg!("Solar Eclipse"),
+    jpeg!("Water Color"),
+    jpeg!("Windows 2000"),
     wallpaper!("Blue Lace 16", Win2000),
     wallpaper!("Coffee Bean", Win2000),
     wallpaper!("FeatherTexture", Win2000),
@@ -211,11 +239,33 @@ impl Choice {
 
     /// Nothing drawn but the desktop color (no wallpaper, no pattern the look has).
     pub fn is_plain(&self, era: Era) -> bool {
-        self.wallpaper_in(era).is_none() && self.pattern_in(era).is_none()
+        !self.has_wallpaper(era) && self.pattern_in(era).is_none()
     }
 
+    /// The look's own wallpaper of Windows' chosen (none for a person's own picture).
     pub fn wallpaper_in(&self, era: Era) -> Option<&'static Wallpaper> {
         self.wallpaper.as_deref().and_then(|n| wallpaper(era, n))
+    }
+
+    /// The person's own picture chosen: its file's full path.
+    pub fn own(&self) -> Option<&str> {
+        self.wallpaper.as_deref().filter(|v| is_own(v))
+    }
+
+    /// A wallpaper is chosen: one of the look's own, or a person's own picture.
+    pub fn has_wallpaper(&self, era: Era) -> bool {
+        self.wallpaper_in(era).is_some() || self.own().is_some()
+    }
+
+    /// The picture that must be read (on the bar's side, on a thread of its own) before the
+    /// wallpaper can be drawn: one of Windows 2000's JPEGs, or a person's own picture. None for
+    /// the BMPs (decoded here at once) and for no wallpaper.
+    pub fn to_read(&self, era: Era) -> Option<PictureId> {
+        if let Some(path) = self.own() {
+            return Some(PictureId::Own(path.to_string()));
+        }
+        let w = self.wallpaper_in(era)?;
+        matches!(w.file, File::Jpeg(_)).then_some(PictureId::Windows(era, w.name))
     }
 
     pub fn pattern_in(&self, era: Era) -> Option<Pattern> {
@@ -225,11 +275,66 @@ impl Choice {
     /// The pattern that shows: none under a tiled or stretched wallpaper (98 and 2000 gray their
     /// Pattern... button then; 95 keeps its list, and the wallpaper covers it).
     pub fn pattern_shown(&self, era: Era) -> Option<Pattern> {
-        match (self.wallpaper_in(era), self.show) {
-            (Some(_), Show::Tile | Show::Stretch) => None,
+        match (self.has_wallpaper(era), self.show) {
+            (true, Show::Tile | Show::Stretch) => None,
             _ => self.pattern_in(era),
         }
     }
+}
+
+/// A picture that is read from a file before it is drawn, by what it is: one of a look's JPEGs of
+/// Windows' (by name), or a person's own picture (by its file's full path). A reading that comes
+/// back for a picture that is no longer wanted is dropped by this, never by order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PictureId {
+    Windows(Era, &'static str),
+    Own(String),
+}
+
+impl PictureId {
+    /// The file's bytes of one of Windows' JPEGs (`bevel-art`); None for a person's own picture.
+    pub fn bytes(&self) -> Option<&'static [u8]> {
+        match self {
+            PictureId::Windows(era, name) => match wallpaper(*era, name)?.file {
+                File::Jpeg(bytes) => Some(bytes),
+                File::Compact(_) => None,
+            },
+            PictureId::Own(_) => None,
+        }
+    }
+}
+
+/// Whether a wallpaper value is a person's own picture: a file's full path (`X:\...` or a
+/// network path `\\server\...`), never one of Windows' names (they hold no backslash or colon).
+/// Text that cannot be a file's path (control characters, longer than Windows' paths) is not.
+pub fn is_own(value: &str) -> bool {
+    let mut c = value.chars();
+    let drive = matches!((c.next(), c.next(), c.next()), (Some(d), Some(':'), Some('\\')) if d.is_ascii_alphabetic());
+    let network = value.starts_with("\\\\") && value.len() > 2;
+    (drive || network) && value.chars().count() <= 32_767 && !value.chars().any(char::is_control)
+}
+
+/// A person's own picture's name in the list: its file's name without the ending ("My Photo.2024
+/// .jpg" is "My Photo.2024"), cut at characters, never at bytes.
+pub fn own_name(path: &str) -> &str {
+    let file = path.rsplit(['\\', '/']).next().unwrap_or(path);
+    match file.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem,
+        _ => file,
+    }
+}
+
+/// What the bar takes from a person's own picture, and from no more: a side of at most 16,384
+/// pixels, at most 50 million pixels (a 50-megapixel camera's photo; 200 MB while decoded at four
+/// bytes a pixel, held while it is the choice), a file of at most 256 MB. Beyond it the picture is
+/// refused like one that cannot be read.
+pub const MAX_SIDE: i32 = 16_384;
+pub const MAX_PIXELS: i64 = 50_000_000;
+pub const MAX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Whether a picture of `w` x `h` pixels is within the limits.
+pub fn size_taken(w: i64, h: i64) -> bool {
+    (1..=i64::from(MAX_SIDE)).contains(&w) && (1..=i64::from(MAX_SIDE)).contains(&h) && w * h <= MAX_PIXELS
 }
 
 /// A picture as decoded: 0xFFRRGGBB, or 0 where see-through.
@@ -243,6 +348,37 @@ pub struct Picture {
 impl Picture {
     pub fn get(&self, x: i32, y: i32) -> u32 {
         self.pixels[(y * self.width + x) as usize]
+    }
+
+    /// The picture as it was taken, upright: `orientation` is the number a camera writes into a
+    /// photo (EXIF 0x0112): 1 as it is, 2 mirrored, 3 turned half round, 4 mirrored upside down, 5
+    /// mirrored and turned a quarter right, 6 turned a quarter right, 7 mirrored and turned a
+    /// quarter left, 8 turned a quarter left (each says how the stored picture must be turned to
+    /// stand upright). Any other number: as it is.
+    pub fn upright(self, orientation: u16) -> Picture {
+        if !(2..=8).contains(&orientation) {
+            return self;
+        }
+        let (w, h) = (self.width, self.height);
+        let turned = orientation >= 5;
+        let (nw, nh) = if turned { (h, w) } else { (w, h) };
+        let mut pixels = vec![0u32; self.pixels.len()];
+        for y in 0..nh {
+            for x in 0..nw {
+                // The stored pixel shown at (x, y) of the upright picture.
+                let (sx, sy) = match orientation {
+                    2 => (w - 1 - x, y),
+                    3 => (w - 1 - x, h - 1 - y),
+                    4 => (x, h - 1 - y),
+                    5 => (y, x),
+                    6 => (y, h - 1 - x),
+                    7 => (w - 1 - y, h - 1 - x),
+                    _ => (w - 1 - y, x),
+                };
+                pixels[(y * nw + x) as usize] = self.get(sx, sy);
+            }
+        }
+        Picture { width: nw, height: nh, pixels }
     }
 }
 
@@ -293,8 +429,18 @@ pub fn decode(file: &[u8]) -> Picture {
 }
 
 impl Wallpaper {
-    pub fn picture(&self) -> Picture {
-        decode(self.file)
+    /// Its picture, decoded here: a BMP's. None for a JPEG, which the bar's side reads
+    /// (`Choice::to_read`).
+    pub fn picture(&self) -> Option<Picture> {
+        match self.file {
+            File::Compact(bytes) => Some(decode(bytes)),
+            File::Jpeg(_) => None,
+        }
+    }
+
+    /// A JPEG of Windows' (its small picture in the list is a picture file's, not a bitmap's).
+    pub fn is_jpeg(&self) -> bool {
+        matches!(self.file, File::Jpeg(_))
     }
 }
 
@@ -400,18 +546,40 @@ fn lay_in(fb: &mut Framebuffer, theme: &Theme, picture: &Picture, x: i32, y: i32
     for fy in y0..y1 {
         for fx in x0..x1 {
             let p = picture.get(fx - x, fy - y);
-            if p >> 24 != 0 {
-                fb.pixels[(fy * fb.width + fx) as usize] = on_screen(theme, p);
+            let a = p >> 24;
+            let at = (fy * fb.width + fx) as usize;
+            if a == 0xFF {
+                fb.pixels[at] = on_screen(theme, p);
+            } else if a != 0 {
+                // A person's own picture may be partly see-through (a PNG's or a GIF's edge): mixed
+                // with what lies under it. Windows' own pictures are opaque or see-through.
+                fb.pixels[at] = on_screen(theme, over(p, fb.pixels[at]));
             }
         }
     }
 }
 
+/// `p` (with its see-through value) over the opaque `under`.
+fn over(p: u32, under: u32) -> u32 {
+    let a = p >> 24;
+    let mix = |shift: u32| (((p >> shift) & 0xFF) * a + ((under >> shift) & 0xFF) * (255 - a) + 127) / 255;
+    0xFF00_0000 | mix(16) << 16 | mix(8) << 8 | mix(0)
+}
+
 /// Draws `choice` over an area `w` x `h` that is one screen: the desktop color or the pattern,
-/// then the wallpaper tiled from the corner, centered or stretched.
+/// then the wallpaper tiled from the corner, centered or stretched (a BMP of the look's own).
 pub fn draw(fb: &mut Framebuffer, theme: &Theme, choice: &Choice) {
     let whole = Rect::new(0, 0, fb.width, fb.height);
-    draw_on(fb, theme, choice, &[whole]);
+    draw_on(fb, theme, choice, None, &[whole]);
+}
+
+/// The wallpaper's picture to draw: a BMP of the look's decoded here; a JPEG or a person's own
+/// picture as read (`read`), or none while it has not been read (or cannot be).
+fn picture_of<'a>(choice: &Choice, era: Era, read: Option<&'a Picture>) -> Option<std::borrow::Cow<'a, Picture>> {
+    if let Some(p) = choice.wallpaper_in(era).and_then(Wallpaper::picture) {
+        return Some(std::borrow::Cow::Owned(p));
+    }
+    choice.to_read(era).and(read).map(std::borrow::Cow::Borrowed)
 }
 
 /// Draws `choice` over the classic desktop's whole area `fb`, which holds the `screens` (their
@@ -420,14 +588,16 @@ pub fn draw(fb: &mut Framebuffer, theme: &Theme, choice: &Choice) {
 /// tiles start at the main screen's top-left corner and run over every screen; Center and Stretch
 /// are done for each screen by itself, within its own screen. With one screen covering the whole
 /// area it is the one-screen drawing the Reference PCs showed. No screens: the whole area is one.
-pub fn draw_on(fb: &mut Framebuffer, theme: &Theme, choice: &Choice, screens: &[Rect]) {
+/// `read`: the picture of a JPEG or of a person's own picture once it has been read; until then
+/// (or when it cannot be) only the desktop color or the pattern shows (`picture_of`).
+pub fn draw_on(fb: &mut Framebuffer, theme: &Theme, choice: &Choice, read: Option<&Picture>, screens: &[Rect]) {
     let whole = [Rect::new(0, 0, fb.width, fb.height)];
     let screens = if screens.is_empty() { &whole[..] } else { screens };
     let main = screens[0];
     let era = theme.era;
     fill_ground(fb, theme, choice.pattern_shown(era), (-main.x, -main.y));
-    let Some(wallpaper) = choice.wallpaper_in(era) else { return };
-    let picture = wallpaper.picture();
+    let Some(picture) = picture_of(choice, era, read) else { return };
+    let picture: &Picture = &picture;
     if picture.width <= 0 || picture.height <= 0 {
         return;
     }
@@ -441,19 +611,19 @@ pub fn draw_on(fb: &mut Framebuffer, theme: &Theme, choice: &Choice, screens: &[
             let (x0, y0) = (first(main.x, pw), first(main.y, ph));
             for y in (y0..fb.height).step_by(ph as usize) {
                 for x in (x0..fb.width).step_by(pw as usize) {
-                    lay(fb, theme, &picture, x, y);
+                    lay(fb, theme, picture, x, y);
                 }
             }
         }
         Show::Center => {
             for s in screens {
                 let (x, y) = centered(s.w, s.h, picture.width, picture.height);
-                lay_in(fb, theme, &picture, s.x + x, s.y + y, *s);
+                lay_in(fb, theme, picture, s.x + x, s.y + y, *s);
             }
         }
         Show::Stretch => {
             for s in screens {
-                lay_in(fb, theme, &stretched(era, &picture, s.w, s.h), s.x, s.y, *s);
+                lay_in(fb, theme, &stretched(era, picture, s.w, s.h), s.x, s.y, *s);
             }
         }
     }
@@ -462,18 +632,22 @@ pub fn draw_on(fb: &mut Framebuffer, theme: &Theme, choice: &Choice, screens: &[
 /// The classic desktop's picture for `choice` over its whole area (`w` x `h`, 1x pixels), which
 /// is one screen, or `None` for the plain desktop.
 pub fn background(theme: &Theme, choice: &Choice, w: i32, h: i32) -> Option<Framebuffer> {
-    background_on(theme, choice, &[Rect::new(0, 0, w.max(0), h.max(0))], w, h)
+    background_on(theme, choice, None, &[Rect::new(0, 0, w.max(0), h.max(0))], w, h)
 }
 
 /// The classic desktop's picture for `choice` over its whole area (`w` x `h`, 1x pixels) holding
-/// `screens` (`draw_on`), or `None` for the plain desktop, which is drawn as before without one
-/// (nothing of the plain desktop changes: not its pixels, its memory or its time).
-pub fn background_on(theme: &Theme, choice: &Choice, screens: &[Rect], w: i32, h: i32) -> Option<Framebuffer> {
-    if choice.is_plain(theme.era) {
+/// `screens` (`draw_on`; `read`: a JPEG's or a person's own picture as read), or `None` for the
+/// plain desktop, which is drawn as before without one (nothing of the plain desktop changes: not
+/// its pixels, its memory or its time). While a picture to read is not there and no pattern shows,
+/// the desktop is plain too.
+pub fn background_on(theme: &Theme, choice: &Choice, read: Option<&Picture>, screens: &[Rect], w: i32, h: i32) -> Option<Framebuffer> {
+    let era = theme.era;
+    let missing = choice.to_read(era).is_some() && read.is_none();
+    if choice.is_plain(era) || (missing && choice.pattern_shown(era).is_none()) {
         return None;
     }
     let mut fb = Framebuffer::new(w.max(0), h.max(0), theme.colors.desktop);
-    draw_on(&mut fb, theme, choice, screens);
+    draw_on(&mut fb, theme, choice, read, screens);
     Some(fb)
 }
 
@@ -497,21 +671,21 @@ pub fn in_monitor(w: i32, h: i32) -> (i32, i32) {
 /// Paints the monitor with its top-left at (x, y), its screen showing `choice` as each Windows
 /// drew it there: the desktop color; the pattern 1:1, lined up with the picture's top-left; the
 /// wallpaper scaled as the screen is (`in_monitor`), centered, tiled or stretched over the small
-/// screen.
-pub fn paint_monitor(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice: &Choice) {
+/// screen. A JPEG and a person's own picture (`read`, once read) by the same rule as the BMPs.
+pub fn paint_monitor(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice: &Choice, read: Option<&Picture>) {
     let monitor = decode(MONITOR);
     lay(fb, theme, &monitor, x, y);
     let era = theme.era;
     let s = MONITOR_SCREEN;
     let mut screen = Framebuffer::new(s.w, s.h, theme.colors.desktop);
     fill_ground(&mut screen, theme, choice.pattern_shown(era), (s.x, s.y));
-    if let Some(wallpaper) = choice.wallpaper_in(era) {
-        let picture = wallpaper.picture();
+    if let Some(picture) = picture_of(choice, era, read).filter(|p| p.width > 0 && p.height > 0) {
+        let picture: &Picture = &picture;
         let (w, h) = in_monitor(picture.width, picture.height);
         match choice.show {
-            Show::Stretch if era != Era::Win95 => lay(&mut screen, theme, &stretched(era, &picture, s.w, s.h), 0, 0),
+            Show::Stretch if era != Era::Win95 => lay(&mut screen, theme, &stretched(era, picture, s.w, s.h), 0, 0),
             Show::Tile => {
-                let small = stretched(era, &picture, w, h);
+                let small = stretched(era, picture, w, h);
                 for ty in (0..s.h).step_by(h as usize) {
                     for tx in (0..s.w).step_by(w as usize) {
                         lay(&mut screen, theme, &small, tx, ty);
@@ -519,7 +693,7 @@ pub fn paint_monitor(fb: &mut Framebuffer, theme: &Theme, x: i32, y: i32, choice
                 }
             }
             _ => {
-                let small = stretched(era, &picture, w, h);
+                let small = stretched(era, picture, w, h);
                 let (cx, cy) = centered(s.w, s.h, w, h);
                 lay(&mut screen, theme, &small, cx, cy);
             }

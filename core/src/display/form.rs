@@ -287,6 +287,42 @@ const BITMAP_2000: Small = Small {
     selected: crate::art::bytes("display/bitmap-selected", crate::art::Look::Win2000),
 };
 
+/// A picture file's (a JPEG of Windows 2000's; a person's own JPEG, PNG or GIF).
+const PICTURE_98: Small = Small {
+    plain: crate::art::bytes("display/picture", crate::art::Look::Win98),
+    selected: crate::art::bytes("display/picture-selected", crate::art::Look::Win98),
+};
+const PICTURE_2000: Small = Small {
+    plain: crate::art::bytes("display/picture", crate::art::Look::Win2000),
+    selected: crate::art::bytes("display/picture-selected", crate::art::Look::Win2000),
+};
+
+/// What an entry of the wallpaper list is, for its small picture (98, 2000).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    None,
+    Bitmap,
+    Picture,
+}
+
+/// The wallpaper list's entries in Windows' order: "(None)" first, then the look's own and the
+/// person's own pictures `own` (by their names without the ending) by name without case. Each with
+/// its value (None for "(None)", else a name of the look's or a file's path) and kind.
+fn wallpaper_entries(era: Era, own: &[String]) -> Vec<(String, Option<String>, Kind)> {
+    let mut list: Vec<(String, Option<String>, Kind)> = display::wallpapers(era)
+        .into_iter()
+        .map(|w| (w.name.to_string(), Some(w.name.to_string()), if w.is_jpeg() { Kind::Picture } else { Kind::Bitmap }))
+        .collect();
+    for path in own {
+        let ending = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+        let kind = if matches!(ending.as_str(), "bmp" | "dib") { Kind::Bitmap } else { Kind::Picture };
+        list.push((display::own_name(path).to_string(), Some(path.clone()), kind));
+    }
+    // Stable: of two entries of the same name, the look's own comes first.
+    list.sort_by(|a, b| display::windows_order(&a.0, &b.0));
+    std::iter::once((NONE.to_string(), None, Kind::None)).chain(list).collect()
+}
+
 fn small_picture(theme: &Theme, rgb_bytes: &[u8]) -> crate::fb::Icon {
     let pixels = rgb_bytes.chunks(3).map(|p| 0xFF00_0000 | u32::from(p[0]) << 16 | u32::from(p[1]) << 8 | u32::from(p[2])).collect();
     let icon = crate::fb::Icon { width: 16, height: 16, pixels };
@@ -313,6 +349,14 @@ pub struct DisplayProperties {
     /// Where the window's left and top edges are on the screen.
     pub screen: (i32, i32),
     wallpaper_names: Vec<String>,
+    /// Each wallpaper entry's value (None for "(None)") and kind, beside its name.
+    wallpaper_values: Vec<Option<String>>,
+    wallpaper_kinds: Vec<Kind>,
+    /// The person's own pictures in the list: the look's choice when the window opened, and each
+    /// chosen with Browse... in this opening (PROVISIONAL: not measured how long Windows kept one).
+    own: Vec<String>,
+    /// The picture read for the monitor (a JPEG, a person's own), by what it is.
+    read: Option<(display::PictureId, std::sync::Arc<display::Picture>)>,
     pattern_names: Vec<String>,
 }
 
@@ -321,8 +365,11 @@ const NONE: &str = "(None)";
 impl DisplayProperties {
     /// The window as it opens, showing what is in effect for `era`.
     pub fn new(era: Era, applied: Choice) -> DisplayProperties {
-        let wallpaper_names: Vec<String> =
-            std::iter::once(NONE.to_string()).chain(display::wallpapers(era).iter().map(|w| w.name.to_string())).collect();
+        let own: Vec<String> = applied.own().map(str::to_string).into_iter().collect();
+        let entries = wallpaper_entries(era, &own);
+        let wallpaper_names: Vec<String> = entries.iter().map(|e| e.0.clone()).collect();
+        let wallpaper_values: Vec<Option<String>> = entries.iter().map(|e| e.1.clone()).collect();
+        let wallpaper_kinds: Vec<Kind> = entries.iter().map(|e| e.2).collect();
         let pattern_names: Vec<String> =
             std::iter::once(NONE.to_string()).chain(display::patterns(era).iter().map(|p| p.name.to_string())).collect();
         let o = ORIGIN;
@@ -350,6 +397,10 @@ impl DisplayProperties {
             drop: None,
             screen: (0, 0),
             wallpaper_names,
+            wallpaper_values,
+            wallpaper_kinds,
+            own,
+            read: None,
             pattern_names,
         };
         d.sync_lists();
@@ -365,8 +416,18 @@ impl DisplayProperties {
     /// Selects in the lists what `shown` says (a name the look does not have selects "(None)").
     fn sync_lists(&mut self) {
         let era = self.era;
-        let w = self.shown.wallpaper_in(era).map(|w| w.name);
-        self.wallpapers.sel = w.and_then(|n| self.wallpaper_names.iter().position(|x| x == n)).unwrap_or(0);
+        // A person's own picture not yet in the list comes in; a name the look lacks is "(None)".
+        if let Some(path) = self.shown.own().map(str::to_string)
+            && !self.own.contains(&path)
+        {
+            self.own.push(path);
+            self.fill_wallpapers();
+        }
+        let w = match self.shown.own() {
+            Some(path) => Some(path.to_string()),
+            None => self.shown.wallpaper_in(era).map(|w| w.name.to_string()),
+        };
+        self.wallpapers.sel = w.as_ref().and_then(|v| self.wallpaper_values.iter().position(|x| x.as_ref() == Some(v))).unwrap_or(0);
         self.wallpapers.show_sel();
         let p = self.shown.pattern_in(era).map(|p| p.name);
         let psel = p.and_then(|n| self.pattern_names.iter().position(|x| x == n)).unwrap_or(0);
@@ -374,11 +435,55 @@ impl DisplayProperties {
             list.sel = psel;
             list.show_sel();
         }
-        self.shown.wallpaper = w.map(str::to_string);
+        self.shown.wallpaper = w;
         self.shown.pattern = p.map(str::to_string);
         if era == Era::Win95 && self.shown.show == Show::Stretch {
             self.shown.show = Show::Center;
         }
+    }
+
+    /// Makes the wallpaper list's entries again (a person's own picture came in), keeping the
+    /// selected entry by its value.
+    fn fill_wallpapers(&mut self) {
+        let selected = self.wallpaper_values.get(self.wallpapers.sel).cloned().flatten();
+        let entries = wallpaper_entries(self.era, &self.own);
+        self.wallpaper_names = entries.iter().map(|e| e.0.clone()).collect();
+        self.wallpaper_values = entries.iter().map(|e| e.1.clone()).collect();
+        self.wallpaper_kinds = entries.iter().map(|e| e.2).collect();
+        self.wallpapers.rows = self.wallpaper_names.len();
+        self.wallpapers.sel = selected.and_then(|v| self.wallpaper_values.iter().position(|x| x.as_ref() == Some(&v))).unwrap_or(0);
+        self.wallpapers.show_sel();
+    }
+
+    /// A person's own picture that was read and can be shown (Browse...): it comes into the list
+    /// where Windows' order puts it, selected, and becomes the page's choice.
+    pub fn add_own(&mut self, path: &str) {
+        if !display::is_own(path) {
+            return;
+        }
+        self.shown.wallpaper = Some(path.to_string());
+        self.sync_lists();
+    }
+
+    /// The picture the monitor needs read (a JPEG of Windows', a person's own), if any.
+    pub fn to_read(&self) -> Option<display::PictureId> {
+        self.shown.to_read(self.era)
+    }
+
+    /// A picture read for the monitor (`None`: it cannot be shown; the monitor shows the ground).
+    pub fn set_read(&mut self, id: display::PictureId, picture: Option<std::sync::Arc<display::Picture>>) {
+        self.read = picture.map(|p| (id, p));
+    }
+
+    /// The picture read for what the page shows now, if it has come.
+    fn read_now(&self) -> Option<&display::Picture> {
+        let want = self.to_read()?;
+        self.read.as_ref().filter(|(id, _)| *id == want).map(|(_, p)| &**p)
+    }
+
+    /// Whether the monitor has the picture it needs read (or needs none).
+    pub fn has_read(&self, id: &display::PictureId) -> bool {
+        self.read.as_ref().is_some_and(|(i, _)| i == id)
     }
 
     /// Apply is usable once the page shows something else than what is in effect.
@@ -439,10 +544,10 @@ impl DisplayProperties {
     /// shows it before Apply).
     fn take_selection(&mut self, which: Which) {
         let Some(list) = self.list(which) else { return };
-        let name = (list.sel > 0).then(|| self.names(which)[list.sel].clone());
+        let sel = list.sel;
         match which {
-            Which::Wallpaper => self.shown.wallpaper = name,
-            Which::Pattern => self.shown.pattern = name,
+            Which::Wallpaper => self.shown.wallpaper = self.wallpaper_values.get(sel).cloned().flatten(),
+            Which::Pattern => self.shown.pattern = (sel > 0).then(|| self.pattern_names[sel].clone()),
         }
     }
 
@@ -680,7 +785,7 @@ impl DisplayProperties {
         }
 
         let (mx, my) = self.monitor_at();
-        display::paint_monitor(fb, theme, mx, my, &self.shown);
+        display::paint_monitor(fb, theme, mx, my, &self.shown, self.read_now());
 
         let o = ORIGIN;
         let framed = self.default_button();
@@ -807,7 +912,8 @@ impl DisplayProperties {
         let rows = list.rows_rect();
         let mut area = Framebuffer::new(rows.w, rows.h, rgb(0xFFFFFF));
         let focused = self.focus == Part::List(Which::Wallpaper);
-        let (none, bitmap) = if self.era == Era::Win2000 { (&NONE_2000, &BITMAP_2000) } else { (&NONE_98, &BITMAP_98) };
+        let (none, bitmap, picture) =
+            if self.era == Era::Win2000 { (&NONE_2000, &BITMAP_2000, &PICTURE_2000) } else { (&NONE_98, &BITMAP_98, &PICTURE_98) };
         for (i, name) in self.wallpaper_names.iter().enumerate() {
             let r = list.row_rect(i);
             let y = r.y - rows.y;
@@ -815,7 +921,11 @@ impl DisplayProperties {
                 continue;
             }
             let selected = i == list.sel;
-            let small = if i == 0 { none } else { bitmap };
+            let small = match self.wallpaper_kinds.get(i) {
+                Some(Kind::None) => none,
+                Some(Kind::Picture) => picture,
+                _ => bitmap,
+            };
             // The picture shows selected while the list has the keyboard (98), always (2000).
             let as_selected = selected && (focused || self.era == Era::Win2000);
             let picture = small_picture(theme, if as_selected { small.selected } else { small.plain });

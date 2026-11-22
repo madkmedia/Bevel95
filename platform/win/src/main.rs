@@ -35,6 +35,8 @@ mod install;
 mod keys;
 mod kit;
 mod own_icon;
+mod picture_file;
+mod pictures;
 mod popup;
 mod properties_window;
 mod quick_launch;
