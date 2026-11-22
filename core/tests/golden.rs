@@ -2672,24 +2672,31 @@ fn draw_readme_start_menus() {
 }
 
 /// The website's picture (`site/desktop.png`, or the file named by `BEVEL95_SITE_PICTURE`): a new
-/// tool on today's PC, one whole Windows 98 desktop at 1024 x 768, True Color, drawn by Bevel95's
-/// own code from its own tables (never a golden scene that copies an old Windows screen, never
-/// anyone's screen). Bottom to top: the wallpaper; the look's own desktop icons and two shortcuts
-/// of today's programs (Google Chrome, ChatGPT) with Bevel95's shortcut arrow; Windows Explorer on
-/// My Computer (a disk of today's size); Minesweeper in mid-game; the taskbar with Start pressed,
-/// Quick Launch's own icons, three task buttons, the network icon, the speaker and the clock; the
-/// Start menu open on Programs, the pointer on Google Chrome.
+/// tool on today's PC, one whole Windows 98 desktop, True Color, drawn by Bevel95's own code from
+/// its own tables (never a golden scene that copies an old Windows screen, never anyone's screen).
+/// Bottom to top: the wallpaper; the look's own desktop icons and two shortcuts of today's
+/// programs (Google Chrome, ChatGPT) with Bevel95's shortcut arrow; Windows Explorer on My
+/// Computer (a disk of today's size); Minesweeper in mid-game; the Calculator with a number in
+/// its display; the taskbar with Start pressed, Quick Launch's own icons, a task button for each
+/// window, the network icon, the speaker and the clock; the Start menu open on Programs, the
+/// pointer on Google Chrome.
+///
+/// The screen's size is `BEVEL95_SITE_SIZE`: `1024x768` (without it), `800x600` or `640x480`, each
+/// arranged by eye for its size (`site_layout`: at 800 x 600 without Explorer, at 640 x 480 only
+/// Minesweeper of the windows).
 ///
 /// The only pictures from outside (the wallpaper, a 1024 x 768 8-bit RGB PNG, and the two
 /// programs' icons, 8-bit RGBA PNGs at 32 and 16 pixels) are read at run time from the folder
-/// named by `BEVEL95_SITE_ASSETS` and are never in the repository. Without it the scene has
-/// Clouds stretched and nothing of Chrome or ChatGPT, so the test runs anywhere.
+/// named by `BEVEL95_SITE_ASSETS` and are never in the repository. The wallpaper is the person's
+/// own picture, centered (a smaller screen cuts it equally on all sides, as Bevel95 draws a
+/// centered picture larger than the screen). Without the folder the scene has Clouds stretched
+/// and nothing of Chrome or ChatGPT, so the test runs anywhere.
 ///
 /// With the Start menu open no window is in front, as on the real bar (the root menu takes the
 /// keyboard, `popup.rs`; the bar then marks no task button as the one in front): every title bar
 /// inactive, every task button raised. Not a golden image (no test compares it). Run it with
-/// `BEVEL95_SITE_ASSETS=<folder> BEVEL95_SITE_PICTURE=<file> cargo test -p bevel-core --test
-/// golden -- --ignored --exact draw_site_desktop`.
+/// `BEVEL95_SITE_ASSETS=<folder> BEVEL95_SITE_SIZE=<w>x<h> BEVEL95_SITE_PICTURE=<file> cargo test
+/// -p bevel-core --test golden -- --ignored --exact draw_site_desktop`.
 #[test]
 #[ignore = "rewrites site/desktop.png, the website's picture; run it on request"]
 fn draw_site_desktop() {
@@ -2698,7 +2705,13 @@ fn draw_site_desktop() {
         chrome: (read_icon_png(&dir.join("chrome-32.png")).unwrap(), read_icon_png(&dir.join("chrome-16.png")).unwrap()),
         chatgpt: (read_icon_png(&dir.join("chatgpt-32.png")).unwrap(), read_icon_png(&dir.join("chatgpt-16.png")).unwrap()),
     });
-    let picture = site_desktop(assets.as_ref());
+    let size = match std::env::var("BEVEL95_SITE_SIZE").as_deref() {
+        Err(_) | Ok("1024x768") => (1024, 768),
+        Ok("800x600") => (800, 600),
+        Ok("640x480") => (640, 480),
+        Ok(other) => panic!("BEVEL95_SITE_SIZE is 1024x768, 800x600 or 640x480, not {other}"),
+    };
+    let picture = site_desktop(assets.as_ref(), size);
     let path = match std::env::var_os("BEVEL95_SITE_PICTURE") {
         Some(path) => PathBuf::from(path),
         None => {
@@ -2733,36 +2746,90 @@ fn read_icon_png(path: &Path) -> Result<Icon, String> {
     Ok(Icon { width: info.width as i32, height: info.height as i32, pixels })
 }
 
-/// The whole 1024 x 768 desktop of `draw_site_desktop`.
-fn site_desktop(assets: Option<&SiteAssets>) -> Framebuffer {
+/// Where things go on the website's picture of one size, arranged by eye: the desktop icons' cells
+/// (My Computer, My Documents, Recycle Bin, Google Chrome, ChatGPT; desktop pixels, steps of 75),
+/// and each window's place (Explorer with its size), or none where it does not fit well.
+struct SiteLayout {
+    icons: [(i32, i32); 5],
+    explorer: Option<((i32, i32), (i32, i32))>,
+    minesweeper: Option<(i32, i32)>,
+    calculator: Option<(i32, i32)>,
+}
+
+fn site_layout(size: (i32, i32)) -> SiteLayout {
+    const C: i32 = bevel_core::desktop_icons::CELL;
+    match size {
+        // The look's own down the left column, the two shortcuts at the top of the second (in the
+        // first ChatGPT's name would lie under the Start menu); Explorer top right, Minesweeper
+        // under it at the right, the Calculator between Minesweeper and the Programs menu.
+        (1024, _) => SiteLayout {
+            icons: [(0, 0), (0, C), (0, 2 * C), (C, 0), (C, C)],
+            explorer: Some(((452, 300), (556, 12))),
+            minesweeper: Some((840, 360)),
+            calculator: Some((556, 452)),
+        },
+        // The Start menu reaches up to about y 190: the icons in one row across the top.
+        // Explorer is left out: beside the Calculator and Minesweeper it covered the wallpaper's
+        // bloom, and at the 420 pixels across that was left its toolbar was cut.
+        (800, _) => SiteLayout {
+            icons: [(0, 0), (C, 0), (2 * C, 0), (3 * C, 0), (4 * C, 0)],
+            explorer: None,
+            minesweeper: Some((616, 24)),
+            calculator: Some((520, 292)),
+        },
+        // The Start menu fills the left from y 72: the icons down the right edge, Minesweeper
+        // between them and the Programs menu.
+        _ => SiteLayout {
+            icons: [(565, 0), (565, C), (565, 2 * C), (565, 3 * C), (565, 4 * C)],
+            explorer: None,
+            minesweeper: Some((360, 40)),
+            calculator: None,
+        },
+    }
+}
+
+/// The whole desktop of `draw_site_desktop` at `size`.
+fn site_desktop(assets: Option<&SiteAssets>, size: (i32, i32)) -> Framebuffer {
     use bevel_core::desktop_icons::{Desktop, Item as DeskItem, Picture};
     use bevel_core::display::{self, Choice, Show};
     use bevel_core::kit::Form;
     use bevel_core::programs::{OWN_PROGRAMS, add_own_programs};
     use bevel_core::status::{self, Network};
-    const W: i32 = 1024;
-    const H: i32 = 768;
+    let (w, h) = size;
+    let place = site_layout(size);
     let era = Era::Win98;
     let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
     let (regular, bold) = (load_font(theme, false), load_font(theme, true));
     let fonts = Fonts { regular: &regular, bold: &bold };
-    let screen_rect = Rect::new(0, 0, W, H);
-    let bar_top = H - theme.bar.height;
+    let screen_rect = Rect::new(0, 0, w, h);
+    let bar_top = h - theme.bar.height;
 
-    // 1. The wallpaper: the person's own picture of the screen's size (what Stretch gives at that
-    // size), or Clouds stretched.
+    // 1. The wallpaper: the person's own picture centered (cut equally on a smaller screen), or
+    // Clouds stretched.
     let background = match assets {
-        Some(a) => a.wallpaper.clone(),
-        None => display::background(theme, &Choice { wallpaper: Some("Clouds".into()), show: Show::Stretch, pattern: None }, W, H)
+        Some(a) => {
+            let own = "C:\\Users\\Public\\Pictures\\Wallpaper.png";
+            let picture = display::Picture { width: a.wallpaper.width, height: a.wallpaper.height, pixels: a.wallpaper.pixels.clone() };
+            let choice = Choice { wallpaper: Some(own.into()), show: Show::Center, pattern: None };
+            display::background_on(theme, &choice, Some(&picture), &[screen_rect], w, h).expect("the wallpaper")
+        }
+        None => display::background(theme, &Choice { wallpaper: Some("Clouds".into()), show: Show::Stretch, pattern: None }, w, h)
             .expect("Clouds"),
     };
     let mut screen = background.clone();
 
-    // 2. The look's own icons down the left column; the two shortcuts at the top of the second
-    // column (in the first, ChatGPT's name would lie under the Start menu). Nothing selected.
-    let area = Rect::new(0, 0, W, bar_top);
+    // 2. The desktop icons in their cells, nothing selected.
+    let area = Rect::new(0, 0, w, bar_top);
     let mut desk = Desktop::new(era, area);
     desk.set_background(Some(std::sync::Arc::new(background)));
+    let chrome = "C:\\Users\\Public\\Desktop\\Google Chrome.lnk";
+    let chatgpt = "C:\\Users\\Public\\Desktop\\ChatGPT.lnk";
+    let places: String = ["::my-computer", "::my-documents", "::recycle-bin", chrome, chatgpt]
+        .iter()
+        .zip(place.icons)
+        .map(|(id, (x, y))| format!("{x} {y} {id}\n"))
+        .collect();
+    desk.load_places(&places);
     let shortcut = |id: &str, name: &str, picture: &Icon| DeskItem {
         id: id.to_string(),
         name: name.to_string(),
@@ -2773,44 +2840,43 @@ fn site_desktop(assets: Option<&SiteAssets>) -> Framebuffer {
         size: 0,
         modified: 0,
     };
-    if let Some(a) = assets {
-        let chrome = "C:\\Users\\Public\\Desktop\\Google Chrome.lnk";
-        let chatgpt = "C:\\Users\\Public\\Desktop\\ChatGPT.lnk";
-        let column = bevel_core::desktop_icons::CELL;
-        desk.place_new(chrome, column + 21, 2);
-        desk.place_new(chatgpt, column + 21, column + 2);
-        desk.set_files(vec![shortcut(chrome, "Google Chrome", &a.chrome.0), shortcut(chatgpt, "ChatGPT", &a.chatgpt.0)]);
-    } else {
-        desk.set_files(vec![]);
+    match assets {
+        Some(a) => desk.set_files(vec![shortcut(chrome, "Google Chrome", &a.chrome.0), shortcut(chatgpt, "ChatGPT", &a.chatgpt.0)]),
+        None => desk.set_files(vec![]),
     }
     desk.active = false;
     desk.paint(&mut screen, theme, &fonts, area);
 
-    // 3. Windows Explorer on My Computer, top right.
-    // 452 wide: 98's status bar has fixed parts (240 and 218 pixels), so the drive's free space,
-    // in the middle part, would need about 660; at this width the middle part has no room and
-    // stays out (a part cut in the middle of a word looks broken), and the wallpaper's bloom
-    // stays in view.
-    let explorer = site_explorer(theme, era, &fonts, (452, 300));
-    screen.blit(&explorer, W - 16 - explorer.width, 12);
-
-    // 4. Minesweeper in mid-game, bottom right.
-    let mut game = minefield_in_play(era, &fonts);
-    game.set_active(false);
-    game.layout(&fonts);
-    let (gw, gh) = game.size();
-    let mut game_fb = Framebuffer::new(gw, gh, 0);
-    game.paint(&mut game_fb, theme, &fonts);
-    screen.blit(&game_fb, W - 24 - gw, 360);
-
-    // 5. The taskbar.
+    // 3. The windows, none in front.
     let task = |title: &str, icon: Icon| Task { title: title.to_string(), icon: Some(icon), state: TaskState::Normal };
     let mut tasks = Vec::new();
     if let Some(a) = assets {
         tasks.push(task("Google Chrome", a.chrome.1.clone()));
     }
-    tasks.push(task("Exploring - My Computer", bevel_core::folder::tree_art::explorer(era)));
-    tasks.push(task(bevel_core::minefield::form::TITLE, bevel_core::minefield::art::icon(era, 16)));
+    // Explorer: 98's status bar has fixed parts (240 and 218 pixels), so the drive's free space,
+    // in the middle part, would need about 660 pixels across; narrower, the middle part has no
+    // room and stays out (a part cut in the middle of a word looks broken).
+    if let Some((explorer_size, at)) = place.explorer {
+        let explorer = site_explorer(theme, era, &fonts, explorer_size);
+        screen.blit(&explorer, at.0, at.1);
+        tasks.push(task("Exploring - My Computer", bevel_core::folder::tree_art::explorer(era)));
+    }
+    if let Some(at) = place.minesweeper {
+        let mut game = minefield_in_play(era, &fonts);
+        game.set_active(false);
+        screen.blit(&form_image(&mut game, theme, &fonts), at.0, at.1);
+        tasks.push(task(bevel_core::minefield::form::TITLE, bevel_core::minefield::art::icon(era, 16)));
+    }
+    if let Some(at) = place.calculator {
+        // Standard view, a sum done: 1024 x 768 = 786432.
+        let mut calc = bevel_core::calculator::form::CalculatorWindow::new(era);
+        calc.paste_text("1024*768=");
+        calc.set_active(false);
+        screen.blit(&form_image(&mut calc, theme, &fonts), at.0, at.1);
+        tasks.push(task(bevel_core::calculator::form::TITLE, bevel_core::calculator::art::icon(era, 16)));
+    }
+
+    // 4. The taskbar.
     let icons_ql = bevel_core::quick_launch::builtins(era).iter().map(|&b| bevel_core::quick_launch::picture(era, b)).collect();
     let net = Network { connected: true, ..Network::default() };
     let state = Bar {
@@ -2822,14 +2888,14 @@ fn site_desktop(assets: Option<&SiteAssets>) -> Framebuffer {
         quick_launch: Some(bevel_core::quick_launch::Band { icons: icons_ql, ..Default::default() }),
         ..Bar::default()
     };
-    let mut bar = Framebuffer::new(W, theme.bar.height, 0);
+    let mut bar = Framebuffer::new(w, theme.bar.height, 0);
     paint::paint_bar(&mut bar, theme, &fonts, &state);
     screen.blit(&bar, 0, bar_top);
 
-    // 6. The Start menu, open on Programs, the pointer on Google Chrome (without the assets:
+    // 5. The Start menu, open on Programs, the pointer on Google Chrome (without the assets:
     // on Accessories).
     let menu_image = |menu: &Menu, style: MenuStyle| {
-        let layout = paint::layout_menu(theme, &fonts, menu, style, H);
+        let layout = paint::layout_menu(theme, &fonts, menu, style, h);
         let mut fb = Framebuffer::new(layout.width, layout.height, 0);
         paint::paint_menu(&mut fb, theme, &fonts, menu, style, &layout);
         (fb, layout)
@@ -2867,6 +2933,15 @@ fn site_desktop(assets: Option<&SiteAssets>) -> Framebuffer {
     let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
     screen.blit(&sub_fb, sx, sy);
     screen
+}
+
+/// A form painted at its own size.
+fn form_image<F: bevel_core::kit::Form>(form: &mut F, theme: &Theme, fonts: &Fonts) -> Framebuffer {
+    form.layout(fonts);
+    let (w, h) = form.size();
+    let mut fb = Framebuffer::new(w, h, 0);
+    form.paint(&mut fb, theme, fonts);
+    fb
 }
 
 /// Windows Explorer on My Computer for the website's picture, built as `tree_scene` builds its
