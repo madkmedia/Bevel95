@@ -36,7 +36,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetForegroundWindow, IsWindow, KillTimer, MA_NOACTIVATE,
-    PostMessageW, SW_SHOW, SW_SHOWNA, SetForegroundWindow, SetTimer, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_CHAR,
+    PostMessageW, SW_SHOW, SW_SHOWNA, SetTimer, ShowWindow, WA_INACTIVE, WM_ACTIVATE, WM_CHAR,
     WM_ERASEBKGND, WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WM_TIMER, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -802,11 +802,15 @@ pub fn close(give_back_focus: bool) {
     };
     // SAFETY: plain Win32 calls; `previous` is checked to still exist.
     unsafe {
-        if give_back_focus && !root.previous.is_null() && IsWindow(root.previous) != 0 {
-            SetForegroundWindow(root.previous);
-        }
         for popup in menus.iter().rev() {
             DestroyWindow(popup.hwnd);
+        }
+        // The focus goes back only once the menus are gone: destroying the active menu hands the
+        // activation to its owner, the bar, which took it from the window given the focus before
+        // (found by brief 94's live try: the bar stayed in front). Brought forward the way the
+        // menu came forward (`util::bring_forward`: direct, else with the input joined).
+        if give_back_focus && !root.previous.is_null() && IsWindow(root.previous) != 0 {
+            crate::util::bring_forward(root.previous);
         }
         if root.shows_on_bar() {
             InvalidateRect(BAR_HWND.load(Ordering::SeqCst) as HWND, null(), 0); // Start (or the "»") pops back up
