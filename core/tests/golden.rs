@@ -2693,7 +2693,8 @@ fn draw_quick_launch_sheet() {
 /// --test golden -- --ignored --exact draw_quick_launch_size_sheet`.
 /// The owner's sheet for brief 91 (laid out as the survey's `menus.png`): per look the long
 /// Programs menu at 640x480 and at 800x600 as Bevel95 now shows it, drawn by the real code with
-/// the survey's test entries, at true size, each labeled above its picture.
+/// the survey's test entries, at true size, each labeled above its picture; since brief 92 also
+/// 98's Start menu scrolling.
 #[test]
 #[ignore = "writes the owner's sheet of long menus to BEVEL95_SHEET; run it on request"]
 fn draw_long_menu_sheet() {
@@ -2704,7 +2705,8 @@ fn draw_long_menu_sheet() {
     const LABEL: i32 = 18;
     let bold = load_font(&WIN95, true);
     let width = GAP + 640 + GAP + 800 + GAP;
-    let height = GAP + 3 * (LABEL + 600 + GAP);
+    // Brief 92 adds a fourth row: 98's Start menu itself too tall (640x360), at the top and the end.
+    let height = GAP + 3 * (LABEL + 600 + GAP) + LABEL + 360 + GAP;
     let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
     for (row, era) in Era::ALL.into_iter().enumerate() {
         let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
@@ -2722,6 +2724,14 @@ fn draw_long_menu_sheet() {
         bold.draw(&mut sheet, GAP + 640 + GAP, y, &format!("{look}, 800x600, {n800} entries"), rgb(0x000000));
         sheet.blit(&long_menu_scene(theme, era, &fonts, 800, 600, n800, LongScene::Open), GAP + 640 + GAP, y + LABEL);
     }
+    let theme = bevel_core::theme::theme_in(Era::Win98, Depth::TrueColor);
+    let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &boldf };
+    let y = GAP + 3 * (LABEL + 600 + GAP);
+    bold.draw(&mut sheet, GAP, y, "Windows 98, the Start menu too tall (640x360): it scrolls, the banner stays", rgb(0x000000));
+    sheet.blit(&start_scrolls_scene(theme, &fonts, false), GAP, y + LABEL);
+    bold.draw(&mut sheet, GAP + 640 + GAP, y, "The same scrolled to the end", rgb(0x000000));
+    sheet.blit(&start_scrolls_scene(theme, &fonts, true), GAP + 640 + GAP, y + LABEL);
     write_png(Path::new(&path), &sheet);
     println!("wrote the sheet");
 }
