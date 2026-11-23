@@ -22,6 +22,7 @@ mod controls;
 mod desktop;
 mod display;
 mod explorer;
+mod file_icons;
 mod folder;
 mod html_help;
 mod pointers;
@@ -106,6 +107,7 @@ const GROUPS: &[&[Entry]] = &[
     tray::ENTRIES,
     folder::ENTRIES,
     explorer::ENTRIES,
+    file_icons::ENTRIES,
     controls::ENTRIES,
     pointers::ENTRIES,
     html_help::ENTRIES,

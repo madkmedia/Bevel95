@@ -26,6 +26,7 @@ pub mod disk_box;
 pub mod drag;
 pub mod droplist;
 pub mod fb;
+pub mod file_kinds;
 pub mod find;
 pub mod flag;
 pub mod flyout;

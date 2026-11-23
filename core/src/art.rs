@@ -81,7 +81,12 @@ pub(crate) const fn captions(what: &str, look: Look) -> &'static [Caption] {
 
 /// The places of a sheet's pictures.
 pub(crate) const fn places(what: &str, look: Look) -> &'static [Place] {
-    match find(what, look, Depth::TrueColor) {
+    places_at(what, look, Depth::TrueColor)
+}
+
+/// The places of a sheet's pictures at `depth`.
+pub(crate) const fn places_at(what: &str, look: Look, depth: Depth) -> &'static [Place] {
+    match find(what, look, depth) {
         Art::Places(p) => p,
         _ => panic!("not a sheet's places in bevel-art"),
     }
