@@ -6116,12 +6116,19 @@ Windows gives it. Measured first on the three Reference PCs (`private/probes/fil
 every ending each Windows knew, read off its registry; every picture read out of its files; 56 test
 files shown in every view and depth and found pixel for pixel).
 
-- **The rule (PROVISIONAL, told to the owner)**: a file of a kind the look's own Windows knew by
-  itself shows that Windows' picture and its Type name; every other file keeps today's picture and
-  name (.pdf, .docx, .mp4, .zip, ...). Decided in ONE place, `core::file_kinds::decide`; the other
-  rule considered (every unknown file shows the look's unknown page, the old Windows' way) would
-  change only that function, and its picture (shell32's group 1) is already in the sheets. Not
-  built: a setting for it.
+- **The rule (the owner's decision, 2026-11-23: "Things can't have no icons, so if no old icons,
+  then they'll need new ones")**: a file of a kind the look's own Windows knew by itself shows that
+  Windows' picture and its Type name; every other file keeps today's picture and name (.pdf,
+  .docx, .mp4, .zip, ...). Decided in ONE place, `core::file_kinds::decide`; the other rule
+  considered (every unknown file shows the look's unknown page, the old Windows' way) would change
+  only that function, and its picture (shell32's group 1) is already in the sheets. Not built: a
+  setting for it.
+- **Today's pictures are drawn the same way everywhere**: folder windows (every view) and the
+  classic desktop are one view (`desktop_icons`), so a picture from today's shell goes through the
+  same drawing in each: in True Color as it is; at 16 and 256 colors through the project's
+  conversion (`desktop_icons::sixteen_picture`, i.e. `colors16::picture` by the look's rule) in
+  Large Icons and on the desktop (`Desktop::paint`) and in Small Icons, List and Details
+  (`paint_small`), faded and selected alike.
 - **What counts as known**: an ending of the look's table (95: 83 of its 107, 98: 117 of 166,
   2000: 168 of 282) with a picture of its own: a fixed picture (`Shown::Fixed`), or the file's own
   (`Own`: icons, cursors, shortcuts, .pif, .ht, .cdf; 2000's fonts and .msc; their picture stays

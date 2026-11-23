@@ -8,7 +8,8 @@
 //! whose picture was the file's own: icons, cursors, shortcuts). Its Type name is the look's for
 //! every kind the look knew, today's for the rest. (The other rule considered, every file the look
 //! did not know showing the look's unknown page, would change only `decide`; it is not built: the
-//! owner chose this one, PROVISIONAL.)
+//! owner chose this one on 2026-11-23, "Things can't have no icons, so if no old icons, then
+//! they'll need new ones".)
 //!
 //! A known kind needs no question to the shell: its picture is here, found by its ending while the
 //! window paints, so a folder of thousands of text files shows its pictures with its names. The
