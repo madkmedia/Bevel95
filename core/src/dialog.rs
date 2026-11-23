@@ -1184,9 +1184,12 @@ impl kit::Form for DialogWindow {
         if self.dialog.focus != Part::Command || self.dialog.kind != DialogKind::Run {
             return None;
         }
+        // As `pull`: a command put in from outside (`anchor` None) is the field's text now, with
+        // no selection and no Undo (brief 98).
         let mut edit = self.edit.clone();
-        if edit.text != self.dialog.text {
+        if edit.text != self.dialog.text || self.dialog.anchor.is_none() {
             edit.set(&self.dialog.text);
+            edit.place(self.dialog.caret);
         }
         Some(edit.menu(clipboard_has_text))
     }

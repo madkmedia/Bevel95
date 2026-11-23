@@ -264,6 +264,8 @@ pub struct FolderWindow {
     /// The left press began in the rename box: its drag selects text, and its release is not the
     /// list's (brief 97).
     rename_drag: bool,
+    /// A right press ended a rename (and was dropped): its release opens no menu (brief 98).
+    skip_right_up: bool,
     /// A drag of icons began and waits to be handed over (`Form::pending`).
     drag_out: bool,
     /// What Undo would take back now (the platform reads the shared list before a menu opens).
@@ -337,6 +339,7 @@ impl FolderWindow {
             click_activated: false,
             after_rename: None,
             rename_drag: false,
+            skip_right_up: false,
             drag_out: false,
             undo: None,
         };
@@ -2197,6 +2200,18 @@ impl Form for FolderWindow {
         let activating = std::mem::take(&mut self.click_activated);
         self.after_rename = None;
         self.rename_drag = false;
+        // A press anywhere but on the icons while a label is renamed ends the rename first, the
+        // name typed taken (the extension warning if it applies), as the old Windows did when the
+        // box lost the keyboard (brief 98): typing can then never go into the file's name by
+        // mistake. That press is dropped (the address field, its button, Go, the toolbar, the
+        // menu bar, the tree, the scroll bars, the title bar): it is not carried on, since the
+        // name taken may bring the extension warning, or a new listing, first. A press on the
+        // icons is handled below (on the box: the caret; elsewhere: the rename ends and the
+        // press is carried on as a click there, `click_after_rename`). While the extension
+        // warning is up a press does nothing.
+        if self.view.renaming().is_some() && part != Some(Part::List) {
+            return if self.view.is_asking() { Press::Done } else { Press::Act(Part::RenameEnd(false)) };
+        }
         match part {
             Some(p @ (Part::Minimize | Part::Maximize | Part::Close)) => Press::Hold(p),
             Some(Part::Icon) => Press::Act(Part::Icon),
@@ -2551,6 +2566,16 @@ impl Form for FolderWindow {
         // selection, and opens its menu when it comes up (brief 95).
         if part == Some(Part::List) && self.rename_hit(x, y) {
             return if down { Vec::new() } else { vec![Effect::FieldMenu] };
+        }
+        // A right press elsewhere while a label is renamed ends the rename first and is dropped,
+        // its release too (brief 98: no menu from an earlier press's state).
+        if down && self.view.renaming().is_some() {
+            self.skip_right_up = true;
+            self.right_hit = false;
+            return if self.view.is_asking() { Vec::new() } else { vec![Effect::Activate(Part::RenameEnd(false))] };
+        }
+        if !down && std::mem::take(&mut self.skip_right_up) {
+            return Vec::new();
         }
         if !down {
             // No right-button drag came of the press.
@@ -3167,6 +3192,58 @@ mod tests {
         let pic = w.view.icon_rect(2);
         c.mouse_down(&mut w, pic.x + pic.w / 2, pic.y + pic.h / 2);
         assert!(!w.click_after_rename());
+    }
+
+    /// Brief 98: a press anywhere but on the icons during a rename ends the rename first (the name
+    /// typed taken), and that press is dropped: what is typed afterwards into the address field
+    /// never goes into the file's name, and Enter goes to the address, not the rename. The same
+    /// for a toolbar button and the right button.
+    #[test]
+    fn a_press_elsewhere_ends_the_rename_first() {
+        let (r, b) = fonts();
+        let fonts = Fonts { regular: &r, bold: &b };
+        let new = || {
+            let mut w = FolderWindow::new(Era::Win98, "My Computer", Icon { width: 16, height: 16, pixels: vec![0; 256] }, false, (512, 461));
+            w.layout(&fonts);
+            w.show_place("My Computer", Icon { width: 16, height: 16, pixels: vec![0; 256] }, false, "My Computer", Icon { width: 16, height: 16, pixels: vec![0; 256] });
+            w.set_items(items(3));
+            w
+        };
+        // The address field, its button, Go, a toolbar button, the menu bar, the tree, a scroll
+        // bar: each ends the rename and is dropped.
+        let parts = [Part::Address, Part::AddressButton, Part::Go, Part::Tool(Tool::Up), Part::Menu(0), Part::TreeBlank, Part::VThumb];
+        for part in parts {
+            let what = format!("{part:?}");
+            let mut w = new();
+            assert!(w.begin_rename(0));
+            for ch in "new name".chars() {
+                w.typed(ch);
+            }
+            assert_eq!(w.press(Some(part), 200, 100), Press::Act(Part::RenameEnd(false)), "{what}");
+            assert!(!w.click_after_rename(), "{what}: the press is dropped");
+            // The platform takes the name typed into the box.
+            assert_eq!(w.view.end_rename(), crate::desktop_icons::RenameEnd::Rename { id: w.view.items[0].id.clone(), name: "new name".into() });
+            // Now the address field: what is typed goes there, Enter goes to the address.
+            w.press(Some(Part::Address), 200, 100);
+            for ch in "C:\\".chars() {
+                w.typed(ch);
+            }
+            assert_eq!(w.field.text, "C:\\", "{what}");
+            assert!(w.view.renaming().is_none());
+            assert_eq!(w.key(Key::Enter, Mods::default()), Some(vec![Effect::Activate(Part::Go)]), "{what}");
+        }
+        // The right button elsewhere: the rename ends, its release opens no menu.
+        let mut w = new();
+        assert!(w.begin_rename(0));
+        assert_eq!(w.button(Button::Right, true, 200, 100), vec![Effect::Activate(Part::RenameEnd(false))]);
+        w.view.end_rename();
+        assert_eq!(w.button(Button::Right, false, 200, 100), Vec::new());
+        // While the extension warning is up a press does nothing.
+        let mut w = new();
+        assert!(w.begin_rename(0));
+        w.view.rename_asking(true);
+        assert_eq!(w.press(Some(Part::Address), 200, 100), Press::Done);
+        assert_eq!(w.view.renaming(), Some(0));
     }
 
     #[test]

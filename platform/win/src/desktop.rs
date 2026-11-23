@@ -1589,7 +1589,23 @@ fn rename_menu(hwnd: HWND, keyboard: bool) {
     };
     let above = keyboard.then_some(at.1);
     let request = bevel_winkit::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above, titles: &[] };
-    if let bevel_winkit::menu::Outcome::Chosen(i) = bevel_winkit::menu::track(&look, request).outcome {
+    let outcome = bevel_winkit::menu::track(&look, request).outcome;
+    // The menu ended because another program was clicked: the desktop no longer has the keyboard,
+    // so the rename ends as whenever another window takes it (brief 98).
+    // (The desktop takes the keyboard without coming forward, so the test is whether the window in
+    // front now belongs to another program.)
+    // SAFETY: plain queries.
+    let other_program = unsafe {
+        let front = windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        let mut pid = 0u32;
+        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(front, &mut pid);
+        !front.is_null() && pid != windows_sys::Win32::System::Threading::GetCurrentProcessId()
+    };
+    if other_program && renaming_now() {
+        finish_rename(hwnd, true, false);
+        return;
+    }
+    if let bevel_winkit::menu::Outcome::Chosen(i) = outcome {
         let effects = with_state_value(hwnd, |st, font| st.view.update(font, |v| v.rename_menu_chosen::<()>(i))).unwrap_or_default();
         rename_effects(hwnd, &effects);
     }
@@ -2012,6 +2028,10 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
                 let inside = with_state_value(hwnd, |st, font| {
                     let (x, y) = point_1x(st, lparam);
                     let on_box = st.view.rename_box(font).is_some_and(|(b, _)| b.contains(x, y));
+                    if on_box && msg != WM_LBUTTONDOWN {
+                        // A right press on the box leaves no earlier press's icon behind (brief 98).
+                        st.right_hit = None;
+                    }
                     if !on_box || msg != WM_LBUTTONDOWN {
                         return (on_box, Vec::new());
                     }
@@ -2085,9 +2105,11 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             return 0;
         }
         // The right button came up after a press on the rename box: the box's menu, if the rename
-        // is still going on; else the ordinary menu comes (below).
-        WM_RBUTTONUP if RENAME_RIGHT.replace(false) && renaming_now() => {
-            rename_menu(hwnd, false);
+        // is still going on; if it is gone by now, no menu at all (brief 98).
+        WM_RBUTTONUP if RENAME_RIGHT.replace(false) => {
+            if renaming_now() {
+                rename_menu(hwnd, false);
+            }
             return 0;
         }
         WM_MOUSEMOVE => {

@@ -594,16 +594,37 @@ pub fn put_on_clipboard(owner: HWND, targets: &[Target], cut: bool) -> Option<u3
     unsafe { std::ptr::copy_nonoverlapping((&files as *const DROPFILES).cast::<u8>(), bytes.as_mut_ptr(), header) };
     bytes.extend(list.iter().flat_map(|c| c.to_le_bytes()));
     let effect: u32 = if cut { 2 } else { 1 };
+    // Both blocks are made first; the clipboard is opened and emptied only when both exist, and a
+    // block that was not handed over is freed (brief 98: a failure never leaves the person's
+    // clipboard empty, and no block is lost).
+    let free = |h: HGLOBAL| {
+        // SAFETY: a block of ours that the clipboard did not take.
+        unsafe { GlobalFree(h) };
+    };
+    let (files_block, effect_block) = match (global(&bytes), global(&effect.to_le_bytes())) {
+        (Some(a), Some(b)) => (a, b),
+        (a, b) => {
+            a.into_iter().chain(b).for_each(free);
+            log("Cut/Copy: no memory for the clipboard's blocks (the clipboard was left as it was)");
+            return None;
+        }
+    };
     if !open_clipboard(owner) {
+        free(files_block);
+        free(effect_block);
         return None;
     }
-    // SAFETY: the clipboard is ours until CloseClipboard; it owns the blocks once given.
+    // SAFETY: the clipboard is ours until CloseClipboard; it owns a block once it took it.
     let ok = unsafe {
         EmptyClipboard();
-        let a = global(&bytes).map(|h| !SetClipboardData(u32::from(CF_HDROP), h as HANDLE).is_null()).unwrap_or(false);
-        let b = global(&effect.to_le_bytes())
-            .map(|h| !SetClipboardData(drop_effect_format(), h as HANDLE).is_null())
-            .unwrap_or(false);
+        let a = !SetClipboardData(u32::from(CF_HDROP), files_block as HANDLE).is_null();
+        if !a {
+            free(files_block);
+        }
+        let b = !SetClipboardData(drop_effect_format(), effect_block as HANDLE).is_null();
+        if !b {
+            free(effect_block);
+        }
         CloseClipboard();
         a && b
     };
