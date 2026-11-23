@@ -1815,3 +1815,22 @@ All on the Reference PCs at 800x600 True Color, Small Fonts; every value checked
 - **Pattern window** (98, 2000): 318x205, template from (3, 22); list at (14, 110, 120, 81) rows 13;
   preview (144, 110, 75, 81) black frame, the pattern lined up with the window's inside (3, 22); OK,
   Cancel, Edit Pattern... at (230, 33 / 63 / 92), 75x23.
+
+## Pictures for kinds of file (measured 2026-11-23, `private/probes/file-icons/survey.md`)
+
+- Each look's own table of kinds (ending, Type name, picture) is `core/src/file_kinds/tables.rs`,
+  read off the Reference PCs' registries; the pictures are the icons of their own files.
+- How each Windows drew a file's picture, pixel for pixel on the captures: **95** its 16-color
+  image put to the nearest of Windows' 16 colors on every screen (0000BF shows 000080); **98 in True
+  Color** a 16-color-only icon as stored, else the 256-color image with every channel cut to 5 bits
+  and the lowest kept bit repeated below (CC -> CF, 66 -> 60, FB -> FF); **2000 in True Color**
+  through 5 bits per channel the usual way (C0 -> C6, 80 -> 84), from the 256-color image where
+  there is one; **98 and 2000 at 256 and 16 colors** the 16-color images, as 95.
+- A file's picture sits where a folder's does in every view: 32×32 21 in and 2 down in its 75×75
+  cell, 16×16 at the row's left.
+- A program without an icon of its own: shell32.dll's group 3 in all three; the unknown page:
+  group 1; the shortcut arrow over a picture's lower left corner (group 30; its own 16×16 image in
+  the small views).
+- Maximized windows of the survey: 2000's True Color one put its first column at x 17 (Bevel95 and
+  its 256-color capture: 23); 95's Small Icons, arranged after Large Icons, put its columns 89 apart
+  (the widest label + 28), where 112 is measured above for 95. Neither is followed yet.

@@ -522,6 +522,8 @@ fn popup_cases(out: &mut Vec<Case>, f95: &Fonts) {
 
 #[path = "views_cases/mod.rs"]
 mod views_cases;
+#[path = "fileicons_cases/mod.rs"]
+mod fileicons_cases;
 mod web_cases;
 #[path = "sixteen_cases/mod.rs"]
 mod sixteen_cases;
@@ -640,6 +642,7 @@ fn cases() -> Vec<Case> {
     tree_close_cases(&mut out, &f95, &f2k);
     disk_box_cases(&mut out, &f95, &f2k);
     views_cases::view_cases(&mut out, &f95, &f2k);
+    fileicons_cases::fileicons_cases(&mut out, &f95, &f2k);
     web_cases::web_cases(&mut out, &f95, &f2k);
     sixteen_cases::sixteen_cases(&mut out, &f95, &f2k);
     twofiftysix_cases::twofiftysix_cases(&mut out, &f95, &f2k);

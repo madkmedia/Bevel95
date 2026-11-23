@@ -6109,6 +6109,74 @@ Display Properties' Background page chooses them.
   owner over the joined picture, a screen-sized wallpaper made where the 1x one is, and `present`
   joining the two only when the setting is on and the size is whole.
 
+## Icons for kinds of file (2026-11-23, a user: "more default icons replaced with the proper Windows 98 ones (.exe, .bat, .dll, .ini etc.)"; the owner: "Classic icons in file explorer sounds good")
+
+Before this, a folder showed the look's own folder picture but every file the picture today's
+Windows gives it. Measured first on the three Reference PCs (`private/probes/file-icons/survey.md`:
+every ending each Windows knew, read off its registry; every picture read out of its files; 56 test
+files shown in every view and depth and found pixel for pixel).
+
+- **The rule (PROVISIONAL, told to the owner)**: a file of a kind the look's own Windows knew by
+  itself shows that Windows' picture and its Type name; every other file keeps today's picture and
+  name (.pdf, .docx, .mp4, .zip, ...). Decided in ONE place, `core::file_kinds::decide`; the other
+  rule considered (every unknown file shows the look's unknown page, the old Windows' way) would
+  change only that function, and its picture (shell32's group 1) is already in the sheets. Not
+  built: a setting for it.
+- **What counts as known**: an ending of the look's table (95: 83 of its 107, 98: 117 of 166,
+  2000: 168 of 282) with a picture of its own: a fixed picture (`Shown::Fixed`), or the file's own
+  (`Own`: icons, cursors, shortcuts, .pif, .ht, .cdf; 2000's fonts and .msc; their picture stays
+  today's, their Type name is the look's), or a program's (`Program`: .exe and .scr). An ending
+  that showed only the unknown page (no class, a MIME type only, a class without a picture, a
+  picture missing from the disk: .zip, .xls, .png in 98, .msn, .qic, .hta ...) is not known: today's
+  picture and name. The kinds with a name but the unknown picture keep today's name too (so a file
+  never mixes today's picture with an old name it got only for want of a picture).
+- **Endings** as Windows found them (`file_kinds::ending`, `PathFindExtension`): after the last dot
+  if no space follows it, any letter case; ".txt" alone is a text file; "noext" has none. An ending
+  only another look knew is unknown in this one (.log is 2000's only, .theme 98's only).
+- **Programs**: all three drew a program without an icon of its own (Windows, console, MS-DOS,
+  16-bit, .com) with shell32's group 3. Bevel95 shows that picture at once and asks the shell, off
+  the window's thread as before, for the file's own picture; the shell's picture of the file that
+  is not the one it gives every program of its kind (`x.exe`, no file) means the file has icons of
+  its own (`shell::own_picture`, `own_icon_of_program`). Nothing reads the file's bytes itself,
+  nothing runs or loads it; a file that cannot be read (locked, a drive that is gone) keeps the
+  look's program picture (tests `a_file_that_cannot_be_read_gets_the_looks_picture`).
+- **Shortcuts**: .lnk keeps today's picture (the target's) with the look's arrow; .url shows the
+  look's URL.DLL picture with the arrow (as all three did).
+- **The pictures** (`art/src/file_icons.rs`, one sheet per look; `private/art-inventory.md` lists
+  each): every picture the tables name, 32×32 and 16×16, drawn as each Windows drew them:
+  95's 16-color images in Windows' 16 colors (nearest) on every screen; 98 in True Color from the
+  256-color image through its 5-bit cut (lowest kept bit repeated) where there is one, else the
+  16-color image as stored; 2000 in True Color through 5 bits per channel (top bits repeated) from
+  the 256-color image where there is one; 98's and 2000's 16-color images at 256 and 16 colors.
+  Where a file had only one size, the other is halved (every other pixel) or doubled: not measured.
+  Pixels whose mask says see-through but whose color is not black (a few 256-color images) are
+  see-through here, as on the captures' white windows.
+- **Where they show**: folder windows in every view, Windows Explorer's right pane and the classic
+  desktop (`desktop_icons::Picture::Kind`: the picture is found by the item's ending when it is
+  drawn, at the screen's depth); the Type column, the web view panel's type line and 2000's status
+  bar take the item's Type name. Fading (hidden, cut), the arrow, selection, dragging and renaming
+  work on them as on today's pictures. Left as they were: Start > Documents and Quick Search (their
+  own shell pictures in the bar, `start_menu.rs`); the games and Help do not carry the pictures.
+- **A look change**: each look knew its own kinds, so a folder window starts a new reader in the
+  new look (as Refresh does) and the desktop reads its items again; until then a kind the new look
+  did not know shows no picture, never the old look's.
+- **Faster**: a known kind needs no question to the shell for its picture (one question per kind for
+  its name, as before). A folder of 5,000 text files (`shell::kind_tests::five_thousand_text_files`,
+  release): before, 60 ms to name them and then about 7 s of reading each file's picture on the
+  reader's thread; now about 7 ms with every picture, none read afterwards.
+- **Proof**: golden scenes `<look>-folder-kinds-large/-small/-details`; comparison cases
+  `vm-<look>-fileicons-*` (11: True Color Large and Small of each, 256 colors of each, 16 colors of 95
+  and 98) against the PCs' `C:\ICONS`, exact, masking only the pictures that are the file's own or
+  today's, and in Small Icons the Internet shortcut's arrow (Bevel95 shrinks its 32×32 arrow; the
+  PCs drew shell32's own 16×16 one: not changed here). Two captures' arrangement differs from
+  Bevel95's and is compared cell by cell where the PC put each item: 2000's True Color window had its
+  columns 6 pixels further left, 95's Small Icons eight columns 89 apart. 2000's 16-color captures
+  (640×480) were not made a case.
+- **Not built**: Folder Options' File Types page; the old Windows hiding .dll, .sys, .vxd, .386,
+  .drv by their ending (95, 98); opening a file with an old program; the pictures in menus.
+- Programs grew: bevel95.exe and folders.exe by about 280 KB each (the three sheets, 218,542 bytes,
+  and the tables); the games, Calculator and Help not.
+
 ## The public copy (2026-11-17, groundwork for sharing, part 4)
 Nothing is published by this; it prepares what a stranger reads and a script that makes a clean
 copy, for the owner to publish when they decide (a fresh history, todo.md "Towards something

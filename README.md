@@ -35,7 +35,9 @@ Website: https://madkmedia.github.io/Bevel95/
   choose how it is drawn: even pixels with mixed edges (the default), the same mixed by light,
   sharp but uneven pixels, or smooth.
 - **A classic desktop** with its icons (it can be switched off), **folder windows** and **Windows
-  Explorer** with the tree of folders, in each look. Hidden files and folders show, faded, when
+  Explorer** with the tree of folders, in each look. A file of a kind that Windows knew (.txt,
+  .ini, .bat, .dll, .exe, .hlp, .bmp, ...) shows that Windows' own icon and type name; other
+  files keep today's icons. Hidden files and folders show, faded, when
   Windows is set to show hidden items (File Explorer > View > Show > Hidden items); protected
   system files only when Windows does not hide them. Right-click the desktop and choose
   **Properties** for **Display Properties**: each look's own wallpapers and patterns (tiled,
