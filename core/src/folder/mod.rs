@@ -266,6 +266,9 @@ pub struct FolderWindow {
     rename_drag: bool,
     /// A right press ended a rename (and was dropped): its release opens no menu (brief 98).
     skip_right_up: bool,
+    /// The press elsewhere (its part and point) that ended a rename, carried on once the rename has
+    /// ended without the extension warning (`carry_on_after_rename`, brief 99).
+    press_after_rename: Option<(Part, i32, i32)>,
     /// A drag of icons began and waits to be handed over (`Form::pending`).
     drag_out: bool,
     /// What Undo would take back now (the platform reads the shared list before a menu opens).
@@ -340,6 +343,7 @@ impl FolderWindow {
             after_rename: None,
             rename_drag: false,
             skip_right_up: false,
+            press_after_rename: None,
             drag_out: false,
             undo: None,
         };
@@ -448,6 +452,26 @@ impl FolderWindow {
     /// kept it): that press goes on as a click there, as on the Reference PCs (survey part 4:
     /// the rename ends and the file clicked is selected; a double-click opens it). Nothing if a
     /// question came up instead (the name is still being renamed). True if it selected.
+    /// The press elsewhere that ended a rename (not on the icons), carried on once the rename has
+    /// ended without the extension warning (brief 99): what the platform carries out. The press is
+    /// made again now; a part held with the mouse (a toolbar button, Go, the title bar's buttons)
+    /// acts at once, as a whole click, since its release has nothing left to wait for; a part
+    /// that would be dragged (a scroll thumb, the bar between the panes, a column's divider) is
+    /// dropped, the drag cannot be taken up halfway. The address field takes the keyboard with
+    /// everything selected (a first click), the tree's row, box or blank do what a press does
+    /// there, a scroll arrow or page scrolls. Nothing while a rename (or its warning) is still on.
+    pub fn carry_on_after_rename(&mut self) -> Vec<Effect<Part>> {
+        let Some((part, x, y)) = self.press_after_rename.take() else { return Vec::new() };
+        if self.view.renaming().is_some() {
+            return Vec::new();
+        }
+        match self.press(Some(part), x, y) {
+            Press::Hold(p) | Press::Act(p) => vec![Effect::Activate(p)],
+            // A drag cannot be taken up halfway: dropped. Done: the press did its work.
+            _ => Vec::new(),
+        }
+    }
+
     pub fn click_after_rename(&mut self) -> bool {
         let Some((x, y, mods)) = self.after_rename.take() else { return false };
         if self.view.renaming().is_some() {
@@ -2199,18 +2223,22 @@ impl Form for FolderWindow {
         // Whether this press is the click that brought the window forward (used up by it).
         let activating = std::mem::take(&mut self.click_activated);
         self.after_rename = None;
+        self.press_after_rename = None;
         self.rename_drag = false;
         // A press anywhere but on the icons while a label is renamed ends the rename first, the
         // name typed taken (the extension warning if it applies), as the old Windows did when the
         // box lost the keyboard (brief 98): typing can then never go into the file's name by
-        // mistake. That press is dropped (the address field, its button, Go, the toolbar, the
-        // menu bar, the tree, the scroll bars, the title bar): it is not carried on, since the
-        // name taken may bring the extension warning, or a new listing, first. A press on the
-        // icons is handled below (on the box: the caret; elsewhere: the rename ends and the
-        // press is carried on as a click there, `click_after_rename`). While the extension
-        // warning is up a press does nothing.
+        // mistake. The press is remembered and, once the rename has ended without the warning,
+        // carried on as if made then (`carry_on_after_rename`, brief 99): the old Windows took the
+        // name AND did what the click asked. A press on the icons is handled below (on the box:
+        // the caret; elsewhere: the rename ends and the press is carried on as a click there,
+        // `click_after_rename`). While the extension warning is up a press does nothing.
         if self.view.renaming().is_some() && part != Some(Part::List) {
-            return if self.view.is_asking() { Press::Done } else { Press::Act(Part::RenameEnd(false)) };
+            if self.view.is_asking() {
+                return Press::Done;
+            }
+            self.press_after_rename = part.map(|p| (p, x, y));
+            return Press::Act(Part::RenameEnd(false));
         }
         match part {
             Some(p @ (Part::Minimize | Part::Maximize | Part::Close)) => Press::Hold(p),
@@ -3209,22 +3237,52 @@ mod tests {
             w.set_items(items(3));
             w
         };
-        // The address field, its button, Go, a toolbar button, the menu bar, the tree, a scroll
-        // bar: each ends the rename and is dropped.
-        let parts = [Part::Address, Part::AddressButton, Part::Go, Part::Tool(Tool::Up), Part::Menu(0), Part::TreeBlank, Part::VThumb];
+        // The address field, its button, Go, toolbar buttons and an arrow, the menu bar, the tree,
+        // the scroll bars, the title bar's buttons: each ends the rename, and once the name is
+        // taken the press goes on (brief 99): it does what the same press does on a window with no
+        // rename (a held part acting at once), a thumb's drag dropped.
+        let parts = [
+            Part::Address,
+            Part::AddressButton,
+            Part::Go,
+            Part::Tool(Tool::Up),
+            Part::Tool(Tool::Views),
+            Part::ToolArrow(Tool::Back),
+            Part::Menu(0),
+            Part::TreeBlank,
+            Part::VThumb,
+            Part::Scroll(Scroll::PageDown),
+            Part::Minimize,
+            Part::Close,
+        ];
         for part in parts {
             let what = format!("{part:?}");
+            // What the same press does with no rename.
+            let mut plain = new();
+            let expected = match plain.press(Some(part), 200, 100) {
+                Press::Hold(p) | Press::Act(p) => vec![Effect::Activate(p)],
+                _ => Vec::new(),
+            };
             let mut w = new();
             assert!(w.begin_rename(0));
             for ch in "new name".chars() {
                 w.typed(ch);
             }
             assert_eq!(w.press(Some(part), 200, 100), Press::Act(Part::RenameEnd(false)), "{what}");
-            assert!(!w.click_after_rename(), "{what}: the press is dropped");
+            assert!(!w.click_after_rename(), "{what}: not a click on the icons");
             // The platform takes the name typed into the box.
             assert_eq!(w.view.end_rename(), crate::desktop_icons::RenameEnd::Rename { id: w.view.items[0].id.clone(), name: "new name".into() });
+            assert_eq!(w.carry_on_after_rename(), expected, "{what}: the press goes on");
+            assert_eq!(w.field.focused, plain.field.focused, "{what}");
+            assert!(w.carry_on_after_rename().is_empty(), "{what}: once");
+            if part == Part::Address {
+                assert!(w.field.focused && w.field.all_selected(), "the address field takes the keyboard, all selected");
+            }
             // Now the address field: what is typed goes there, Enter goes to the address.
-            w.press(Some(Part::Address), 200, 100);
+            if !w.field.focused {
+                w.press(Some(Part::Address), 200, 100);
+            }
+            w.key(Key::Other(u16::from(b'A')), Mods { ctrl: true, shift: false });
             for ch in "C:\\".chars() {
                 w.typed(ch);
             }
@@ -3238,6 +3296,12 @@ mod tests {
         assert_eq!(w.button(Button::Right, true, 200, 100), vec![Effect::Activate(Part::RenameEnd(false))]);
         w.view.end_rename();
         assert_eq!(w.button(Button::Right, false, 200, 100), Vec::new());
+        // The extension warning came at the name taken: the press is dropped.
+        let mut w = new();
+        assert!(w.begin_rename(0));
+        assert_eq!(w.press(Some(Part::Go), 200, 100), Press::Act(Part::RenameEnd(false)));
+        w.view.rename_asking(true);
+        assert!(w.carry_on_after_rename().is_empty(), "the warning: dropped");
         // While the extension warning is up a press does nothing.
         let mut w = new();
         assert!(w.begin_rename(0));

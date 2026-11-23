@@ -3004,8 +3004,20 @@ impl Hosted for FolderHost {
                 // A press outside the box: once the name is taken, it is a click there (selects;
                 // a double-click opens), as on the Reference PCs (brief 90).
                 if !by_keyboard {
-                    let went_on = kit::with::<FolderHost, _>(|h| h.form.click_after_rename()).unwrap_or(false);
-                    if went_on {
+                    // A press elsewhere (the address field, a toolbar button, the tree...) goes on
+                    // too once the name is taken without the warning (brief 99).
+                    let (went_on, carried) = kit::with::<FolderHost, _>(|h| (h.form.click_after_rename(), h.form.carry_on_after_rename()))
+                        .unwrap_or((false, Vec::new()));
+                    if went_on || !carried.is_empty() {
+                        kit::update::<FolderHost>(|_| {});
+                        for effect in carried {
+                            if let bevel_core::kit::Effect::Activate(p) = effect {
+                                FolderHost::activate(p);
+                            }
+                        }
+                    } else if kit::with::<FolderHost, _>(|h| h.form.view.renaming().is_none()).unwrap_or(false) {
+                        // The press did its work as it was made again (the address field took the
+                        // keyboard, the tree's selection moved): only a repaint.
                         kit::update::<FolderHost>(|_| {});
                     } else {
                         static STOPPED: AtomicU32 = AtomicU32::new(0);
