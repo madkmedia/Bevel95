@@ -481,6 +481,46 @@ impl Edit {
     }
 }
 
+/// Draws a field's line of text at (x, y) into the `width` pixels it has (clipped there, moved left
+/// so the caret shows: `Edit::fit`), as Windows' edit box: with the keyboard (`focused`) the
+/// selection in the highlight colors and the caret while it blinks on (`caret_on`). What is behind
+/// (the field's white) stays.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_line(
+    fb: &mut crate::fb::Framebuffer,
+    font: &crate::text::Font,
+    edit: &Edit,
+    x: i32,
+    y: i32,
+    width: i32,
+    focused: bool,
+    caret_on: bool,
+    colors: &crate::theme::Colors,
+) {
+    use crate::fb::{Framebuffer, Rect};
+    if width <= 0 {
+        return;
+    }
+    let measure = |s: &str| font.measure(s);
+    let scroll = if focused { edit.fit(&measure, width) } else { 0 };
+    let mut line = Framebuffer::new(width, font.height, 0);
+    line.blit_part(fb, Rect::new(x, y, width, font.height), 0, 0);
+    font.draw(&mut line, -scroll, 0, &edit.text, colors.text);
+    let (s, e) = edit.selection();
+    if focused && s != e {
+        let before: String = edit.text.chars().take(s).collect();
+        let part: String = edit.text.chars().skip(s).take(e - s).collect();
+        let sx = font.measure(&before) - scroll;
+        line.fill(Rect::new(sx, 0, font.measure(&part), font.height), colors.menu_highlight);
+        font.draw(&mut line, sx, 0, &part, colors.menu_highlight_text);
+    }
+    if focused && caret_on {
+        let before: String = edit.text.chars().take(edit.caret).collect();
+        line.vline(font.measure(&before) - scroll, 0, font.height, colors.text);
+    }
+    fb.blit(&line, x, y);
+}
+
 /// The op of entry `index` of `Edit::menu`.
 pub fn menu_op(index: usize) -> Option<Op> {
     match index {

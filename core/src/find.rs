@@ -382,6 +382,14 @@ pub struct FindWindow {
     divider_drag: Option<(i32, i32)>,
     /// The font the names are drawn in (from the first layout), to fit Name to them.
     font: Option<crate::text::Font>,
+    /// The field: Windows' edit box (brief 95); `text` and `caret` (and `anchor`) are what it
+    /// shows (`push`); text put there from outside is taken in (`pull`).
+    edit: crate::edit::Edit,
+    pub anchor: usize,
+    /// The text of the last Cut or Copy, for the clipboard.
+    copied: Option<String>,
+    /// Shift was held at the last press of the left button.
+    shift: bool,
 }
 
 impl FindWindow {
@@ -411,9 +419,39 @@ impl FindWindow {
             name_w: NAME_W,
             divider_drag: None,
             font: None,
+            edit: crate::edit::Edit::default(),
+            anchor: 0,
+            copied: None,
+            shift: false,
         };
         w.refind();
         w
+    }
+
+    /// The field takes in text put into `text` from outside, the caret where it was put.
+    fn pull(&mut self) {
+        if self.edit.text != self.text {
+            self.edit.set(&self.text);
+            self.edit.place(self.caret);
+        }
+    }
+
+    /// What the field holds is shown; `changed`: its text changed, so the programs are found
+    /// afresh.
+    fn push(&mut self, changed: bool) {
+        self.text = self.edit.text.clone();
+        self.caret = self.edit.caret;
+        self.anchor = self.edit.anchor;
+        self.caret_on = true;
+        if changed {
+            self.refind();
+        }
+    }
+
+    /// The character of the field nearest `x` (the window's pixels).
+    fn field_index(&self, x: i32) -> usize {
+        let advances = &self.advances;
+        self.edit.index_at(&|s: &str| advances.iter().take(s.chars().count()).sum(), x - self.field_x)
     }
 
     /// Whether no program is known yet (only the commands).
@@ -481,19 +519,6 @@ impl FindWindow {
         self.selection_lost = false;
         self.top = 0;
         self.lay_out();
-    }
-
-    /// Edits the text: `f` gets it and the caret (in characters).
-    fn edit(&mut self, f: impl FnOnce(&mut String, &mut usize)) {
-        let (mut text, mut caret) = (self.text.clone(), self.caret);
-        f(&mut text, &mut caret);
-        let changed = text != self.text;
-        self.text = text;
-        self.caret = caret.min(self.text.chars().count());
-        self.caret_on = true;
-        if changed {
-            self.refind();
-        }
     }
 
     /// Moves the selection by `delta` rows, scrolling to keep it in view.
@@ -610,9 +635,6 @@ impl FindWindow {
     }
 }
 
-fn byte_at(text: &str, chars: usize) -> usize {
-    text.char_indices().nth(chars).map_or(text.len(), |(i, _)| i)
-}
 
 impl kit::Form for FindWindow {
     type Part = Part;
@@ -650,11 +672,13 @@ impl kit::Form for FindWindow {
         let inside = dialog::well(fb, FIELD, c);
         let mut field = Framebuffer::new(inside.w, inside.h, rgb(0xFFFFFF));
         let x0 = self.text_x() - inside.x;
-        font.draw(&mut field, x0, 1, &self.text, c.text);
-        if self.caret_on {
-            let before: String = self.text.chars().take(self.caret).collect();
-            field.vline(x0 + font.measure(&before), 1, font.height, c.text);
-        }
+        // Windows' edit box (brief 95): the selection, the caret, the text moved so the caret shows.
+        let mut edit = crate::edit::Edit::new(&self.text);
+        edit.caret = self.caret.min(edit.len());
+        edit.anchor = self.anchor.min(edit.len());
+        edit.scroll.set(self.edit.scroll.get());
+        crate::edit::paint_line(&mut field, font, &edit, x0, 1, inside.w - x0 - 1, true, self.caret_on, c);
+        self.edit.scroll.set(edit.scroll.get());
         fb.blit(&field, inside.x, inside.y);
 
         // The list: its sunken frame, the header's raised cells, the rows.
@@ -754,37 +778,25 @@ impl kit::Form for FindWindow {
                 let page = PAGE as i32 - 1;
                 self.move_by(if key == Key::PageDown { page } else { -page });
             }
-            Key::Left => self.edit(|_, c| *c = c.saturating_sub(1)),
-            Key::Right => self.edit(|_, c| *c += 1),
-            Key::Home => self.edit(|_, c| *c = 0),
-            Key::End => self.edit(|t, c| *c = t.chars().count()),
-            Key::Delete => self.edit(|t, c| {
-                if *c < t.chars().count() {
-                    let at = byte_at(t, *c);
-                    t.remove(at);
-                }
-            }),
             // One control: Tab stays in the field.
             Key::Tab => {}
-            Key::Other(vk) if mods.ctrl && vk == u16::from(b'V') => return Some(vec![Effect::Paste]),
-            _ => return None,
+            // Windows' edit box: caret keys, words, Backspace, Delete, Cut, Copy, Paste, Undo,
+            // Ctrl+A, Shift+F10 (brief 95).
+            _ => {
+                self.pull();
+                let done = kit::field_key(&mut self.edit, key, mods, &mut self.copied)?;
+                self.push(done.changed);
+                return Some(done.effects);
+            }
         }
         Some(Vec::new())
     }
+    /// Backspace comes as its key (`key`); its character, and every other control character, is
+    /// left out here.
     fn typed(&mut self, ch: char) -> Vec<Effect<Part>> {
-        match ch {
-            '\u{8}' => self.edit(|t, c| {
-                if *c > 0 {
-                    *c -= 1;
-                    let at = byte_at(t, *c);
-                    t.remove(at);
-                }
-            }),
-            ch if !ch.is_control() => self.edit(|t, at| {
-                t.insert(byte_at(t, *at), ch);
-                *at += 1;
-            }),
-            _ => {}
+        self.pull();
+        if self.edit.type_char(ch) {
+            self.push(true);
         }
         Vec::new()
     }
@@ -804,18 +816,13 @@ impl kit::Form for FindWindow {
                 self.show_selected();
             }
             Some(Part::Field) => {
-                // The caret goes between the characters nearest the click.
-                let mut w = self.field_x;
-                self.caret = self
-                    .advances
-                    .iter()
-                    .take_while(|&&a| {
-                        let before = w + a / 2 < x;
-                        w += a;
-                        before
-                    })
-                    .count();
-                self.caret_on = true;
+                // The caret goes between the characters nearest the click (Shift: the selection
+                // grows to there); held, a drag selects (brief 95).
+                self.pull();
+                let at = self.field_index(x);
+                self.edit.press(at, self.shift);
+                self.push(false);
+                return Press::Grab(Part::Field, 0);
             }
             Some(part @ (Part::ScrollUp | Part::ScrollDown)) => {
                 self.scroll_by(if part == Part::ScrollUp { -1 } else { 1 });
@@ -852,8 +859,43 @@ impl kit::Form for FindWindow {
                 self.lay_out();
                 Some(vec![Effect::Activate(Part::Divider)])
             }
+            // In the field: a word selected (brief 95).
+            Some(Part::Field) => {
+                self.pull();
+                let at = self.field_index(x);
+                self.edit.double_click(at);
+                self.push(false);
+                Some(Vec::new())
+            }
             _ => None,
         }
+    }
+    /// The right button on the field opens its edit menu as it comes up (brief 95).
+    fn button(&mut self, button: kit::Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        if button == kit::Button::Right && !down && self.hit(x, y) == Some(Part::Field) { vec![Effect::FieldMenu] } else { Vec::new() }
+    }
+    fn mouse_mods(&mut self, mods: Mods) {
+        self.shift = mods.shift;
+    }
+    fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
+    }
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        let mut edit = self.edit.clone();
+        if edit.text != self.text {
+            edit.set(&self.text);
+        }
+        Some(edit.menu(clipboard_has_text))
+    }
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        let caret: i32 = self.advances.iter().take(self.caret).sum();
+        Some((self.field_x + caret - self.edit.scroll.get(), FIELD.bottom()))
+    }
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        self.pull();
+        let done = kit::field_menu_chosen(&mut self.edit, index, &mut self.copied);
+        self.push(done.changed);
+        done.effects
     }
     fn release(&mut self, part: Part) -> Vec<Effect<Part>> {
         match part {
@@ -862,6 +904,13 @@ impl kit::Form for FindWindow {
         }
     }
     fn drag(&mut self, part: Part, grab_y: i32, grab_top: i32, x: i32, y: i32) -> bool {
+        if part == Part::Field {
+            let at = self.field_index(x);
+            let was = (self.edit.caret, self.edit.anchor);
+            self.edit.drag(at);
+            self.push(false);
+            return was != (self.edit.caret, self.edit.anchor);
+        }
         if part == Part::Divider {
             let before = self.drag_line();
             if let Some(d) = self.divider_drag.as_mut() {
@@ -899,12 +948,12 @@ impl kit::Form for FindWindow {
     fn wheel(&mut self, notches: i32) {
         self.scroll_by(-3 * notches);
     }
+    /// Text from the clipboard in place of the selection: its first line (brief 95).
     fn paste(&mut self, text: &str) {
-        let paste: String = text.chars().filter(|c| !c.is_control()).collect();
-        self.edit(|t, c| {
-            t.insert_str(byte_at(t, *c), &paste);
-            *c += paste.chars().count();
-        });
+        self.pull();
+        if self.edit.paste(text) {
+            self.push(true);
+        }
     }
     fn has_caret(&self) -> bool {
         true
@@ -1325,7 +1374,7 @@ mod tests {
         w.typed('u');
         assert_eq!(w.selected().unwrap().name, "Manual");
         // So does a click on a row.
-        w.typed('\u{8}');
+        c.key(&mut w, Key::Other(0x08), Mods::default()); // Backspace is its key (brief 95)
         w.set_programs(listed(vec![entry("Manual", Target::Document), entry("Mangle", Target::Unknown)], false));
         assert!(w.selected().is_none());
         let r = w.rect(Part::Row(0)).unwrap();
@@ -1386,7 +1435,7 @@ mod tests {
         assert_eq!(c.key(&mut w, Key::Enter, Mods::default()), vec![Effect::Activate(Part::Open)]);
         assert_eq!(c.key(&mut w, Key::Escape, Mods::default()), vec![Effect::Activate(Part::TitleClose)]);
         // Backspace, the caret keys, Delete, paste.
-        w.typed('\u{8}');
+        c.key(&mut w, Key::Other(0x08), Mods::default()); // Backspace is its key (brief 95)
         assert_eq!((w.text.as_str(), w.found.len()), ("mi", 1));
         c.key(&mut w, Key::Home, Mods::default());
         c.key(&mut w, Key::Delete, Mods::default());

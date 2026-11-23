@@ -103,6 +103,11 @@ pub struct Dialog {
     /// Run: the command typed so far, and the caret's position in it (in characters).
     pub text: String,
     pub caret: usize,
+    /// The selection's other end (`None` or equal to `caret`: nothing selected; set by the field,
+    /// so a text put in from outside shows none), and how far the text is moved left so the caret
+    /// shows (brief 95: the field is `edit::Edit`, kept by `DialogWindow`).
+    pub anchor: Option<usize>,
+    pub scroll: std::cell::Cell<i32>,
     /// The caret blinks: drawn only while this is set.
     pub caret_on: bool,
     /// Shut Down: the chosen entry of `shut_down_choices`.
@@ -137,6 +142,8 @@ impl Dialog {
             era,
             text: String::new(),
             caret: 0,
+            anchor: None,
+            scroll: std::cell::Cell::new(0),
             caret_on: true,
             choice,
             list_open: false,
@@ -516,11 +523,15 @@ pub fn paint_dialog(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, dialog: 
                 let field = well(fb, r, c);
                 // PROVISIONAL for 98 (its screenshot has no text in the field): as in 95.
                 let x0 = field.x + if era == Era::Win2000 { 4 } else { 1 };
-                font.draw(fb, x0, field.y + 1, &dialog.text, c.text);
-                if dialog.caret_on && dialog.focus == Part::Command {
-                    let before: String = dialog.text.chars().take(dialog.caret).collect();
-                    fb.vline(x0 + font.measure(&before), field.y + 1, font.height, c.text);
-                }
+                // Windows' edit box (brief 95): the selection, the caret, the text clipped to the
+                // field and moved so the caret shows.
+                let mut edit = crate::edit::Edit::new(&dialog.text);
+                edit.caret = dialog.caret.min(edit.len());
+                edit.anchor = dialog.anchor.unwrap_or(dialog.caret).min(edit.len());
+                edit.scroll.set(dialog.scroll.get());
+                let focused = dialog.focus == Part::Command;
+                crate::edit::paint_line(fb, font, &edit, x0, field.y + 1, field.right() - x0 - 1, focused, dialog.caret_on, c);
+                dialog.scroll.set(edit.scroll.get());
             }
             if let Some(r) = layout.rect(Part::DropDown) {
                 drop_down(fb, r, c, dialog.pressed == Some(Part::DropDown));
@@ -677,6 +688,13 @@ pub struct DialogWindow {
     /// Run: the left edge of the command's first character and each character's width.
     field_x: i32,
     advances: Vec<i32>,
+    /// Run: the command field, Windows' edit box (brief 95); `dialog.text`, `caret` and `anchor`
+    /// are what it shows (`push`), and a command put there from outside is taken in (`pull`).
+    edit: crate::edit::Edit,
+    /// The text of the last Cut or Copy, for the clipboard.
+    copied: Option<String>,
+    /// Shift was held at the last press of the left button.
+    shift: bool,
 }
 
 impl DialogWindow {
@@ -692,23 +710,44 @@ impl DialogWindow {
             screen_bottom: i32::MAX,
             field_x: 0,
             advances: Vec::new(),
+            edit: crate::edit::Edit::default(),
+            copied: None,
+            shift: false,
         }
     }
 
-    /// Edits Run's command: `f` gets the text and the caret (in characters). An open list
-    /// follows what is typed: nothing is highlighted, and the first command that starts with
-    /// the text becomes its first row (as far as the list allows; else its first command).
-    fn edit(&mut self, f: impl FnOnce(&mut String, &mut usize)) {
-        let (mut text, mut caret) = (self.dialog.text.clone(), self.dialog.caret);
-        f(&mut text, &mut caret);
-        self.dialog.text = text;
-        self.dialog.caret = caret.min(self.dialog.text.chars().count());
+    /// The command field takes in a command put into `dialog.text` from outside (an earlier
+    /// command, a test), the caret where it was put.
+    fn pull(&mut self) {
+        if self.edit.text != self.dialog.text {
+            self.edit.set(&self.dialog.text);
+            self.edit.place(self.dialog.caret);
+        }
+        self.edit.scroll.set(self.dialog.scroll.get());
+    }
+
+    /// What the command field holds is shown; `changed`: its text changed, so an open list
+    /// follows what is typed: nothing is highlighted, and the first command that starts with the
+    /// text becomes its first row (as far as the list allows; else its first command).
+    fn push(&mut self, changed: bool) {
+        self.dialog.text = self.edit.text.clone();
+        self.dialog.caret = self.edit.caret;
+        self.dialog.anchor = Some(self.edit.anchor);
         self.dialog.caret_on = true;
+        if !changed {
+            return;
+        }
         self.history_at = None;
         if let (Some(_), Some(list)) = (self.list, self.run_list()) {
             let found = droplist::find_prefix(&self.history, &self.dialog.text);
             self.list = Some(Shown { top: found.unwrap_or(0).min(list.max_top(self.history.len())), selected: None });
         }
+    }
+
+    /// The character of the command nearest `x` (the window's pixels).
+    fn command_index(&self, x: i32) -> usize {
+        let advances = &self.advances;
+        self.edit.index_at(&|s: &str| advances.iter().take(s.chars().count()).sum(), x - self.field_x)
     }
 
     /// Where Run's list of earlier commands goes: under the field, as wide, one row per command
@@ -750,6 +789,7 @@ impl DialogWindow {
         if let Some(command) = self.history.get(i) {
             self.dialog.text = command.clone();
             self.dialog.caret = self.dialog.text.chars().count();
+            self.dialog.anchor = None;
             self.dialog.caret_on = true;
             self.history_at = Some(i);
         }
@@ -863,9 +903,6 @@ impl DialogWindow {
     }
 }
 
-fn byte_at(text: &str, chars: usize) -> usize {
-    text.char_indices().nth(chars).map_or(text.len(), |(i, _)| i)
-}
 
 impl kit::Form for DialogWindow {
     type Part = Part;
@@ -977,17 +1014,14 @@ impl kit::Form for DialogWindow {
                 self.step_choice(matches!(key, Key::Down | Key::Right));
             }
             Key::Up | Key::Down if command => self.step_history(key == Key::Down),
-            Key::Left if command => self.edit(|_, c| *c = c.saturating_sub(1)),
-            Key::Right if command => self.edit(|_, c| *c += 1),
-            Key::Home if command => self.edit(|_, c| *c = 0),
-            Key::End if command => self.edit(|t, c| *c = t.chars().count()),
-            Key::Delete if command => self.edit(|t, c| {
-                if *c < t.chars().count() {
-                    let at = byte_at(t, *c);
-                    t.remove(at);
-                }
-            }),
-            Key::Other(vk) if command && mods.ctrl && vk == u16::from(b'V') => return Some(vec![Effect::Paste]),
+            // Windows' edit box: caret keys, words, Backspace, Delete, Cut, Copy, Paste, Undo,
+            // Ctrl+A, Shift+F10 (brief 95).
+            _ if command => {
+                self.pull();
+                let done = kit::field_key(&mut self.edit, key, mods, &mut self.copied)?;
+                self.push(done.changed);
+                return Some(done.effects);
+            }
             _ => return None,
         }
         Some(Vec::new())
@@ -1004,19 +1038,11 @@ impl kit::Form for DialogWindow {
         if self.dialog.focus != Part::Command {
             return Vec::new();
         }
-        match ch {
-            '\u{8}' => self.edit(|t, c| {
-                if *c > 0 {
-                    *c -= 1;
-                    let at = byte_at(t, *c);
-                    t.remove(at);
-                }
-            }),
-            c if !c.is_control() => self.edit(|t, at| {
-                t.insert(byte_at(t, *at), c);
-                *at += 1;
-            }),
-            _ => {}
+        // Backspace comes as its key (`key`); its character, and every other control character,
+        // is left out here.
+        self.pull();
+        if self.edit.type_char(ch) {
+            self.push(true);
         }
         Vec::new()
     }
@@ -1066,20 +1092,14 @@ impl kit::Form for DialogWindow {
                 d.focus = Part::Option(i);
             }
             Some(Part::Command) => {
-                // The caret goes between the characters nearest the click.
-                let mut w = self.field_x;
-                let caret = self
-                    .advances
-                    .iter()
-                    .take_while(|&&a| {
-                        let before = w + a / 2 < x;
-                        w += a;
-                        before
-                    })
-                    .count();
+                // The caret goes between the characters nearest the click (Shift: the selection
+                // grows to there); held, a drag selects (brief 95).
                 d.focus = Part::Command;
-                d.caret = caret;
-                d.caret_on = true;
+                self.pull();
+                let at = self.command_index(x);
+                self.edit.press(at, self.shift);
+                self.push(false);
+                return Press::Grab(Part::Command, 0);
             }
             Some(p) if d.enabled(p) => {
                 d.list_open = false;
@@ -1118,9 +1138,63 @@ impl kit::Form for DialogWindow {
                     shown.top = list.scroll_bar(self.history.len()).dragged(value, y - grab_y);
                 }
             }
+            Part::Command => {
+                let at = self.command_index(x);
+                let was = (self.edit.caret, self.edit.anchor);
+                self.edit.drag(at);
+                self.push(false);
+                return was != (self.edit.caret, self.edit.anchor);
+            }
             _ => {}
         }
         before != (self.dialog.pressed, self.list)
+    }
+    /// The Run box's command: a double click selects a word (brief 95).
+    fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
+        if self.list.is_some() || self.hit(x, y) != Some(Part::Command) {
+            return None;
+        }
+        self.dialog.focus = Part::Command;
+        self.pull();
+        let at = self.command_index(x);
+        self.edit.double_click(at);
+        self.push(false);
+        Some(Vec::new())
+    }
+    /// The right button on the command opens its edit menu as it comes up (brief 95).
+    fn button(&mut self, button: kit::Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        if button != kit::Button::Right || self.list.is_some() || self.hit(x, y) != Some(Part::Command) {
+            return Vec::new();
+        }
+        self.dialog.focus = Part::Command;
+        if down { Vec::new() } else { vec![Effect::FieldMenu] }
+    }
+    fn mouse_mods(&mut self, mods: Mods) {
+        self.shift = mods.shift;
+    }
+    fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
+    }
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        if self.dialog.focus != Part::Command || self.dialog.kind != DialogKind::Run {
+            return None;
+        }
+        let mut edit = self.edit.clone();
+        if edit.text != self.dialog.text {
+            edit.set(&self.dialog.text);
+        }
+        Some(edit.menu(clipboard_has_text))
+    }
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        let r = self.layout.rect(Part::Command)?;
+        let caret: i32 = self.advances.iter().take(self.dialog.caret).sum();
+        Some((self.field_x + caret - self.dialog.scroll.get(), r.bottom()))
+    }
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        self.pull();
+        let done = kit::field_menu_chosen(&mut self.edit, index, &mut self.copied);
+        self.push(done.changed);
+        done.effects
     }
     /// Let go after a press on the drop-down button: on a row of the list, that command is
     /// taken and the list closes (Windows' press, drag and let go); elsewhere the list stays.
@@ -1167,12 +1241,13 @@ impl kit::Form for DialogWindow {
             _ => false,
         }
     }
+    /// Text from the clipboard in place of the selection: its first line, as Windows' one-line
+    /// edit box takes it (brief 95; before, every line was run together).
     fn paste(&mut self, text: &str) {
-        let paste: String = text.chars().filter(|c| !c.is_control()).collect();
-        self.edit(|t, c| {
-            t.insert_str(byte_at(t, *c), &paste);
-            *c += paste.chars().count();
-        });
+        self.pull();
+        if self.edit.paste(text) {
+            self.push(true);
+        }
     }
     fn has_caret(&self) -> bool {
         self.dialog.focus == Part::Command
@@ -1196,11 +1271,23 @@ mod tests {
         }
         assert_eq!((w.dialog.text.as_str(), w.dialog.caret), ("note", 4));
         c.key(&mut w, Key::Left, Mods::default());
+        // Backspace is its key; the character Windows sends after it does nothing more.
+        c.key(&mut w, Key::Other(0x08), Mods::default());
         w.typed('\u{8}');
         assert_eq!((w.dialog.text.as_str(), w.dialog.caret), ("noe", 2));
         assert_eq!(c.key(&mut w, Key::Other(u16::from(b'V')), Mods { ctrl: true, shift: false }), vec![Effect::Paste]);
-        w.paste("t\npad");
-        assert_eq!(w.dialog.text, "notpade");
+        // A paste takes the first line, as Windows' one-line edit box (brief 95).
+        w.paste("tepad\nsecond line");
+        assert_eq!(w.dialog.text, "notepade");
+        // Shift+Home selects to the start; Ctrl+X cuts it for the clipboard.
+        c.key(&mut w, Key::Home, Mods { ctrl: false, shift: true });
+        assert_eq!(c.key(&mut w, Key::Other(u16::from(b'X')), Mods { ctrl: true, shift: false }), vec![Effect::Copy]);
+        assert_eq!(w.take_copy().as_deref(), Some("notepad"));
+        assert_eq!(w.dialog.text, "e");
+        c.key(&mut w, Key::Other(u16::from(b'Z')), Mods { ctrl: true, shift: false });
+        assert_eq!(w.dialog.text, "notepade", "Undo");
+        let m = w.field_menu(true).expect("the command's menu");
+        assert!(!m.entries[0].disabled, "Undo again is there");
         // Up shows the newest command; Tab goes on to OK, then Cancel, Browse...
         c.key(&mut w, Key::Up, Mods::default());
         assert_eq!(w.dialog.text, "calc");

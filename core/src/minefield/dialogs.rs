@@ -45,96 +45,44 @@ pub enum Part {
     Button(usize),
 }
 
-/// A one-line text field with its label.
+/// A one-line text field with its label: Windows' edit box (`edit::Edit`, brief 95: keys,
+/// selection, words, Cut, Copy, Paste, Undo, its menu), with the field's limit and rule (the
+/// Custom Field's digits only).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextField {
     label: &'static str,
-    pub text: String,
-    /// The caret's place, in characters from the start.
-    caret: usize,
-    /// All of the text is selected (after Tab or the label's access key): typing replaces it.
-    selected: bool,
-    max: usize,
-    /// Only digits can be typed.
-    digits: bool,
+    pub edit: crate::edit::Edit,
     // Set by the layout.
     rect: Rect,
     label_at: (i32, i32),
     /// The width of each character (for clicks).
     advances: Vec<i32>,
-    scroll: i32,
 }
 
-fn byte_at(text: &str, chars: usize) -> usize {
-    text.char_indices().nth(chars).map_or(text.len(), |(i, _)| i)
+impl std::ops::Deref for TextField {
+    type Target = crate::edit::Edit;
+    fn deref(&self) -> &crate::edit::Edit {
+        &self.edit
+    }
+}
+
+impl std::ops::DerefMut for TextField {
+    fn deref_mut(&mut self) -> &mut crate::edit::Edit {
+        &mut self.edit
+    }
 }
 
 impl TextField {
     fn new(label: &'static str, text: &str, max: usize, digits: bool) -> TextField {
         let text: String = text.chars().take(max).collect();
-        let caret = text.chars().count();
+        let allow = if digits { crate::edit::Allow::Digits } else { crate::edit::Allow::Any };
         TextField {
             label,
-            text,
-            caret,
-            selected: false,
-            max,
-            digits,
+            edit: crate::edit::Edit::new(&text).with_rule(Some(max), allow),
             rect: Rect::default(),
             label_at: (0, 0),
             advances: Vec::new(),
-            scroll: 0,
         }
-    }
-
-    fn len(&self) -> usize {
-        self.text.chars().count()
-    }
-
-    fn select_all(&mut self) {
-        self.caret = self.len();
-        self.selected = !self.text.is_empty();
-    }
-
-    fn clear_selection(&mut self) -> bool {
-        if std::mem::take(&mut self.selected) {
-            self.text.clear();
-            self.caret = 0;
-            return true;
-        }
-        false
-    }
-
-    fn insert(&mut self, ch: char) {
-        if ch.is_control() || (self.digits && !ch.is_ascii_digit()) {
-            return;
-        }
-        self.clear_selection();
-        if self.len() < self.max {
-            let at = byte_at(&self.text, self.caret);
-            self.text.insert(at, ch);
-            self.caret += 1;
-        }
-    }
-
-    fn backspace(&mut self) {
-        if !self.clear_selection() && self.caret > 0 {
-            self.caret -= 1;
-            let at = byte_at(&self.text, self.caret);
-            self.text.remove(at);
-        }
-    }
-
-    fn delete(&mut self) {
-        if !self.clear_selection() && self.caret < self.len() {
-            let at = byte_at(&self.text, self.caret);
-            self.text.remove(at);
-        }
-    }
-
-    fn move_to(&mut self, caret: usize) {
-        self.selected = false;
-        self.caret = caret.min(self.len());
     }
 
     /// The left edge of the text.
@@ -142,18 +90,10 @@ impl TextField {
         self.rect.x + 3
     }
 
-    /// A click at `x`: the caret goes between the characters nearest to it.
-    fn click(&mut self, x: i32) {
-        let mut edge = self.text_x() - self.scroll;
-        let mut caret = 0;
-        for &advance in &self.advances {
-            if x < edge + advance / 2 {
-                break;
-            }
-            edge += advance;
-            caret += 1;
-        }
-        self.move_to(caret);
+    /// The character nearest `x` (the sheet's pixels).
+    fn index_at(&self, x: i32) -> usize {
+        let advances = &self.advances;
+        self.edit.index_at(&|s: &str| advances.iter().take(s.chars().count()).sum(), x - self.text_x())
     }
 }
 
@@ -193,6 +133,10 @@ pub struct Sheet {
     show_keys: bool,
     caret_on: bool,
     context_help: bool,
+    /// The text of the last Cut or Copy in a field, for the clipboard (brief 95).
+    copied: Option<String>,
+    /// Shift was held at the last press of the left button.
+    shift: bool,
     // Set by the layout.
     size: (i32, i32),
     lines: Vec<Line>,
@@ -245,6 +189,8 @@ impl Sheet {
             show_keys: era != Era::Win2000,
             caret_on: true,
             context_help: false,
+            copied: None,
+            shift: false,
             size: (0, 0),
             lines: Vec::new(),
             close: Rect::default(),
@@ -452,11 +398,6 @@ impl Sheet {
         };
         for field in &mut self.fields {
             field.advances = field.text.chars().map(|c| font.glyph(c).advance).collect();
-            let caret_x: i32 = field.advances.iter().take(field.caret).sum();
-            let available = field.rect.w - 7;
-            let text_width: i32 = field.advances.iter().sum();
-            field.scroll = field.scroll.min((text_width - available).max(0))
-                .clamp((caret_x - available).max(0), caret_x);
         }
         self.lines = lines;
         self.size = (width, height);
@@ -531,16 +472,9 @@ impl kit::Form for Sheet {
             let inside = dialog::well(fb, field.rect, c);
             let mut edit = Framebuffer::new(inside.w - 2, font.height, crate::theme::rgb(0xFFFFFF));
             let focused = self.focus == Part::Field(i);
-            if focused && field.selected {
-                edit.fill(Rect::new(-field.scroll, 0, font.measure(&field.text), font.height), c.menu_highlight);
-                font.draw(&mut edit, -field.scroll, 0, &field.text, c.menu_highlight_text);
-            } else {
-                font.draw(&mut edit, -field.scroll, 0, &field.text, c.text);
-            }
-            if focused && self.caret_on {
-                let caret_x: i32 = field.advances.iter().take(field.caret).sum();
-                edit.vline(caret_x - field.scroll, 0, font.height, c.text);
-            }
+            // Windows' edit box (brief 95): the selection, the caret, moved so the caret shows
+            // within the field's room (its width less 7, as before).
+            crate::edit::paint_line(&mut edit, font, &field.edit, 0, 0, field.rect.w - 6, focused, self.caret_on, c);
             fb.blit(&edit, field.text_x(), inside.y + 1);
         }
         // The default button is framed, unless another button has the focus.
@@ -606,7 +540,8 @@ impl kit::Form for Sheet {
     fn set_focus(&mut self, part: Part) {
         self.focus = part;
         for field in &mut self.fields {
-            field.selected = false;
+            let c = field.caret;
+            field.place(c);
         }
         if let Some(field) = self.focused_field() {
             field.select_all();
@@ -644,17 +579,17 @@ impl kit::Form for Sheet {
         }
         let buttons = self.buttons.len();
         match (self.focus, key) {
-            (Part::Field(_), Key::Other(vk)) if mods.ctrl && vk == u16::from(b'V') => return Some(vec![Effect::Paste]),
-            (Part::Field(_), Key::Left | Key::Right | Key::Home | Key::End | Key::Delete) => {
+            // Windows' edit box: caret keys, words, Backspace, Delete, Cut, Copy, Paste, Undo,
+            // Ctrl+A, Shift+F10 (brief 95).
+            (Part::Field(_), _) if !matches!(key, Key::Up | Key::Down | Key::Enter | Key::Escape | Key::Tab) => {
+                let mut copied = None;
                 let field = self.focused_field()?;
-                match key {
-                    Key::Left => field.move_to(field.caret.saturating_sub(1)),
-                    Key::Right => field.move_to(field.caret + 1),
-                    Key::Home => field.move_to(0),
-                    Key::End => field.move_to(usize::MAX),
-                    _ => field.delete(),
-                }
+                let done = kit::field_key(&mut field.edit, key, mods, &mut copied)?;
                 self.caret_on = true;
+                if copied.is_some() {
+                    self.copied = copied;
+                }
+                return Some(done.effects);
             }
             // The arrow keys go from button to button.
             (Part::Button(i), Key::Left | Key::Up) => self.focus = Part::Button((i + buttons - 1) % buttons),
@@ -665,12 +600,9 @@ impl kit::Form for Sheet {
     }
     fn typed(&mut self, ch: char) -> Vec<Effect<Part>> {
         match self.focused_field() {
+            // Backspace comes as its key (`key`); its character is left out here.
             Some(field) => {
-                if ch == '\u{8}' {
-                    field.backspace();
-                } else {
-                    field.insert(ch);
-                }
+                field.type_char(ch);
                 self.caret_on = true;
                 Vec::new()
             }
@@ -702,12 +634,18 @@ impl kit::Form for Sheet {
         match part {
             Some(Part::Field(i)) => {
                 self.focus = Part::Field(i);
-                for field in &mut self.fields {
-                    field.selected = false;
+                for (k, field) in self.fields.iter_mut().enumerate() {
+                    if k != i {
+                        let c = field.caret;
+                        field.place(c);
+                    }
                 }
-                self.fields[i].click(x);
+                // The caret there (Shift: the selection grows); held, a drag selects (brief 95).
+                let at = self.fields[i].index_at(x);
+                let shift = self.shift;
+                self.fields[i].press(at, shift);
                 self.caret_on = true;
-                Press::Done
+                Press::Grab(Part::Field(i), 0)
             }
             Some(Part::Button(i)) => {
                 self.set_focus(Part::Button(i));
@@ -727,12 +665,65 @@ impl kit::Form for Sheet {
             vec![Effect::Activate(part)]
         }
     }
+    /// Text from the clipboard: its first line, without what the field refuses, to its limit.
     fn paste(&mut self, text: &str) {
         if let Some(field) = self.focused_field() {
-            for ch in text.chars() {
-                field.insert(ch);
-            }
+            field.paste(text);
         }
+    }
+    fn drag(&mut self, part: Part, _grab_y: i32, _value: i32, x: i32, _y: i32) -> bool {
+        let Part::Field(i) = part else { return false };
+        let Some(field) = self.fields.get_mut(i) else { return false };
+        let at = field.index_at(x);
+        let was = (field.caret, field.anchor);
+        field.drag(at);
+        was != (field.caret, field.anchor)
+    }
+    fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
+        let Some(Part::Field(i)) = self.hit(x, y) else { return None };
+        self.focus = Part::Field(i);
+        let field = self.fields.get_mut(i)?;
+        let at = field.index_at(x);
+        field.double_click(at);
+        self.caret_on = true;
+        Some(Vec::new())
+    }
+    /// The right button on a field: its edit menu as it comes up (brief 95).
+    fn button(&mut self, button: kit::Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        match self.hit(x, y) {
+            Some(Part::Field(i)) if button == kit::Button::Right => {
+                if self.focus != Part::Field(i) {
+                    self.set_focus(Part::Field(i));
+                }
+                if down { Vec::new() } else { vec![Effect::FieldMenu] }
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn mouse_mods(&mut self, mods: Mods) {
+        self.shift = mods.shift;
+    }
+    fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
+    }
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        let Part::Field(i) = self.focus else { return None };
+        self.fields.get(i).map(|f| f.menu(clipboard_has_text))
+    }
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        let Part::Field(i) = self.focus else { return None };
+        let f = self.fields.get(i)?;
+        let caret: i32 = f.advances.iter().take(f.caret).sum();
+        Some((f.text_x() + caret - f.scroll.get(), f.rect.bottom()))
+    }
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        let mut copied = None;
+        let Some(field) = self.focused_field() else { return Vec::new() };
+        let done = kit::field_menu_chosen(&mut field.edit, index, &mut copied);
+        if copied.is_some() {
+            self.copied = copied;
+        }
+        done.effects
     }
     fn has_caret(&self) -> bool {
         matches!(self.focus, Part::Field(_))
@@ -783,8 +774,17 @@ mod tests {
         assert_eq!(s.fields[1].text, "234");
         // Alt+M goes to Mines; Backspace removes the selection
         c.access(&mut s, 'm');
+        c.key(&mut s, Key::Other(0x08), Mods::default()); // Backspace is its key (brief 95)
         s.typed('\u{8}');
         assert_eq!((s.focus(), s.fields[2].text.as_str()), (Part::Field(2), ""));
+        // Undo brings it back; a paste keeps the digits only, up to the limit.
+        c.key(&mut s, Key::Other(u16::from(b'Z')), Mods { ctrl: true, shift: false });
+        assert_eq!(s.fields[2].text, "10");
+        s.fields[2].select_all();
+        s.paste("4a5b6c7\n8");
+        assert_eq!(s.fields[2].text, "456");
+        s.fields[2].select_all();
+        c.key(&mut s, Key::Delete, Mods::default());
         // 12 high, 234 wide (the screen shows 30), no mines: brought within the limits.
         assert_eq!(s.custom_field(), Field { width: 30, height: 12, mines: 10 });
         assert_eq!(c.key(&mut s, Key::Enter, Mods::default()), vec![Effect::Activate(Part::Button(0))]);

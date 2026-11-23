@@ -408,6 +408,7 @@ fn browse() {
     kit::update::<DialogHost>(|h| {
         let d = &mut h.form.dialog;
         d.caret = text.chars().count();
+        d.anchor = None;
         d.text = text;
         d.focus = Part::Command;
     });
