@@ -269,6 +269,9 @@ pub struct App {
     /// (`tasks::still_left`): Windows did not let the desktop come forward, but the person left
     /// that program, so its button is not drawn pressed and a click on it brings it forward.
     left_for_desktop: Option<u64>,
+    /// Where each long menu was last scrolled to, by `popup::scroll_key` (while the bar runs:
+    /// Windows 98 reopened a menu where it was left, survey part 1).
+    pub menu_scroll: HashMap<String, i32>,
     /// The program window in front as the left press on a task button saw it (`tasks::front_seen`),
     /// and the one Windows had in front at that press, for the click at its release.
     press_front: Option<(Option<u64>, Option<u64>)>,
@@ -640,6 +643,7 @@ pub fn run() -> u32 {
             active: None,
             front: 0,
             left_for_desktop: None,
+            menu_scroll: HashMap::new(),
             press_front: None,
             layout: None,
             pressed: None,

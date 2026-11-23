@@ -15,7 +15,8 @@ use bevel_core::bar_menu::{self, BarCommand, BarEntry};
 use bevel_core::fb::{Framebuffer, Icon, Rect};
 use bevel_core::icons;
 use bevel_core::layout::{place_popup, place_start_menu, place_submenu};
-use bevel_core::paint::{self, EntryKind, Menu, MenuEntry, MenuLayout, MenuStyle};
+use bevel_core::paint::{self, EntryKind, Long, Menu, MenuEntry, MenuLayout, MenuStyle, Strip};
+use bevel_core::start::LongKind;
 use bevel_core::programs::{Entry, Folder, Item};
 use bevel_core::scale::Scale;
 use bevel_core::start::{self, DocumentsEntry, StartEntry};
@@ -50,6 +51,8 @@ pub const MENU_CLASS: &str = "Bevel95Menu";
 /// Hovering a submenu entry this long opens it (Windows' default menu show delay is 400).
 const HOVER_MS: u32 = 300;
 const HOVER_TIMER: usize = 1;
+/// A scrolling menu steps while the pointer rests on one of its strips (`paint::scroll_pace`).
+const SCROLL_TIMER: usize = 2;
 
 /// What a menu is for, which decides what choosing an entry does.
 #[derive(Clone, Debug)]
@@ -382,9 +385,18 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
     close(false);
     // SAFETY: a plain query.
     let previous = unsafe { GetForegroundWindow() };
-    let Some((layout, scale, screen)) = measure(&menu, style) else {
+    let (long, offset) = long_of(&kind);
+    let Some((mut layout, scale, screen)) = measure(&menu, style, Some((long, offset))) else {
         return;
     };
+    // Columns wider than the whole screen: the menu scrolls instead (brief 91).
+    if layout.columns.len() > 1 && style != MenuStyle::Popup && scale.len(layout.width) > screen.w {
+        let era = with_app(|app| app.era).unwrap_or(Era::Win95);
+        if let Some((scrolling, ..)) = measure(&menu, style, Some((start::scroll_instead(era), offset))) {
+            log(&format!("a menu of {} entries did not fit the screen in columns: it scrolls", menu.entries.len()));
+            layout = scrolling;
+        }
+    }
     let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (left, top) = match at {
         At::Point(x, y) => place_popup(x, y, w, h, screen),
@@ -506,9 +518,11 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
     let Some((kind, mut menu, style)) = submenu_of(level, index) else {
         return;
     };
-    let Some((parent_rect, entry_rect, rule, frame, bar)) = with_app(|app| {
+    let Some((parent_rect, entry_rect, rule, frame, bar, in_columns)) = with_app(|app| {
         let parent = app.menus.get(level)?;
-        let e = *parent.layout.rects.get(index)?;
+        // Where the entry shows now (a scrolling menu's entries move).
+        let e = parent.layout.shown_rect(index)?;
+        let in_columns = parent.layout.columns.len() > 1;
         let s = app.scale;
         let r = s.rect(e);
         let entry = Rect::new(parent.rect.x + r.x, parent.rect.y + r.y, r.w, r.h);
@@ -517,7 +531,7 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
             _ => (app.theme.start_menu.submenu, app.theme.start_menu.frame),
         };
         let rule = SubmenuPlacement { overlap: s.len(rule.overlap), margin_bottom: s.len(rule.margin_bottom), ..rule };
-        Some((parent.rect, entry, rule, s.len(frame), BAR_HWND.load(Ordering::SeqCst) as HWND))
+        Some((parent.rect, entry, rule, s.len(frame), BAR_HWND.load(Ordering::SeqCst) as HWND, in_columns))
     })
     .flatten() else {
         return;
@@ -525,12 +539,36 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
     if highlight_first {
         menu.hover = first_entry(&menu, style, true);
     }
-    let Some((layout, scale, screen)) = measure(&menu, style) else {
+    // A submenu of a menu in columns opens beside the column of its own entry (survey part 1, 2).
+    let parent_rect = if in_columns {
+        Rect::new(entry_rect.x - frame, parent_rect.y, entry_rect.w + 2 * frame, parent_rect.h)
+    } else {
+        parent_rect
+    };
+    let (long, offset) = long_of(&kind);
+    let Some((mut layout, scale, screen)) = measure(&menu, style, Some((long, offset))) else {
         return;
     };
+    let mut place = None;
+    if layout.columns.len() > 1 && style != MenuStyle::Popup {
+        // Columns: beside the parent, or (95) at the screen's left edge; where even that does not
+        // fit, the menu scrolls instead (brief 91).
+        let beside = parent_rect.right() - rule.overlap;
+        let era = with_app(|app| app.era).unwrap_or(bevel_core::theme::Era::Win95);
+        match start::place_columns(era, beside, scale.len(layout.width), screen.x, screen.w) {
+            Some(x) => place = Some(x),
+            None => match measure(&menu, style, Some((start::scroll_instead(era), offset))) {
+                Some((scrolling, ..)) => {
+                    log(&format!("a menu of {} entries did not fit the screen in columns: it scrolls", menu.entries.len()));
+                    layout = scrolling;
+                }
+                None => return,
+            },
+        }
+    }
     let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (left, top) = place_submenu(parent_rect, entry_rect, w, h, frame, rule, screen);
-    let rect = Rect::new(left, top, w, h);
+    let rect = Rect::new(place.unwrap_or(left), top, w, h);
     let Some(hwnd) = create(bar, rect, true) else {
         return;
     };
@@ -546,18 +584,53 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
         tracking: false,
     };
     with_app(|app| app.menus.push(popup));
+    // Opened by a key on its first entry: a scrolling menu shows it.
+    if highlight_first {
+        reveal_hover(level + 1);
+    }
     // SAFETY: our own window, shown without taking the focus from the root menu.
     unsafe { ShowWindow(hwnd, SW_SHOWNA) };
 }
 
-/// A menu's layout at 1×, the scale, and the main screen.
-fn measure(menu: &Menu, style: MenuStyle) -> Option<(MenuLayout, Scale, Rect)> {
+/// A menu's layout at 1×, the scale, and the main screen. A menu of the Start menu's family
+/// (not Windows' own popup menus, which are never that long) longer than the screen goes on as
+/// `long` says (`start::long_rule`, brief 91), scrolled to `offset` if it scrolls.
+fn measure(menu: &Menu, style: MenuStyle, long: Option<(Long, i32)>) -> Option<(MenuLayout, Scale, Rect)> {
     with_app(|app| {
         let m = app.monitor;
         let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
-        let layout = paint::layout_menu(app.theme, &app.fonts(), menu, style, app.scale.old_fit(screen.h));
+        let h = app.scale.old_fit(screen.h);
+        let layout = match long.filter(|_| style != MenuStyle::Popup) {
+            Some((long, offset)) => paint::layout_long_menu(app.theme, &app.fonts(), menu, style, h, long, offset),
+            None => paint::layout_menu(app.theme, &app.fonts(), menu, style, h),
+        };
         (layout, app.scale, screen)
     })
+}
+
+/// Which of the Start menu's long menus `kind` is (`start::long_rule`).
+fn long_kind(kind: &Kind) -> LongKind {
+    match kind {
+        Kind::Folder(Tree::Programs, _) => LongKind::Programs,
+        Kind::Folder(Tree::Favorites, _) => LongKind::Favorites,
+        _ => LongKind::Other,
+    }
+}
+
+/// How `kind` goes on when it is longer than the screen in the bar's look, and where it was last
+/// scrolled to (Windows 98 reopened a menu where it was left: survey part 1, 3).
+fn long_of(kind: &Kind) -> (Long, i32) {
+    with_app(|app| {
+        let long = start::long_rule(app.era, long_kind(kind), app.start_options.scroll_programs);
+        (long, app.menu_scroll.get(&scroll_key(kind)).copied().unwrap_or(0))
+    })
+    .unwrap_or((Long::Columns, 0))
+}
+
+/// The name under which a menu's scroll place is remembered while the bar runs (which menu, by
+/// its place in the tree; never shown or logged).
+fn scroll_key(kind: &Kind) -> String {
+    format!("{kind:?}")
 }
 
 fn create(owner: HWND, rect: Rect, submenu: bool) -> Option<HWND> {
@@ -964,10 +1037,120 @@ fn mouse_move(hwnd: HWND, x: i32, y: i32) {
         // SAFETY: a correctly sized struct for our own window.
         unsafe { TrackMouseEvent(&mut track) };
     }
+    // A scrolling menu's strip under the pointer: it steps after a moment, and on while the
+    // pointer rests there (98 draws the strip sunken meanwhile).
+    let strip = strip_at(hwnd, x, y);
+    if set_strip(level, strip) {
+        match strip {
+            Some(_) => {
+                let first = with_app(|app| app.menus[level].layout.scroll.map(|s| paint::scroll_pace(s.flat).0)).flatten();
+                // SAFETY: a timer on our own window.
+                unsafe { SetTimer(hwnd, SCROLL_TIMER, first.unwrap_or(150), None) };
+            }
+            // SAFETY: our own window's timer.
+            None => unsafe {
+                KillTimer(hwnd, SCROLL_TIMER);
+            },
+        }
+    }
     if set_hover(level, entry_at(hwnd, x, y)) {
         // Hovering decides after a moment whether a submenu opens or closes.
         // SAFETY: a timer on our own window.
         unsafe { SetTimer(hwnd, HOVER_TIMER, HOVER_MS, None) };
+    }
+}
+
+/// The strip of a scrolling menu under a point in its window (screen pixels from its corner).
+fn strip_at(hwnd: HWND, x: i32, y: i32) -> Option<Strip> {
+    with_app(|app| {
+        let popup = app.menus.iter().find(|p| p.hwnd == hwnd)?;
+        let (s, l) = (app.scale, &popup.layout);
+        l.strip_at(s.old_in(x, l.width), s.old_in(y, l.height))
+    })
+    .flatten()
+}
+
+/// Marks `strip` (or none) as the one under the pointer in the menu at `level`. True if that
+/// changed it.
+fn set_strip(level: usize, strip: Option<Strip>) -> bool {
+    let changed = with_app(|app| {
+        let popup = app.menus.get_mut(level)?;
+        let scroll = popup.layout.scroll.as_mut()?;
+        (scroll.hot != strip).then(|| {
+            scroll.hot = strip;
+            popup.hwnd
+        })
+    })
+    .flatten();
+    if let Some(hwnd) = changed {
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+    changed.is_some()
+}
+
+/// The pointer has rested on a strip for a step: the menu scrolls one step toward it (a submenu it
+/// had open closes); at the end the strip goes, and so does the timer. The place is remembered
+/// while the bar runs, so the menu reopens where it was left (98, measured).
+fn scroll_step(hwnd: HWND) {
+    let Some(level) = level_of(hwnd) else {
+        // SAFETY: our own window's timer.
+        unsafe { KillTimer(hwnd, SCROLL_TIMER) };
+        return;
+    };
+    let stepped = with_app(|app| {
+        let popup = app.menus.get_mut(level)?;
+        let scroll = popup.layout.scroll.as_mut()?;
+        let strip = scroll.hot?;
+        let moved = scroll.step(strip, paint::scroll_step(scroll));
+        if !scroll.shows(strip) {
+            scroll.hot = None;
+        }
+        let (offset, repeat, going) = (scroll.offset, paint::scroll_pace(scroll.flat).1, scroll.hot.is_some());
+        let key = scroll_key(&popup.kind);
+        app.menu_scroll.insert(key, offset);
+        Some((moved, repeat, going))
+    })
+    .flatten();
+    let Some((moved, repeat, going)) = stepped else {
+        // SAFETY: our own window's timer.
+        unsafe { KillTimer(hwnd, SCROLL_TIMER) };
+        return;
+    };
+    if moved {
+        close_from(level + 1);
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+    // SAFETY: our own window's timer (set anew: the pace after the first step).
+    unsafe {
+        if going {
+            SetTimer(hwnd, SCROLL_TIMER, repeat, None);
+        } else {
+            KillTimer(hwnd, SCROLL_TIMER);
+        }
+    }
+}
+
+/// The highlighted entry of the menu at `level` is brought into view (a key chose it), and the
+/// place remembered.
+fn reveal_hover(level: usize) {
+    let hwnd = with_app(|app| {
+        let popup = app.menus.get_mut(level)?;
+        let i = popup.menu.hover?;
+        if !popup.layout.reveal(i) {
+            return None;
+        }
+        let offset = popup.layout.scroll.map_or(0, |s| s.offset);
+        let key = scroll_key(&popup.kind);
+        app.menu_scroll.insert(key, offset);
+        Some(app.menus[level].hwnd)
+    })
+    .flatten();
+    if let Some(hwnd) = hwnd {
+        close_from(level + 1);
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(hwnd, null(), 0) };
     }
 }
 
@@ -1026,12 +1209,27 @@ fn key(vk: u16) {
     let hover = with_app(|app| app.menus[level].menu.hover).flatten();
     let is_submenu =
         |i: usize| with_app(|app| app.menus[level].menu.entries[i].kind == EntryKind::Submenu).unwrap_or(false);
+    // Windows 95's columns: Left and Right go to the same row of the column beside (survey part
+    // 1, 3); Right on a folder still opens it, Left in the first column goes back.
+    let beside = |toward: i32| {
+        with_app(|app| {
+            let popup = &app.menus[level];
+            let era_95 = app.era == Era::Win95 && popup.style != MenuStyle::Popup && popup.layout.columns.len() > 1;
+            era_95.then(|| hover.and_then(|i| popup.layout.beside(i, toward))).flatten()
+        })
+        .flatten()
+    };
     match vk {
         VK_ESCAPE if level == 0 => close(true),
+        VK_LEFT if beside(-1).is_some() => {
+            set_hover(level, beside(-1));
+        }
         VK_ESCAPE | VK_LEFT if level > 0 => close_from(level),
         VK_RIGHT => {
             if let Some(i) = hover.filter(|&i| is_submenu(i)) {
                 open_child(level, i, true);
+            } else if let Some(next) = beside(1) {
+                set_hover(level, Some(next));
             }
         }
         VK_RETURN => {
@@ -1056,6 +1254,9 @@ fn key(vk: u16) {
             .flatten();
             if next.is_some() {
                 set_hover(level, next);
+                // A scrolling menu brings the entry into view (98: just above the bottom strip;
+                // wrapping round jumps to the other end).
+                reveal_hover(level);
             }
         }
         _ => {}
@@ -1093,6 +1294,7 @@ fn access_key(ch: char) {
         _ => {
             let next = matches.iter().find(|&&i| hover.is_some_and(|h| i > h)).unwrap_or(&matches[0]);
             set_hover(level, Some(*next));
+            reveal_hover(level);
         }
     }
 }
@@ -1139,10 +1341,19 @@ pub unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lp
             })
             .flatten();
             set_hover(level, keep);
+            // The pointer left a strip: the scrolling stops.
+            if set_strip(level, None) {
+                // SAFETY: our own window's timer.
+                unsafe { KillTimer(hwnd, SCROLL_TIMER) };
+            }
             return 0;
         }
         WM_TIMER if wparam == HOVER_TIMER => {
             hover_settled(hwnd);
+            return 0;
+        }
+        WM_TIMER if wparam == SCROLL_TIMER => {
+            scroll_step(hwnd);
             return 0;
         }
         WM_LBUTTONUP => {
