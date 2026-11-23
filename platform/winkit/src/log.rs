@@ -432,6 +432,26 @@ pub fn log(message: &str) {
     }
 }
 
+/// Whether the `n`th time of something is worth a line: the first three, then the 10th, the
+/// 100th, the 1000th and so on, so a path that repeats shows as a growing count and cannot
+/// flood the log.
+pub fn worth_a_line(n: u32) -> bool {
+    let mut rest = n;
+    while rest >= 10 && rest.is_multiple_of(10) {
+        rest /= 10;
+    }
+    n <= 3 || rest == 1
+}
+
+/// Counts one more time of the path `counter` stands for and writes `line` with the count
+/// ("... (time n)") when that is worth a line (`worth_a_line`). `line` is Bevel95's own words.
+pub fn counted(counter: &std::sync::atomic::AtomicU32, line: &str) {
+    let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if worth_a_line(n) {
+        log(&format!("{line} (time {n})"));
+    }
+}
+
 // ---- No private text in the log ----
 //
 // People attach bevel95.log to their reports, so it holds no text that came from outside

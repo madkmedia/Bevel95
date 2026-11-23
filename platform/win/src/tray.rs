@@ -312,7 +312,7 @@ pub fn apply(icons: &mut Vec<TrayIcon>, d: &NotifyData, picture: impl FnOnce(isi
 thread_local! {
     static ICONS: RefCell<Vec<TrayIcon>> = const { RefCell::new(Vec::new()) };
     /// The last button press on an icon, to tell a double-click.
-    static LAST_PRESS: RefCell<Option<(Key, Button, Instant, POINT)>> = const { RefCell::new(None) };
+    static LAST_PRESS: RefCell<Option<(Key, Button, u32, POINT)>> = const { RefCell::new(None) };
 }
 
 /// Called when the icons shown change (the bar repaints).
@@ -577,14 +577,20 @@ pub fn mouse_down(key: Key, button: Button, at: POINT) {
         }
     }
     let double = LAST_PRESS.with(|last| {
-        let now = Instant::now();
-        // SAFETY: plain queries.
-        let (time, dx, dy) =
-            unsafe { (GetDoubleClickTime(), GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK)) };
-        let double = last.borrow().is_some_and(|(k, b, when, p): (Key, Button, Instant, POINT)| {
+        // When the press happened (its message time), not when the bar got to it (brief 90).
+        // SAFETY: plain queries (called while the bar handles the press).
+        let (now, time, dx, dy) = unsafe {
+            (
+                windows_sys::Win32::UI::WindowsAndMessaging::GetMessageTime() as u32,
+                GetDoubleClickTime(),
+                GetSystemMetrics(SM_CXDOUBLECLK),
+                GetSystemMetrics(SM_CYDOUBLECLK),
+            )
+        };
+        let double = last.borrow().is_some_and(|(k, b, when, p): (Key, Button, u32, POINT)| {
             k == key
                 && b == button
-                && now.duration_since(when).as_millis() <= u128::from(time)
+                && now.wrapping_sub(when) <= time
                 && (p.x - at.x).abs() <= dx / 2
                 && (p.y - at.y).abs() <= dy / 2
         });
@@ -608,6 +614,16 @@ pub fn mouse_up(key: Key, button: Button, at: POINT) {
     let Some(icon) = find(key) else {
         return;
     };
+    // Its program may come to the front for this release too (most open their window or menu
+    // at the release, which is new input; the leave given at the press may be spent: brief 90).
+    let mut pid = 0;
+    // SAFETY: plain Win32 calls with a valid out-pointer.
+    unsafe {
+        GetWindowThreadProcessId(icon.hwnd as HWND, &mut pid);
+        if pid != 0 {
+            AllowSetForegroundWindow(pid);
+        }
+    }
     match button {
         Button::Left => {
             notify(&icon, WM_LBUTTONUP, at);

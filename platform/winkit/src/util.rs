@@ -14,8 +14,15 @@ use crate::log::log;
 /// not get the last input (the Windows key went to the app in front), so if it says no,
 /// our input is joined to that app's for a moment, which Windows allows.
 pub fn take_focus(hwnd: HWND) {
-    if bring_forward(hwnd) == Forward::Refused {
-        log("SetForegroundWindow failed: keys and clicking elsewhere may not work in this window");
+    match bring_forward(hwnd) {
+        Forward::Refused => log("SetForegroundWindow failed: keys and clicking elsewhere may not work in this window"),
+        // Counted (brief 90): a window that came forward only this roundabout way could, where
+        // the joining fails, open behind.
+        Forward::Joined => {
+            static JOINED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            crate::log::counted(&JOINED, "a window came forward only with the input joined");
+        }
+        Forward::Direct => {}
     }
 }
 

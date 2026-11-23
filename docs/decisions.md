@@ -2472,6 +2472,75 @@ it, but write nothing).
   - The shell's fullscreen lines now name the window's class.
   - Kept: it never takes the focus, nothing needs restoring after a crash, it is not topmost
     (put back if it becomes so), it stays under every other window.
+- **Clicks that did nothing the first time** (2026-11-24, brief 90, folded into 0.1.5; the
+  owner: "a click on say a desktop icon or window etc, some part of bevel95 doesn't register,
+  and I need a second click", "usually after another window has focus and I click straight to
+  interface or when switching between app and desktop"). It could not be made to happen on
+  demand, so no single cause was assumed: every candidate of the read-only search
+  (`private/review/2026-11-23-lost-clicks.md`, two passes) that held in the code was repaired,
+  and each path by which a press can still do nothing writes a counted line (Bevel95's own
+  words only; the first three, then the 10th, 100th, ...: `winkit::log::counted`).
+  - **A task button decides from the window in front at the press** (`tasks::front_seen`):
+    read before the press closes one of Bevel95's menus or the volume control (closing one
+    handed the front to the program under it, whose button's click then minimized it). One of
+    the bar's own windows without a button in front (a menu, the volume control, the classic
+    desktop, Quick Search) counts as no program's window: the button's window comes forward.
+    So does a press on the classic desktop that Windows did not let come forward (the program
+    stayed in front though the person had left it): until another window comes forward
+    (`tasks::still_left`, on the tick) that program's button is drawn raised and its click
+    brings it forward. Known and left: if the person then clicks back into that same program,
+    the bar cannot tell, and the first click on its button brings it forward (nothing visible)
+    rather than minimizing it. Log: "task buttons: a click brought its window forward; it was
+    in front, but a menu of Bevel95's or the desktop was the last thing pressed".
+  - **A desktop double-click on a folder brings its window forward**: the start that hands the
+    folder to the running folder program gives that program leave to come forward first
+    (`AllowSetForegroundWindow`, as the Help viewer's start already did). A window that came
+    forward only with the input joined is counted in every program ("a window came forward only
+    with the input joined", `util::take_focus`).
+  - **The classic desktop reads its icons again without dropping a click**: new icons that come
+    while a press is held, or while the second press of a double-click may still come (Windows'
+    double-click time after a left press), wait (`items_wait`, a timer of 100 ms or the rest of
+    that time) and are taken in after it; the second press is matched by the icon's id as
+    before, and now the icons cannot move between the two presses. A rebuild (look, size,
+    screens, wallpaper, work area) keeps the first press of a double-click and stops a drag
+    timer that ran. Logs: "the icons were read again during a press or a double-click; taken in
+    after it", "a second click came in time but on another icon than the first", and "Windows
+    did not let the desktop come forward at a click; class ... kept the front", now counted every
+    time (it was logged once per run).
+  - **Folder windows, as the Reference PCs did** (survey part 4, `private/probes/start-long`):
+    the click that brings a folder window forward (Windows' WA_CLICKACTIVE, told to the form by
+    the kit: `Form::activated_by_click`) selects but arms no slow-click rename; a slow second
+    click in the window already in front does, as does the first click after Alt+Tab. A press on
+    another file while a name is being renamed ends the rename and, once the name is taken,
+    selects that file (`FolderWindow::click_after_rename`); a double-click on it opens it. If a
+    question comes up instead (a name Windows refuses, the extension warning), the press goes no
+    further, as before, and the log says so. The desktop already did both.
+  - **A task button let go in its own place is a click**, also when the pointer went past the
+    drag threshold and back (`ButtonPress::release` compares the order: only a button in another
+    place is a drag's drop). Dragging task buttons is Bevel95's own; the old Windows had none, and
+    any release on the button was a click.
+  - **The bar's tooltip lets presses through** to whatever is under it, any program's: it is now a
+    layered, transparent window (`WS_EX_LAYERED | WS_EX_TRANSPARENT`, fully opaque by
+    `SetLayeredWindowAttributes`), which Windows' hit test passes by; `HTTRANSPARENT` alone passed
+    a press on only to windows of the bar's own thread. Proven by `tip::tests` with two windows of
+    the test's own (one on another thread under the tooltip's look-alike: `WindowFromPoint` finds
+    it; the old style caught it). A press that still lands on it is logged.
+  - **The kit lets go of a held part when Windows takes the mouse away for no window** (Alt+Tab,
+    the Windows key, a message box: WM_CAPTURECHANGED with no new holder), unless the kit is
+    letting go itself (`own_release`); before, the next moves dragged a thumb or a column line with
+    no button down. Logged with the window's kind.
+  - **The bar tells double-clicks by the presses' own times** (the clock, the speaker, the network
+    and battery icons, the notification icons: `GetMessageTime`, as the desktop and the kit
+    windows already did), so a bar held up by a slow Explorer or a program being started still
+    tells a double-click from two clicks; a click read more than 250 ms late is counted. A
+    notification icon's program gets leave to come forward at the release too (most open their
+    window or menu then).
+  - General lines: "bar: a press on nothing that acts", "desktop: a press while the rename
+    warning is open was ignored".
+  - Left as it is: the menu after a right-button drag still takes the click that closes it
+    (perhaps as the old Windows did; not measured: `private/todo.md`).
+  - Proof: unit tests on the plain rules (`tasks`, `folder`, `find`, `desktop::tests`, the kit's
+    `capture_tests`, `tip::tests`); the golden pictures and the full comparison unchanged.
 
 ## Find (programs) (2026-11-11, the owner: "just to start maybe it can just search programs")
 - Since 2026-11-16 the window is **Quick Search** and also finds things to do: see "One "Bevel95"
@@ -2549,6 +2618,17 @@ it, but write nothing).
   cases of the Find and Search submenus compare the captured rows only (`ours_after`); before,
   Windows 95's case also compared the whole menu.
 - **A bar command for scripts**: `BarCommand::Find`, code 6, at the end of `BarCommand::ALL`.
+- **It closes when the person turns away** (2026-11-24, brief 90; the owner: "I think quick
+  search should go away on any click outside the window ... otherwise it's stuck a lot when I
+  change my mind"): as soon as it is no longer the window in front (a click in another window,
+  Alt+Tab, another window coming forward), seen by the form (`FindWindow::turned_away`) and
+  closed on the bar's next tick (`find_window::close_if_turned_away`, within 100 ms). The bar and
+  the classic desktop never take the front from it themselves, so a press on either closes it
+  (`close_for_a_press`) and then goes on to do what it does there. Its own right-click menu (the
+  kit keeps a window with its own menu open looking in front) and a drag of its column line do
+  not close it; a program it starts closes it anyway, as before. Opened from Start > Find the
+  same. Not changed: a Quick Search that Windows never let come forward (the Windows key's
+  rare refusal) closes only by Esc, its "X" or a press on the bar or the desktop.
 - PROVISIONAL (ours): everything about the window's look and wording, its place, the Windows
   key group's wording and place, the submenu entry's wording.
 - Proof: unit tests (`find`: listing, ranking, typing, keys, paging, scrolling, clicks, the

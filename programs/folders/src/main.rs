@@ -18,7 +18,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -42,7 +42,7 @@ use bevel_winkit::confirm::{self, Place as ConfirmPlace};
 use bevel_winkit::dragdrop::Dest;
 use bevel_winkit::file_ops::{self, Target};
 use bevel_winkit::kit::{self, Hosted, Kind, Look};
-use bevel_winkit::log::{data_dir, log, log_win32};
+use bevel_winkit::log::{counted, data_dir, log, log_win32};
 use bevel_winkit::menu::{self, Outcome, Request};
 use bevel_winkit::shell::{self, Seen};
 use bevel_winkit::util::{Private, point, rect_h, rect_w, wide};
@@ -2614,6 +2614,8 @@ fn slow_renames() {
         SLOW_CLICKS.with(|s| s.borrow_mut().remove(&key));
         let due = kit::scope::<FolderHost, _>(hwnd, || kit::with::<FolderHost, _>(|h| h.form.slow_rename_due())).flatten();
         if due.is_some() {
+            static SLOW: AtomicU32 = AtomicU32::new(0);
+            counted(&SLOW, "folders: a slow second click opened the rename box");
             kit::scope::<FolderHost, _>(hwnd, || run(hwnd, Command::Shared(D::Rename), false));
         }
     }
@@ -2997,7 +2999,20 @@ impl Hosted for FolderHost {
             Part::ItemMenu => item_menu(hwnd),
             Part::BackgroundMenu => background_menu(hwnd),
             Part::Command(c) => run(hwnd, c, true),
-            Part::RenameEnd(by_keyboard) => finish_rename(hwnd, by_keyboard),
+            Part::RenameEnd(by_keyboard) => {
+                finish_rename(hwnd, by_keyboard);
+                // A press outside the box: once the name is taken, it is a click there (selects;
+                // a double-click opens), as on the Reference PCs (brief 90).
+                if !by_keyboard {
+                    let went_on = kit::with::<FolderHost, _>(|h| h.form.click_after_rename()).unwrap_or(false);
+                    if went_on {
+                        kit::update::<FolderHost>(|_| {});
+                    } else {
+                        static STOPPED: AtomicU32 = AtomicU32::new(0);
+                        counted(&STOPPED, "folders: a click ended a rename and went no further (a question came up)");
+                    }
+                }
+            }
             Part::List | Part::VThumb | Part::HThumb | Part::Scroll(_) | Part::Address => {}
             Part::Tool(t) => tool(hwnd, t),
             Part::ToolArrow(t) => places_menu(hwnd, t),
@@ -4637,6 +4652,16 @@ fn hand_over(hub: HWND, arg: &str, limit: Duration) -> bool {
     }
     let mut answer = 0usize;
     let ms = limit.as_millis().min(u128::from(u32::MAX)) as u32;
+    // The running program may bring its window forward: this start has that leave (it was
+    // started by the program the person clicked in) and passes it on, as the Help viewer's start
+    // does (brief 90: a desktop double-click on a folder opened its window behind).
+    let mut pid = 0;
+    // SAFETY: any window handle and a valid out-pointer; a plain call with that process's id.
+    unsafe {
+        if windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hub, &mut pid) != 0 && pid != 0 {
+            windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(pid);
+        }
+    }
     // SAFETY: the data lives through the call; the answer waits at most `limit`.
     let sent = unsafe { SendMessageTimeoutW(hub, WM_COPYDATA, 0, &data as *const _ as LPARAM, SMTO_ABORTIFHUNG, ms, &mut answer) };
     sent != 0 && answer == 1

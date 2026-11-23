@@ -366,6 +366,10 @@ pub struct FindWindow {
     pub show_keys: bool,
     /// The window is the one in front (its title bar shows it).
     pub active: bool,
+    /// It stopped being the window in front (`set_active(false)`): Quick Search then closes
+    /// (`turned_away`; the owner: "I think quick search should go away on any click outside the
+    /// window", brief 90). Its own menus keep it in front (the kit's rule), so they do not count.
+    turned_away: bool,
     /// The left edge of the text's first character in the window, and each character's width
     /// (for clicks in the field).
     field_x: i32,
@@ -400,6 +404,7 @@ impl FindWindow {
             pressed: None,
             show_keys: era.always_shows_keys(),
             active: true,
+            turned_away: false,
             field_x: 0,
             advances: Vec::new(),
             parts: Vec::new(),
@@ -546,6 +551,12 @@ impl FindWindow {
     /// The Name column's width as shown (`name_w` within the limits).
     pub fn name_width(&self) -> i32 {
         self.clamp_name(self.name_w)
+    }
+
+    /// Whether the window stopped being the one in front since it was last asked (it then
+    /// closes: a click outside it, Alt+Tab, another window coming forward). Asked once.
+    pub fn turned_away(&mut self) -> bool {
+        std::mem::take(&mut self.turned_away)
     }
 
     /// Where the line being dragged is drawn (x in the list's inside), if one is.
@@ -699,6 +710,9 @@ impl kit::Form for FindWindow {
     }
 
     fn set_active(&mut self, active: bool) {
+        if self.active && !active {
+            self.turned_away = true;
+        }
         self.active = active;
     }
 
@@ -950,6 +964,27 @@ mod tests {
 
     fn names<'a>(programs: &'a [Program], found: &[usize]) -> Vec<&'a str> {
         found.iter().map(|&i| programs[i].name.as_str()).collect()
+    }
+
+    /// Quick Search closes once it is no longer the window in front, and only then (brief 90): a
+    /// window that never came forward, or that is in front again by its own menu (the kit keeps
+    /// it active for that), stays.
+    #[test]
+    fn quick_search_closes_when_the_person_turns_away() {
+        let mut w = FindWindow::new(Era::Win98, programs(&menu()), true);
+        assert!(!w.turned_away(), "just opened");
+        w.set_active(true);
+        assert!(!w.turned_away(), "in front");
+        w.set_active(false);
+        assert!(w.turned_away(), "another window came forward");
+        assert!(!w.turned_away(), "asked once");
+        // Already inactive: no new turning away.
+        w.set_active(false);
+        assert!(!w.turned_away());
+        // Forward again, then away again.
+        w.set_active(true);
+        w.set_active(false);
+        assert!(w.turned_away());
     }
 
     #[test]

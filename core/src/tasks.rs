@@ -152,6 +152,24 @@ pub struct ClickState {
     pub list_was_open: bool,
 }
 
+/// The program window a press on the bar finds in front, as a task button's click is to see it
+/// (brief 90: the click decided from the window in front at the release minimized the program the
+/// person had just left). Read at the press: `front` is the window in front then; no program's
+/// window counts as in front when one of Bevel95's own windows was (`own_in_front`: a menu or the
+/// volume control, which that press closes, handing the front back to the program under it), or
+/// when the last thing pressed was the classic desktop and the same window is still in front
+/// (`left_for_desktop`: Windows did not let the desktop come forward, so the program stayed in
+/// front though the person had left it; Windows' own desktop would have taken the front).
+pub fn front_seen(front: Option<u64>, left_for_desktop: Option<u64>, own_in_front: bool) -> Option<u64> {
+    if own_in_front || (left_for_desktop.is_some() && left_for_desktop == front) { None } else { front }
+}
+
+/// The window that was in front when the classic desktop was pressed (`left`), kept while that
+/// window is still in front (`front` now): once another came forward, the person is elsewhere.
+pub fn still_left(left: Option<u64>, front: u64) -> Option<u64> {
+    left.filter(|&w| w == front)
+}
+
 /// The click on a button holding `windows`. One window comes to the front, or is minimized if
 /// it already is in front; a minimized window is never "in front", even when Windows still
 /// calls it the foreground window (nothing else took its place), so a click on its button
@@ -210,8 +228,17 @@ impl ButtonPress {
         true
     }
 
-    pub fn release(&self) -> Release {
-        if self.dragging { Release::Dropped } else { Release::Click }
+    /// The button is let go with the windows' order now `order`. A press that went past the drag
+    /// threshold and was let go with every button in its old place is a click too (brief 90: a
+    /// mouse that slipped a few pixels did nothing; the old Windows had no dragging, and any
+    /// release on the button was a click).
+    pub fn release(&self, order: &[u64]) -> Release {
+        if self.dragging && order != self.saved.as_slice() { Release::Dropped } else { Release::Click }
+    }
+
+    /// Whether the press went past the drag threshold (for the log, with `release`).
+    pub fn went_past_threshold(&self) -> bool {
+        self.dragging
     }
 }
 
@@ -343,16 +370,42 @@ mod tests {
         groups.iter().map(|g| g.label.as_str()).collect()
     }
 
+    /// What a click on a task button does is decided from the window in front at the press; after
+    /// one of Bevel95's menus or a press on the classic desktop no program's window is in front,
+    /// so the button's window comes forward instead of being minimized (brief 90).
+    #[test]
+    fn a_click_after_a_menu_or_the_desktop_brings_the_window_forward() {
+        let state = |front| ClickState { front, minimized: false, list_was_open: false };
+        // In program 7, its button: minimized, as in Windows.
+        assert_eq!(click(&[7], state(front_seen(Some(7), None, false))), Click::Minimize(7));
+        // One of Bevel95's menus was in front at the press (the press closes it): it comes forward.
+        assert_eq!(click(&[7], state(front_seen(Some(99), None, true))), Click::Activate(7));
+        assert_eq!(front_seen(Some(7), None, true), None);
+        // The desktop was pressed, and Windows left program 7 in front: it comes forward.
+        assert_eq!(click(&[7], state(front_seen(Some(7), Some(7), false))), Click::Activate(7));
+        // Another window came forward since the desktop press: as usual.
+        assert_eq!(front_seen(Some(8), Some(7), false), Some(8));
+        assert_eq!(click(&[8], state(front_seen(Some(8), Some(7), false))), Click::Minimize(8));
+        // The desktop's mark lasts while that window stays in front, and goes when another comes.
+        assert_eq!(still_left(Some(7), 7), Some(7));
+        assert_eq!(still_left(Some(7), 8), None);
+        assert_eq!(still_left(None, 7), None);
+    }
+
     #[test]
     fn a_press_without_a_drag_is_a_click() {
         let mut press = ButtonPress::new(vec![1], 50, vec![1, 2], 50);
         // Within Windows' threshold (4 here), either way: still a click.
         assert!(!press.moved(54, 4) && !press.moved(46, 4));
-        assert_eq!(press.release(), Release::Click);
-        // One pixel further: a drag, which begins once; the release clicks nothing.
+        assert_eq!(press.release(&[1, 2]), Release::Click);
+        // One pixel further: a drag, which begins once; the release clicks nothing once the
+        // button is in another place.
         assert!(press.moved(55, 4));
         assert!(!press.moved(80, 4) && press.dragging);
-        assert_eq!(press.release(), Release::Dropped);
+        assert_eq!(press.release(&[2, 1]), Release::Dropped);
+        // Past the threshold and back, every button in its old place: a click (brief 90).
+        assert_eq!(press.release(&[1, 2]), Release::Click);
+        assert!(press.went_past_threshold());
         // Up and down does not count, only sideways (the bar is one row high).
         let mut press = ButtonPress::new(vec![1], 50, vec![], 50);
         assert!(!press.moved(50, 4));
@@ -482,7 +535,7 @@ mod tests {
 
         /// The release: the order stays, and nothing is clicked.
         fn release(&mut self) -> Release {
-            let release = self.press.release();
+            let release = self.press.release(self.list.order());
             self.press.dragging = false;
             release
         }
@@ -505,7 +558,7 @@ mod tests {
         // Below Windows' threshold nothing moves (and the release would be a click).
         drag.to(34);
         assert_eq!(at(&drag.frame(10)), [("One", 0), ("Two", 102), ("Three", 204), ("Four", 306)]);
-        assert_eq!(drag.press.release(), Release::Click);
+        assert_eq!(drag.press.release(drag.list.order()), Release::Click);
         // Past it the pressed point follows the pointer, from the press.
         drag.to(35);
         assert_eq!(at(&drag.frame(20))[0], ("One", 5));

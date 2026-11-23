@@ -363,6 +363,16 @@ pub fn active_window() -> HWND {
     }
 }
 
+/// The window is one of the bar's own process (a menu of Bevel95's, the volume control).
+pub fn is_own(hwnd: HWND) -> bool {
+    let mut pid = 0;
+    // SAFETY: any window handle and a valid out-pointer; a plain query.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(hwnd, &mut pid) != 0
+            && pid == windows_sys::Win32::System::Threading::GetCurrentProcessId()
+    }
+}
+
 /// The foreground window itself (not its owner, unlike `active_window`).
 pub fn foreground() -> HWND {
     // SAFETY: a read-only query.

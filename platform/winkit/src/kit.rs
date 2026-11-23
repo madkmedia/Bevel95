@@ -19,7 +19,7 @@
 //! and a program's dialog (above its owner, which cannot be used meanwhile).
 
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -51,7 +51,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetWindowPlacement, GetWindowRect, GetWindowThreadProcessId, HICON, HTCAPTION, ICON_BIG, ICON_SMALL,
     ICONINFO, IsIconic, SetWindowPlacement, WINDOWPLACEMENT,
     KillTimer, PostMessageW, RegisterWindowMessageW, SC_KEYMENU, SIZE_MINIMIZED, SW_SHOW, SWP_NOACTIVATE,
-    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, WA_INACTIVE, WM_ACTIVATE,
+    SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, WA_CLICKACTIVE, WA_INACTIVE, WM_ACTIVATE,
     WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCLBUTTONDOWN,
     WM_PAINT, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETFOCUS, WM_SETICON, WM_SIZE, WM_SYSCHAR,
@@ -327,8 +327,15 @@ impl<H: Hosted> Host<H> {
                 let down = !matches!(msg, WM_RBUTTONUP | WM_MBUTTONUP);
                 (Some(0), self.ctl.button(form, button, down, x, y), true)
             }
-            // Another window took the mouse (never this window itself: it only lets go).
-            WM_CAPTURECHANGED if lparam != 0 => {
+            // Another window took the mouse (never this window itself: it only lets go), or
+            // Windows took it away for no window (Alt+Tab, the Windows key, a message box) while
+            // a part was held: the part is let go (brief 90). The kit's own letting go is not.
+            WM_CAPTURECHANGED if mouse_taken(lparam, OWN_RELEASE.with(Cell::get)) => {
+                if lparam == 0 && self.ctl.holding() {
+                    static TAKEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    let kind = std::any::type_name::<H>().rsplit("::").next().unwrap_or("?");
+                    crate::log::counted(&TAKEN, &format!("kit: Windows took the mouse away while a part was held ({kind}); it was let go"));
+                }
                 self.ctl.lost_capture(form);
                 (Some(0), Vec::new(), true)
             }
@@ -381,8 +388,12 @@ impl<H: Hosted> Host<H> {
             // In front or not (a program's title bar shows it). One of this window's own menus
             // taking the focus leaves it looking in front, as Windows' menus do.
             WM_ACTIVATE => {
-                let active = (wparam & 0xFFFF) as u32 != WA_INACTIVE || crate::menu::is_ours(lparam as HWND, self.hwnd);
+                let how = (wparam & 0xFFFF) as u32;
+                let active = how != WA_INACTIVE || crate::menu::is_ours(lparam as HWND, self.hwnd);
                 form.set_active(active);
+                if how == WA_CLICKACTIVE {
+                    form.activated_by_click();
+                }
                 (None, Vec::new(), true)
             }
             WM_SIZE => {
@@ -1037,6 +1048,27 @@ pub fn clipboard_text() -> Option<String> {
     }
 }
 
+thread_local! {
+    /// The kit is letting go of the mouse itself (`own_release`): the WM_CAPTURECHANGED that
+    /// Windows sends meanwhile is not the mouse taken away.
+    static OWN_RELEASE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Lets go of this thread's mouse capture, as the kit's own doing.
+fn own_release() {
+    OWN_RELEASE.with(|r| r.set(true));
+    // SAFETY: releasing our own capture.
+    unsafe { ReleaseCapture() };
+    OWN_RELEASE.with(|r| r.set(false));
+}
+
+/// Whether a WM_CAPTURECHANGED (`new_holder`: its lParam, the window that takes the mouse, or 0)
+/// takes the mouse from a held part: another window took it, or Windows took it for none while
+/// the kit was not letting go itself.
+fn mouse_taken(new_holder: LPARAM, own_release: bool) -> bool {
+    new_holder != 0 || !own_release
+}
+
 /// Carries out what a message left to do, with the window's state back in the list.
 fn carry_out<H: Hosted>(hwnd: HWND, later: Todo<H>) {
     for item in later {
@@ -1057,16 +1089,13 @@ fn carry_out<H: Hosted>(hwnd: HWND, later: Todo<H>) {
                 // SAFETY: our own window; capture shows us the release even off the button.
                 unsafe { SetCapture(hwnd) };
             }
-            Later::Effect(Effect::Release) => {
-                // SAFETY: releasing our own capture.
-                unsafe { ReleaseCapture() };
-            }
+            Later::Effect(Effect::Release) => own_release(),
             Later::Effect(Effect::MoveWindow) => {
                 // SAFETY: the standard way to drag a borderless window by its title bar; then
                 // where it went (Windows 98's title bar gradient follows the position).
                 let mut r = RECT::default();
+                own_release();
                 unsafe {
-                    ReleaseCapture();
                     SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as usize, 0);
                     GetWindowRect(hwnd, &mut r);
                 }
@@ -1183,4 +1212,20 @@ pub fn is_kit_window(hwnd: HWND) -> bool {
     // SAFETY: the buffer length is passed.
     let n = unsafe { GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) }.max(0) as usize;
     String::from_utf16_lossy(&buf[..n]) == KIT_CLASS
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::mouse_taken;
+
+    /// A held part is let go when another window takes the mouse, and when Windows takes it for
+    /// no window (Alt+Tab, the Windows key, a message box); not when the kit lets go itself
+    /// (brief 90).
+    #[test]
+    fn a_held_part_is_let_go_when_windows_takes_the_mouse() {
+        assert!(mouse_taken(0x1234, false), "another window took it");
+        assert!(mouse_taken(0x1234, true), "another window, even while the kit lets go");
+        assert!(mouse_taken(0, false), "Windows took it for no window");
+        assert!(!mouse_taken(0, true), "the kit's own letting go");
+    }
 }

@@ -338,6 +338,27 @@ pub fn close() {
     kit::close::<FindHost>();
 }
 
+/// Closes the window if it stopped being the one in front (a click outside it, Alt+Tab, another
+/// window coming forward: the owner, "I think quick search should go away on any click outside
+/// the window ... otherwise it's stuck a lot when I change my mind", brief 90). Its own menus and
+/// a drag of its column line keep it in front, and a program it starts closes it anyway. On the
+/// bar's tick.
+pub fn close_if_turned_away() {
+    if kit::with::<FindHost, _>(|h| h.form.turned_away()).unwrap_or(false) {
+        log("Quick Search closed: another window came to the front");
+        close();
+    }
+}
+
+/// A press on the bar or the classic desktop (which never take the front from it themselves):
+/// an open Quick Search closes, and the press goes on to do what it does there.
+pub fn close_for_a_press() {
+    if kit::hwnd::<FindHost>().is_some() {
+        log("Quick Search closed: a press on the bar or the desktop");
+        close();
+    }
+}
+
 /// The bar's look or size changed: an open window closes (its pictures belong to the old look).
 pub fn look_changed() {
     if kit::hwnd::<FindHost>().is_some() {

@@ -265,6 +265,13 @@ pub struct App {
     active: Option<u64>,
     /// The window in front at the last refresh (also when it is no taskbar window).
     front: u64,
+    /// The window that was in front when the classic desktop was last pressed, while it still is
+    /// (`tasks::still_left`): Windows did not let the desktop come forward, but the person left
+    /// that program, so its button is not drawn pressed and a click on it brings it forward.
+    left_for_desktop: Option<u64>,
+    /// The program window in front as the left press on a task button saw it (`tasks::front_seen`),
+    /// and the one Windows had in front at that press, for the click at its release.
+    press_front: Option<(Option<u64>, Option<u64>)>,
     /// Where things were last drawn (1× pixels), to find what a click hit.
     layout: Option<BarLayout>,
     /// The task button the left mouse button went down on, and whether the pointer is
@@ -341,13 +348,13 @@ pub struct App {
     volume_muted: bool,
     /// When a click on the speaker last opened the volume control: a second click within
     /// Windows' double-click time makes it a double-click (Windows' volume mixer).
-    speaker_clicked: Option<Instant>,
+    speaker_clicked: Option<u32>,
     /// The network connection and the battery, as their icons show them (`status.rs`), and
     /// when one of them was last clicked (a second click soon after is a double-click).
     network: bevel_core::status::Network,
     network_reader: status::NetworkReader,
     power: bevel_core::status::Power,
-    status_clicked: Option<(tray::Key, Instant)>,
+    status_clicked: Option<(tray::Key, u32)>,
     /// Seconds Bevel95's clock runs ahead of the PC's (Date/Time Properties sets it).
     pub clock_offset: i64,
     /// The zone Bevel95's clock keeps (`None`: the PC's) and whether it follows daylight
@@ -355,7 +362,7 @@ pub struct App {
     pub clock_zone: Option<&'static str>,
     pub clock_dst: bool,
     /// When the clock was last clicked: a second click soon after opens Date/Time Properties.
-    clock_clicked: Option<Instant>,
+    clock_clicked: Option<u32>,
     /// Windows asked whether the session may end (sign-out, restart, shut down): the Windows
     /// taskbar is back and must stay so until Windows says the session goes on after all.
     ending: bool,
@@ -632,6 +639,8 @@ pub fn run() -> u32 {
             flashing: HashSet::new(),
             active: None,
             front: 0,
+            left_for_desktop: None,
+            press_front: None,
             layout: None,
             pressed: None,
             pressed_inside: false,
@@ -839,10 +848,9 @@ pub fn set_clock_zone(zone: Option<&'static str>, dst: bool) {
 /// Whether a click on the clock comes within Windows' double-click time of the last one
 /// (then the two open Date/Time Properties). Either way the next click starts afresh.
 fn clock_double_click() -> bool {
-    // SAFETY: a plain query.
-    let limit = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
-    let earlier = with_app(|app| app.clock_clicked.replace(Instant::now())).flatten();
-    let double = earlier.is_some_and(|at| at.elapsed() <= limit);
+    let now = press_time();
+    let earlier = with_app(|app| app.clock_clicked.replace(now)).flatten();
+    let double = earlier.is_some_and(|at| within_double_click(at, now));
     if double {
         with_app(|app| app.clock_clicked = None);
     }
@@ -1113,7 +1121,10 @@ fn refresh(bar: HWND) {
         let icons_changed = !new_icons.is_empty();
         app.icons.extend(new_icons);
         app.icons.retain(|id, _| infos.iter().any(|w| w.id == *id));
-        let active = infos.iter().any(|w| w.id == front).then_some(front);
+        // The person left the program in front for the classic desktop: its button is not drawn
+        // pressed while it stays in front (brief 90).
+        app.left_for_desktop = tasks::still_left(app.left_for_desktop, front);
+        let active = infos.iter().any(|w| w.id == front && app.left_for_desktop != Some(front)).then_some(front);
         if let Some(id) = active {
             app.flashing.remove(&id);
         }
@@ -1618,7 +1629,7 @@ fn speaker_click(bar: HWND, button: tray::Button) {
                 volume_popup::close(false);
                 volume_popup::open_mixer();
             } else {
-                with_app(|app| app.speaker_clicked = Some(Instant::now()));
+                with_app(|app| app.speaker_clicked = Some(press_time()));
                 volume_popup::open(bar, cursor());
             }
         }
@@ -1638,13 +1649,12 @@ fn status_click(bar: HWND, key: tray::Key, button: tray::Button) {
     let at = cursor();
     match button {
         tray::Button::Left => {
-            // SAFETY: a plain query.
-            let limit = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
+            let now = press_time();
             let double = with_app(|app| {
                 let last = app.status_clicked.take();
-                let double = last.is_some_and(|(k, when)| k == key && when.elapsed() <= limit);
+                let double = last.is_some_and(|(k, when)| k == key && within_double_click(when, now));
                 if !double {
-                    app.status_clicked = Some((key, Instant::now()));
+                    app.status_clicked = Some((key, now));
                 }
                 double
             })
@@ -1689,9 +1699,29 @@ pub fn close_flyout(bar: HWND) -> Option<Flyout> {
 /// opened the volume control (then the two make a double-click). Either way the next click
 /// starts afresh.
 fn speaker_double_click() -> bool {
+    let now = press_time();
+    with_app(|app| app.speaker_clicked.take().is_some_and(|at| within_double_click(at, now))).unwrap_or(false)
+}
+
+/// When the mouse message being handled happened (Windows' message time, as the desktop and the
+/// kit windows tell double-clicks), not when the bar got to it: a bar held up (a slow Explorer, a
+/// program being started) still tells a double-click from two clicks (brief 90). A press read
+/// late is counted in the log.
+fn press_time() -> u32 {
+    // SAFETY: plain queries.
+    let (at, now) = unsafe { (windows_sys::Win32::UI::WindowsAndMessaging::GetMessageTime() as u32, windows_sys::Win32::System::SystemInformation::GetTickCount()) };
+    let late = now.wrapping_sub(at);
+    if late > 250 && late < 60_000 {
+        static LATE: AtomicU32 = AtomicU32::new(0);
+        bevel_winkit::log::counted(&LATE, &format!("bar: a click was read {late} ms after it happened; told by its own time"));
+    }
+    at
+}
+
+/// Two clicks at message times `earlier` and `now` are a double-click (Windows' double-click time).
+fn within_double_click(earlier: u32, now: u32) -> bool {
     // SAFETY: a plain query.
-    let limit = Duration::from_millis(u64::from(unsafe { GetDoubleClickTime() }));
-    with_app(|app| app.speaker_clicked.take().is_some_and(|at| at.elapsed() <= limit)).unwrap_or(false)
+    now.wrapping_sub(earlier) <= unsafe { GetDoubleClickTime() }
 }
 
 /// Asks for a WM_MOUSELEAVE when the pointer leaves the bar (once per visit).
@@ -1727,15 +1757,29 @@ fn click_task(bar: HWND, index: usize) {
     .flatten() else {
         return;
     };
-    // Read at the click itself (the tick's `active` can be 100 ms old), and outside the app
-    // state: the window in front, and whether the button's one window is minimized.
-    let front = window_list::active_window();
-    let front = (!front.is_null()).then_some(front as u64);
+    // The window in front as the press saw it (`tasks::front_seen`: not the tick's, which can be
+    // 100 ms old, nor the release's, after a menu the press closed had handed the front on);
+    // read now only without a press (a click made otherwise). Outside the app state: whether the
+    // button's one window is minimized.
+    let (front, raw) = with_app(|app| app.press_front.take()).flatten().unwrap_or_else(|| {
+        let front = window_list::active_window();
+        let front = (!front.is_null()).then_some(front as u64);
+        (front, front)
+    });
     let minimized = matches!(windows.as_slice(), [only] if window_list::is_minimized(*only as HWND));
     match tasks::click(&windows, ClickState { front, minimized, list_was_open }) {
         Click::Nothing => {}
         Click::Minimize(id) => window_list::minimize(id as HWND),
         Click::Activate(id) => {
+            // Brought forward where the window in front at the press would have been minimized:
+            // a menu of Bevel95's was open, or the desktop was the last thing pressed (brief 90).
+            if front != raw {
+                static INSTEAD: AtomicU32 = AtomicU32::new(0);
+                bevel_winkit::log::counted(
+                    &INSTEAD,
+                    "task buttons: a click brought its window forward; it was in front, but a menu of Bevel95's or the desktop was the last thing pressed",
+                );
+            }
             window_list::activate(id as HWND);
             with_app(|app| app.activated = Some((id, Instant::now())));
         }
@@ -2318,6 +2362,7 @@ fn tick(bar: HWND) {
         refresh(bar);
     }
     check_activated();
+    crate::find_window::close_if_turned_away();
     // The network and battery icons: the connection's counters every 200 ms (its screens light
     // while data moves), the battery every 2 s; repainted only when a picture changes.
     if ticks.is_multiple_of(NETWORK_TICKS) && status_changed(ticks) {
@@ -2939,9 +2984,15 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         // A press on the classic desktop (posted by its own thread): Windows' flyouts, our
         // menus and the volume control close, as at a press on the bar.
         m if m == desktop::WM_DESKTOP_PRESS.id() => {
+            crate::find_window::close_for_a_press();
             close_flyout(bar);
             popup::close(false);
             volume_popup::close(false);
+            // Read after the menus closed: the program in front now is the one the person left.
+            let front = window_list::active_window() as u64;
+            with_app(|app| app.left_for_desktop = (front != 0).then_some(front));
+            // Its button is drawn raised at once (the buttons are built again).
+            refresh(bar);
             return 0;
         }
         m if m == desktop::wm_desktop_menu() => {
@@ -2968,6 +3019,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONDOWN => {
             forget_tray_press();
+            crate::find_window::close_for_a_press();
             // First of all, a Windows flyout in front closes (and the network icon's own list
             // is not opened again by the press that closed it).
             let closed_flyout = close_flyout(bar);
@@ -2977,6 +3029,18 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             let list_open = popup::window_list_open();
             // The same for Windows 2000's Quick Launch list: a press on its "»" only closes it.
             let quick_list_was_open = popup::quick_list_open();
+            // The window in front at the press, before the menus close (closing one hands the
+            // front to the program under it): what a task button's click decides from (brief 90).
+            let front_now = window_list::active_window() as u64;
+            let front_now = (front_now != 0).then_some(front_now);
+            // One of the bar's own windows that has no button: a menu, the volume control, the
+            // classic desktop, Quick Search.
+            let own = front_now.is_some_and(|w| window_list::is_own(w as HWND));
+            let seen = with_app(|app| {
+                let own_in_front = own && !app.windows.iter().any(|w| Some(w.id) == front_now);
+                tasks::front_seen(front_now, app.left_for_desktop.take(), own_in_front)
+            })
+            .flatten();
             popup::close(false);
             // The bar never takes the focus, so a click on it does not reach the volume
             // control as a click elsewhere would (Windows' own taskbar did take it): it closes
@@ -3055,12 +3119,18 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                     let left = app.layout.as_ref().and_then(|l| l.tasks.get(index.checked_sub(l.first_task)?)).map_or(0, |r| r.x);
                     let grab = app.scale.old(x) - left;
                     app.press = Some(ButtonPress::new(windows, x, app.task_list.order().to_vec(), grab));
+                    app.press_front = Some((seen, front_now));
                 });
                 // SAFETY: our own window; capture lets us see the release even off the bar.
                 unsafe {
                     SetCapture(bar);
                     InvalidateRect(bar, null(), 0);
                 }
+            } else {
+                // The bar's empty space (as on Windows' own taskbar, nothing happens): counted, so
+                // a press that "did nothing" can be told apart from one on a part (brief 90).
+                static ON_NOTHING: AtomicU32 = AtomicU32::new(0);
+                bevel_winkit::log::counted(&ON_NOTHING, "bar: a press on nothing that acts");
             }
             return 0;
         }
@@ -3163,15 +3233,26 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 ReleaseCapture();
                 InvalidateRect(bar, null(), 0);
             }
-            match press.map(|p| p.release()) {
+            let order = with_app(|app| app.task_list.order().to_vec()).unwrap_or_default();
+            let past_threshold = press.as_ref().is_some_and(ButtonPress::went_past_threshold);
+            match press.map(|p| p.release(&order)) {
                 // A drag: the button stays where it was dropped; nothing is clicked.
                 Some(Release::Dropped) => {
                     let from = from.map_or(String::from("?"), |f| (f + 1).to_string());
                     log(&format!("task buttons: a drag moved a button from place {from} to {} of {count}", index + 1));
                     save_task_order();
                 }
+                // Past the drag threshold and let go with every button in its old place: a click
+                // (brief 90), wherever the pointer is now.
+                _ if past_threshold => {
+                    static BACK: AtomicU32 = AtomicU32::new(0);
+                    bevel_winkit::log::counted(&BACK, "task buttons: a press went past the drag threshold, the button stayed in its place: a click");
+                    click_task(bar, index);
+                }
                 _ if task_at(x, y) == Some(index) => click_task(bar, index),
-                _ => {}
+                _ => {
+                    with_app(|app| app.press_front = None);
+                }
             }
             return 0;
         }
@@ -3187,6 +3268,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             let (held, dragged) = with_app(|app| {
                 app.tray_pressed = None;
                 app.drag_from = None;
+                app.press_front = None;
                 let dragged = match app.press.take() {
                     Some(press) if press.dragging => {
                         app.task_list.set_order(press.saved);
@@ -3217,6 +3299,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_MBUTTONDOWN => {
             forget_tray_press();
+            crate::find_window::close_for_a_press();
             close_flyout(bar);
             popup::close(false);
             volume_popup::close(false);
@@ -3238,6 +3321,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_RBUTTONDOWN => {
             forget_tray_press();
+            crate::find_window::close_for_a_press();
             close_flyout(bar);
             popup::close(false);
             volume_popup::close(false);

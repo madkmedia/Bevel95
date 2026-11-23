@@ -564,15 +564,7 @@ unsafe extern "system" fn on_event(_: HWINEVENTHOOK, event: u32, hwnd: HWND, obj
     }
 }
 
-/// Which of the times the window was put back get a line in the log: the first three, then the
-/// 10th, the 100th, the 1000th and so on.
-fn worth_a_line(n: u32) -> bool {
-    let mut rest = n;
-    while rest >= 10 && rest.is_multiple_of(10) {
-        rest /= 10;
-    }
-    n <= 3 || rest == 1
-}
+use bevel_winkit::log::{counted, worth_a_line};
 
 /// Posted to the desktop window: Arrange Icons (wParam: the `Arrange` by its place in `ALL`), or
 /// `LAYOUT_AUTO` (Auto Arrange on or off) or `LAYOUT_LINE_UP` (Line up Icons).
@@ -665,6 +657,22 @@ fn test_drop(text: &str) -> u32 {
 /// step: about one frame of a 60 Hz screen, as the bar's task buttons do.
 const DRAG_TIMER: usize = 1;
 const DRAG_MS: u32 = 15;
+/// The icons read again while a press is held or a double-click may still come are taken in a
+/// little later, when this timer finds neither (brief 90: the press and the double-click stay
+/// on the icons the person aimed at).
+const ITEMS_LATER_TIMER: usize = 3;
+/// New icons are waiting for `ITEMS_LATER_TIMER` (counted once per wait in the log).
+static ITEMS_WAITING: AtomicBool = AtomicBool::new(false);
+
+/// How many milliseconds new icons must still wait after a left press at message time `pressed`
+/// (now `now`, Windows' double-click time `double`), so that a second press of a double-click
+/// finds the icons where the first one did: 0 when none was made or its time is over.
+fn items_wait(pressed: Option<u32>, now: u32, double: u32) -> u32 {
+    pressed.map_or(0, |t| {
+        let gone = now.wrapping_sub(t);
+        if gone < double { double - gone + 10 } else { 0 }
+    })
+}
 /// The keys held with a click (wParam of a mouse message): MK_SHIFT and MK_CONTROL.
 const MK_SHIFT: usize = 0x4;
 const MK_CONTROL: usize = 0x8;
@@ -926,9 +934,12 @@ impl State {
             (GetMessageTime() as u32, GetDoubleClickTime(), GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK))
         };
         let hit = hit.and_then(|i| self.view.items.get(i)).map(|item| item.id.clone());
-        let double = self.last_press.as_ref().is_some_and(|(t, px, py, was)| {
-            now.wrapping_sub(*t) <= time && (x - px).abs() * 2 <= dx && (y - py).abs() * 2 <= dy && *was == hit
-        });
+        let near = self.last_press.as_ref().is_some_and(|(t, px, py, _)| now.wrapping_sub(*t) <= time && (x - px).abs() * 2 <= dx && (y - py).abs() * 2 <= dy);
+        let double = near && self.last_press.as_ref().is_some_and(|(.., was)| *was == hit);
+        if near && !double {
+            static ELSEWHERE: AtomicU32 = AtomicU32::new(0);
+            counted(&ELSEWHERE, "desktop: a second click came in time but on another icon than the first");
+        }
         self.last_press = if double { None } else { Some((now, x, y, hit)) };
         double
     }
@@ -944,8 +955,6 @@ static ACTIVATING: AtomicBool = AtomicBool::new(false);
 /// The thread's CBT hook (0 while there is none). Without it the desktop never takes the
 /// keyboard (`activate`).
 static CBT_HOOK: AtomicUsize = AtomicUsize::new(0);
-/// Windows refused the desktop the keyboard once (logged once).
-static REFUSED_LOGGED: AtomicBool = AtomicBool::new(false);
 
 /// Runs `change` on the state and paints again what it says changed (desktop pixels at 1×).
 fn with_state(hwnd: HWND, change: impl FnOnce(&mut State, &Font) -> Vec<Rect>) {
@@ -1103,8 +1112,18 @@ fn rebuild(hwnd: HWND, force: bool) {
             }
             keep_picture = same_picture && !force;
         }
+        // The first press of a double-click is kept (it is remembered by the icon's id), and a
+        // drag timer that runs is stopped: the new state knows of none (brief 90).
+        let mut last_press = None;
         let (mut view, old_fb) = match borrow.take() {
-            Some(old) => (old.view, Some(old.fb)),
+            Some(old) => {
+                last_press = old.last_press;
+                if old.timer.is_some() {
+                    // SAFETY: our own window's timer.
+                    unsafe { KillTimer(hwnd, DRAG_TIMER) };
+                }
+                (old.view, Some(old.fb))
+            }
             None => {
                 let mut view = Desktop::new(look.era, area);
                 // Unreadable: logged by `load`, kept as it is and not saved over.
@@ -1154,7 +1173,7 @@ fn rebuild(hwnd: HWND, force: bool) {
             Some(fb) if (fb.width, fb.height) == size => fb,
             _ => Framebuffer::new(size.0, size.1, look.theme.colors.desktop),
         };
-        let mut st = State { look, view, fb, screens, last_press: None, right_hit: None, pointer: None, timer: None, blink_on: true };
+        let mut st = State { look, view, fb, screens, last_press, right_hit: None, pointer: None, timer: None, blink_on: true };
         st.look.scale = s;
         // What is made from a large picture has been made: it goes.
         let_go_large(&mut st.look);
@@ -1228,8 +1247,12 @@ fn activate(hwnd: HWND) {
         return;
     }
     // SAFETY: our own window, on its own thread, right after the user's click.
-    if unsafe { SetForegroundWindow(hwnd) } == 0 && !REFUSED_LOGGED.swap(true, Ordering::SeqCst) {
-        log("desktop: Windows refused it the keyboard at a click (logged once)");
+    if unsafe { SetForegroundWindow(hwnd) } == 0 {
+        // Counted every time, with only the kind of window that kept the front (brief 90).
+        static REFUSED: AtomicU32 = AtomicU32::new(0);
+        let front = crate::window_list::foreground();
+        let class = if front.is_null() { String::from("none") } else { crate::window_list::class_name(front) };
+        counted(&REFUSED, &format!("desktop: Windows did not let the desktop come forward at a click; class {class} kept the front"));
     }
     ACTIVATING.store(false, Ordering::SeqCst);
 }
@@ -1865,6 +1888,8 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             // While the extension warning is open the desktop takes no clicks (Windows' message
             // box held the desktop until it was answered).
             if STATE.with(|c| c.borrow().as_ref().is_some_and(|st| st.view.is_asking())) {
+                static WHILE_ASKING: AtomicU32 = AtomicU32::new(0);
+                counted(&WHILE_ASKING, "desktop: a press while the rename warning is open was ignored");
                 return 0;
             }
             activate(hwnd);
@@ -2077,7 +2102,34 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             });
             return 0;
         }
+        WM_TIMER if wparam == ITEMS_LATER_TIMER => {
+            // SAFETY: our own window's timer.
+            unsafe {
+                KillTimer(hwnd, ITEMS_LATER_TIMER);
+                PostMessageW(hwnd, WM_ITEMS.id(), 0, 0);
+            }
+            return 0;
+        }
         m if m == WM_ITEMS.id() => {
+            // A press held, or a second press of a double-click still due: the new icons wait
+            // (the snapshot stays where it is), so neither is given up nor lands elsewhere.
+            // SAFETY: plain queries.
+            let (now, double) = unsafe { (windows_sys::Win32::System::SystemInformation::GetTickCount(), GetDoubleClickTime()) };
+            let busy = STATE.with(|c| {
+                c.borrow().as_ref().map(|st| (st.view.gesture_active(), items_wait(st.last_press.as_ref().map(|p| p.0), now, double)))
+            });
+            if let Some((held, wait)) = busy
+                && (held || wait > 0)
+            {
+                static HELD_BACK: AtomicU32 = AtomicU32::new(0);
+                if !ITEMS_WAITING.swap(true, Ordering::SeqCst) {
+                    counted(&HELD_BACK, "desktop: the icons were read again during a press or a double-click; taken in after it");
+                }
+                // SAFETY: our own window (a running timer is set anew).
+                unsafe { SetTimer(hwnd, ITEMS_LATER_TIMER, if held { 100 } else { wait }, None) };
+                return 0;
+            }
+            ITEMS_WAITING.store(false, Ordering::SeqCst);
             if let Some(snapshot) = crate::desktop_items::take() {
                 with_state(hwnd, |st, _| {
                     take_pending_place(&mut st.view);
@@ -2229,7 +2281,16 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
 
 #[cfg(test)]
 mod tests {
-    use super::{colorref, command_of_param, command_param, id_code, point_of_param, point_param, remember_targets, targets_of, worth_a_line};
+    use super::{colorref, command_of_param, command_param, id_code, items_wait, point_of_param, point_param, remember_targets, targets_of, worth_a_line};
+
+    /// New icons wait while a double-click may still come, and only then (brief 90).
+    #[test]
+    fn new_icons_wait_out_a_double_click() {
+        assert_eq!(items_wait(None, 5_000, 500), 0, "no press: at once");
+        assert_eq!(items_wait(Some(4_800), 5_000, 500), 310, "200 ms after a press: the rest of the time");
+        assert_eq!(items_wait(Some(4_400), 5_000, 500), 0, "its time is over");
+        assert_eq!(items_wait(Some(u32::MAX - 99), 100, 500), 310, "across the tick count's wrap");
+    }
 
     /// A live test's command acts on test items only (the third safety review of 2026-11-18, C4):
     /// no Empty Recycle Bin, Arrange Icons, New or switching the desktop off; the icon commands

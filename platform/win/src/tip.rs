@@ -15,7 +15,8 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, HTTRANSPARENT, HWND_TOPMOST, MA_NOACTIVATE, SW_HIDE,
     SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowPos, ShowWindow, WM_ERASEBKGND, WM_MOUSEACTIVATE, WM_NCHITTEST,
-    WM_PAINT, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    LWA_ALPHA, SetLayeredWindowAttributes, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_PAINT, WM_RBUTTONDOWN, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::bar::with_app;
@@ -68,7 +69,10 @@ fn show_placed(owner: HWND, text: &str, place: &Placer) {
         // SAFETY: a registered class; owned by the bar so it stays above it.
         hwnd = unsafe {
             CreateWindowExW(
-                WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                // Layered and transparent: Windows' hit test passes it by for every program and thread,
+                // so a press over it reaches the window under it (brief 90; HTTRANSPARENT alone passes a
+                // press on only to windows of the bar's own thread).
+                TIP_EX_STYLE,
                 class.as_ptr(),
                 null(),
                 WS_POPUP,
@@ -85,6 +89,11 @@ fn show_placed(owner: HWND, text: &str, place: &Placer) {
         if hwnd.is_null() {
             log_win32("CreateWindowExW(tooltip)");
             return;
+        }
+        // Fully opaque: it looks as before (a layered window shows nothing until this is set).
+        // SAFETY: our own window.
+        if unsafe { SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) } == 0 {
+            log_win32("SetLayeredWindowAttributes(tooltip)");
         }
         TIP.store(hwnd as usize, Ordering::SeqCst);
     }
@@ -130,6 +139,9 @@ fn paint(hwnd: HWND) {
     unsafe { EndPaint(hwnd, &ps) };
 }
 
+/// The tooltip window's extended style (see show_placed).
+const TIP_EX_STYLE: u32 = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED;
+
 pub unsafe extern "system" fn tip_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_ERASEBKGND => return 1,
@@ -140,8 +152,85 @@ pub unsafe extern "system" fn tip_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
         // Clicks and the pointer go to whatever is under the tooltip.
         WM_NCHITTEST => return HTTRANSPARENT as LRESULT,
         WM_MOUSEACTIVATE => return MA_NOACTIVATE as LRESULT,
+        // Should never come (the window is passed by); if it does, the log says so.
+        WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+            static TAKEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            bevel_winkit::log::counted(&TAKEN, "tooltip: a press landed on the tooltip and went nowhere");
+            return 0;
+        }
         _ => {}
     }
     // SAFETY: default handling for everything else.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ptr::{null, null_mut};
+    use std::sync::mpsc;
+
+    use windows_sys::Win32::Foundation::{HWND, POINT};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HWND_TOPMOST, LWA_ALPHA, MSG,
+        PostThreadMessageW, RegisterClassW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos,
+        WM_QUIT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WindowFromPoint,
+    };
+
+    use super::TIP_EX_STYLE;
+    use crate::util::wide;
+
+    /// A plain window of this test's own, shown without taking the front.
+    fn window(class: &str, ex: u32, x: i32, y: i32) -> HWND {
+        let name = wide(class);
+        // SAFETY: a class of the test's own with the default procedure; a window of it.
+        unsafe {
+            let wc = WNDCLASSW { lpfnWndProc: Some(DefWindowProcW), hInstance: GetModuleHandleW(null()), lpszClassName: name.as_ptr(), ..Default::default() };
+            RegisterClassW(&wc);
+            let hwnd = CreateWindowExW(ex, name.as_ptr(), null(), WS_POPUP, x, y, 60, 30, null_mut(), null_mut(), GetModuleHandleW(null()), null());
+            SetWindowPos(hwnd, HWND_TOPMOST, x, y, 60, 30, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            hwnd
+        }
+    }
+
+    /// The bar's tooltip lets a press through to the window under it, also when that window is
+    /// another thread's (brief 90): Windows' hit test passes a layered, transparent window by. The
+    /// tooltip's old style (transparent only, which passes a press on only within its own thread)
+    /// did catch it. Proven with windows of this test's own: one on a thread of its own, the
+    /// tooltip's look-alike above it.
+    #[test]
+    fn a_press_over_the_tooltip_reaches_the_window_under_it() {
+        let (x, y) = (4, 4);
+        let (tx, rx) = mpsc::channel();
+        let under = std::thread::spawn(move || {
+            let hwnd = window("Bevel95TestUnderTip", WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, x, y);
+            // SAFETY: the thread's id, for the quit message.
+            tx.send((hwnd as usize, unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() })).unwrap();
+            let mut msg = MSG::default();
+            // SAFETY: this thread's own message loop.
+            unsafe {
+                while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
+                    DispatchMessageW(&msg);
+                }
+                DestroyWindow(hwnd);
+            }
+        });
+        let (under_hwnd, thread) = rx.recv().unwrap();
+        let tip = window("Bevel95TestTip", TIP_EX_STYLE, x, y);
+        // SAFETY: the test's own window.
+        unsafe { SetLayeredWindowAttributes(tip, 0, 255, LWA_ALPHA) };
+        let old = window("Bevel95TestOldTip", WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT, x + 100, y);
+        // SAFETY: plain queries and our own windows.
+        let (through, caught) = unsafe {
+            (WindowFromPoint(POINT { x: x + 30, y: y + 15 }), WindowFromPoint(POINT { x: x + 130, y: y + 15 }))
+        };
+        unsafe {
+            DestroyWindow(tip);
+            DestroyWindow(old);
+            PostThreadMessageW(thread, WM_QUIT, 0, 0);
+        }
+        under.join().unwrap();
+        assert_eq!(through as usize, under_hwnd, "the press goes through the tooltip to the window under it");
+        assert_eq!(caught, old, "the old style caught it");
+    }
 }

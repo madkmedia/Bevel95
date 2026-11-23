@@ -228,6 +228,10 @@ pub trait Form {
     }
     /// The window became the one in front, or stopped being it (a program's title bar shows it).
     fn set_active(&mut self, _active: bool) {}
+    /// The window has just become the one in front by a click on it (Windows' WA_CLICKACTIVE,
+    /// right after `set_active(true)`); that click's press follows (brief 90: Windows' list view
+    /// armed no slow-click rename with it, survey part 4).
+    fn activated_by_click(&mut self) {}
     /// Alt alone, or F10: a window with a menu bar selects its first title (or lets go of it).
     fn menu_key(&mut self) -> Vec<Effect<Self::Part>> {
         Vec::new()

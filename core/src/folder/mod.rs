@@ -252,6 +252,12 @@ pub struct FolderWindow {
     /// follows, its name becomes a box to type in (`slow_rename_due`). The item and where the
     /// press was.
     slow_rename: Option<(String, i32, i32)>,
+    /// The window has just come forward by a click (`activated_by_click`): that click's press
+    /// arms no slow rename, as on the Reference PCs (survey part 4; brief 90).
+    click_activated: bool,
+    /// A press outside the rename box ended the rename; once the platform has taken the name it
+    /// goes on as a click on that place (`click_after_rename`): where, with which keys.
+    after_rename: Option<(i32, i32, IconMods)>,
     /// A drag of icons began and waits to be handed over (`Form::pending`).
     drag_out: bool,
     /// What Undo would take back now (the platform reads the shared list before a menu opens).
@@ -322,6 +328,8 @@ impl FolderWindow {
             link_hot: None,
             first_press: None,
             slow_rename: None,
+            click_activated: false,
+            after_rename: None,
             drag_out: false,
             undo: None,
         };
@@ -424,6 +432,22 @@ impl FolderWindow {
         let (id, ..) = self.slow_rename.take()?;
         let i = self.view.index_of(&id)?;
         (self.view.selection() == vec![i] && self.view.renaming().is_none() && self.active && !self.tree_focus && !self.field.focused).then_some(i)
+    }
+
+    /// The rename that a press outside its box ended is over (the platform took the name, or
+    /// kept it): that press goes on as a click there, as on the Reference PCs (survey part 4:
+    /// the rename ends and the file clicked is selected; a double-click opens it). Nothing if a
+    /// question came up instead (the name is still being renamed). True if it selected.
+    pub fn click_after_rename(&mut self) -> bool {
+        let Some((x, y, mods)) = self.after_rename.take() else { return false };
+        if self.view.renaming().is_some() {
+            return false;
+        }
+        let Some(font) = self.font() else { return false };
+        let hit = self.view.press(&font, x, y, IconButton::Left, mods);
+        self.view.release(&font, x, y);
+        self.first_press = hit.and_then(|i| self.view.items.get(i)).map(|item| item.id.clone());
+        true
     }
 
     pub fn explorer(&self) -> bool {
@@ -2155,6 +2179,9 @@ impl Form for FolderWindow {
     }
 
     fn press(&mut self, part: Option<Part>, x: i32, y: i32) -> Press<Part> {
+        // Whether this press is the click that brought the window forward (used up by it).
+        let activating = std::mem::take(&mut self.click_activated);
+        self.after_rename = None;
         match part {
             Some(p @ (Part::Minimize | Part::Maximize | Part::Close)) => Press::Hold(p),
             Some(Part::Icon) => Press::Act(Part::Icon),
@@ -2258,16 +2285,21 @@ impl Form for FolderWindow {
                 self.list = None;
                 self.tree_focus = false;
                 let Some(font) = self.font() else { return Press::Done };
+                let mods = IconMods { ctrl: self.mods.ctrl, shift: self.mods.shift };
                 if self.view.renaming().is_some() {
                     if self.view.rename_click(&font, x, y) {
                         return Press::Done;
                     }
+                    // The rename ends, and the press then goes on as a click there
+                    // (`click_after_rename`, once the platform has taken the name).
+                    self.after_rename = Some((x, y, mods));
                     return Press::Act(Part::RenameEnd(false));
                 }
-                let mods = IconMods { ctrl: self.mods.ctrl, shift: self.mods.shift };
                 // The one item already selected, pressed on its name (not its picture) while the
-                // icons had the keyboard: Windows' slow second click that renames.
-                let had_keyboard = !self.tree_focus && !self.field.focused;
+                // icons had the keyboard, in a window that was already in front: Windows' slow
+                // second click that renames. The click that brings the window forward arms none
+                // (the Reference PCs, survey part 4).
+                let had_keyboard = !self.tree_focus && !self.field.focused && !activating;
                 let alone = self.view.selection().len() == 1;
                 let before = self.view.hit(&font, x, y).filter(|&i| alone && self.view.is_selected(i));
                 let hit = self.view.press(&font, x, y, IconButton::Left, mods);
@@ -2509,6 +2541,13 @@ impl Form for FolderWindow {
         self.active = active;
         self.view.active = active;
         // Another window took the keyboard while a label was renamed: the platform takes the name.
+        if !active {
+            self.click_activated = false;
+        }
+    }
+
+    fn activated_by_click(&mut self) {
+        self.click_activated = true;
     }
 
     fn menu_key(&mut self) -> Vec<Effect<Part>> {
@@ -2949,6 +2988,76 @@ mod tests {
             c.mouse_up(&mut w, lx, ly);
         }
         assert_eq!(w.slow_rename_due(), Some(0));
+    }
+
+    /// The click that brings a folder window forward selects but arms no rename; a slow second
+    /// click in the window then in front does (the Reference PCs, survey part 4; brief 90).
+    #[test]
+    fn the_click_that_brings_the_window_forward_renames_nothing() {
+        let mut w = window(3, (634, 411));
+        let mut c = crate::kit::Controller::default();
+        let pic = w.view.icon_rect(0);
+        let (px, py) = (pic.x + pic.w / 2, pic.y + pic.h / 2);
+        let (lx, ly) = (px, pic.bottom() + 6);
+        c.mouse_down(&mut w, px, py);
+        c.mouse_up(&mut w, px, py);
+        // Another program came forward; a click on the selected name brings the window back.
+        w.set_active(false);
+        w.set_active(true);
+        w.activated_by_click();
+        c.mouse_down(&mut w, lx, ly);
+        c.mouse_up(&mut w, lx, ly);
+        assert!(!w.slow_rename_waiting(), "the activating click arms no rename");
+        assert_eq!(w.view.selection(), vec![0], "it selects");
+        c.mouse_down(&mut w, lx, ly);
+        c.mouse_up(&mut w, lx, ly);
+        assert!(w.slow_rename_waiting(), "the next slow click in the window in front does");
+        // Brought forward by the keyboard (Alt+Tab): the first click on the name is a slow click.
+        let _ = w.slow_rename_due();
+        w.set_active(false);
+        w.set_active(true);
+        c.mouse_down(&mut w, lx, ly);
+        c.mouse_up(&mut w, lx, ly);
+        assert!(w.slow_rename_waiting());
+        // A window that went behind again forgets an activating click it did not get the press of.
+        let _ = w.slow_rename_due();
+        w.activated_by_click();
+        w.set_active(false);
+        w.set_active(true);
+        c.mouse_down(&mut w, lx, ly);
+        c.mouse_up(&mut w, lx, ly);
+        assert!(w.slow_rename_waiting());
+    }
+
+    /// A press on another file while a name is being renamed ends the rename and selects that
+    /// file, and a double-click on it opens it (the Reference PCs, survey part 4; brief 90).
+    #[test]
+    fn a_click_that_ends_a_rename_also_selects() {
+        let mut w = window(3, (634, 411));
+        let mut c = crate::kit::Controller::default();
+        let other = w.view.icon_rect(1);
+        let (ox, oy) = (other.x + other.w / 2, other.y + other.h / 2);
+        assert!(w.view.begin_rename(0));
+        let effects = c.mouse_down(&mut w, ox, oy);
+        assert!(effects.contains(&Effect::Activate(Part::RenameEnd(false))), "{effects:?}");
+        // The platform takes the name, then the press goes on.
+        w.view.end_rename();
+        assert!(w.click_after_rename());
+        assert_eq!(w.view.selection(), vec![1], "the file clicked is selected");
+        c.mouse_up(&mut w, ox, oy);
+        assert_eq!(w.double_click(ox, oy), Some(vec![Effect::Activate(Part::Open)]), "a double-click opens it");
+        // A question came up instead (the name is still being renamed): the press goes no further.
+        let mut w = window(3, (634, 411));
+        assert!(w.view.begin_rename(0));
+        c.mouse_down(&mut w, ox, oy);
+        assert!(!w.click_after_rename());
+        assert_eq!(w.view.renaming(), Some(0));
+        // A later press forgets it.
+        w.view.end_rename();
+        c.mouse_up(&mut w, ox, oy);
+        let pic = w.view.icon_rect(2);
+        c.mouse_down(&mut w, pic.x + pic.w / 2, pic.y + pic.h / 2);
+        assert!(!w.click_after_rename());
     }
 
     #[test]
