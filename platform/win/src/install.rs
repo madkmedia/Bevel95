@@ -230,9 +230,29 @@ pub fn setup(forced: bool) -> bool {
     } else {
         bevel_core::config::parse(&state_file::read(&dir.join("settings.txt")).text().unwrap_or_default()).0
     };
-    let Some(answer) = ask(kind, settings.era, settings.colors) else {
-        log("setup: the window could not be shown");
-        return not_started_here(&bundle, &format!("{NAME} Setup could not be shown.\n\nNothing was changed."));
+    let answer = match ask(kind, settings.era, settings.colors) {
+        Ok(answer) => answer,
+        Err(why) => {
+            log(&format!("setup: the window could not be shown ({})", match &why {
+                Unshown::Look(_) => "the look's fonts could not be made",
+                Unshown::Window => "the window could not be created",
+            }));
+            if let Unshown::Look(e) = &why {
+                log(&format!("setup: {e}"));
+            }
+            // A copy as built runs from where it is, as before (`not_started_here`); only the one
+            // file asks plainly, and never runs as a bar from where it is.
+            if !bundle.packed {
+                return true;
+            }
+            match ask_plainly(kind, &why, message) {
+                Some(chosen) => Some(chosen),
+                None => {
+                    log("setup: the one file does not run as a bar from where it is");
+                    return false;
+                }
+            }
+        }
     };
     // (A first run logs only once it has a place: nothing is left behind by Cancel or Portable.)
     let Some((choice, answers)) = answer else {
@@ -325,20 +345,83 @@ fn is_newer(bundle: &Bundle, exe: &Path, installed_bytes: &[u8], installed: &Pat
     }
 }
 
-/// Shows Bevel95 Setup and waits for it. `None`: it could not be shown; `Some(None)`: cancelled.
-#[allow(clippy::option_option)]
-fn ask(kind: SetupKind, era: Era, depth: Depth) -> Option<Option<(SetupChoice, Answers)>> {
+/// Why Bevel95 Setup's own window could not be shown (issue 6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Unshown {
+    /// The look and its fonts could not be made (the reason, as `look::for_look` says it): the
+    /// bar could not draw either.
+    Look(String),
+    /// The window could not be created (`CreateWindowExW`'s error is in the log).
+    Window,
+}
+
+/// Shows Bevel95 Setup and waits for it. `Err`: it could not be shown (why); `Ok(None)`: cancelled.
+fn ask(kind: SetupKind, era: Era, depth: Depth) -> Result<Option<(SetupChoice, Answers)>, Unshown> {
     bevel_winkit::look::dpi_aware();
     let (screen, dpi) = bevel_winkit::look::main_screen();
-    let look = bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi))).ok()?;
+    let look = bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi))).map_err(Unshown::Look)?;
     DEPTH.with(|d| d.set(depth));
     let form = SetupWindow::new(Setup::in_look(kind, era), &look.regular);
     ANSWER.with(|a| a.set(None));
     kit::open_with(SetupHost { form }, look.theme, look.regular, look.bold, look.scale, |w, h| {
         (screen.left + (screen.right - screen.left - w) / 2, screen.top + (screen.bottom - screen.top - h) / 2)
-    })?;
+    })
+    .ok_or(Unshown::Window)?;
     kit::run_until_closed::<SetupHost>();
-    Some(ANSWER.with(Cell::take))
+    Ok(ANSWER.with(Cell::take))
+}
+
+/// Where this run's log is, as a person can find it (said in the messages of a Setup that could
+/// not be shown).
+fn log_place() -> String {
+    bevel_winkit::log::data_dir().join("bevel95.log").display().to_string()
+}
+
+/// Setup's own window could not be shown (`why`): the reason goes into the log, always. If the
+/// look itself could not be made, Bevel95's bar could not draw on this PC either: installing it
+/// would help nobody, so the message says so plainly, with the log's place, and nothing is done.
+/// If only the window could not be made, Setup asks through Windows' own message windows instead
+/// (a first run: install for this user with the second page's defaults, or a portable copy here,
+/// or nothing; another copy over an installed one: update it, or nothing). `None`: nothing was
+/// chosen (or could be offered); else the choice with the defaults.
+fn ask_plainly(kind: SetupKind, why: &Unshown, ask: impl Fn(&str, MESSAGEBOX_STYLE) -> i32) -> Option<(SetupChoice, Answers)> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{IDNO, MB_ICONQUESTION, MB_YESNOCANCEL};
+    match why {
+        Unshown::Look(_) => {
+            log("setup: without the look neither Setup nor the bar can draw here; nothing was offered");
+            ask(
+                &format!("{NAME} cannot draw its windows on this PC: its font could not be made.\n\nNothing was changed. The reason is in the log:\n{}", log_place()),
+                MB_OK | MB_ICONWARNING,
+            );
+            None
+        }
+        Unshown::Window => {
+            log("setup: its window could not be created; asked through Windows' own message windows instead");
+            let place = log_place();
+            match kind {
+                SetupKind::FirstRun => {
+                    let answer = ask(
+                        &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nInstall {NAME} for you on this PC?\n\nYes: install it (the classic desktop on, the Windows key opens Quick Search, not started with Windows: Bevel95 Settings changes these later).\nNo: unpack a portable copy into this file's folder.\nCancel: nothing."),
+                        MB_YESNOCANCEL | MB_ICONQUESTION,
+                    );
+                    match answer {
+                        a if a == IDYES => Some((SetupChoice::Install, Answers::default())),
+                        a if a == IDNO => Some((SetupChoice::Portable, Answers::default())),
+                        _ => None,
+                    }
+                }
+                SetupKind::OtherCopy { newer: true, .. } => (ask(
+                    &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nUpdate the installed {NAME} with this copy?"),
+                    MB_YESNO | MB_ICONQUESTION,
+                ) == IDYES)
+                    .then(|| (SetupChoice::Update, Answers::default())),
+                _ => {
+                    ask(&format!("{NAME} Setup could not be shown.\n\nNothing was changed. The reason is in the log:\n{place}"), MB_OK | MB_ICONWARNING);
+                    None
+                }
+            }
+        }
+    }
 }
 
 /// One of the companions this copy brings.
@@ -1321,6 +1404,37 @@ fn save_shortcut(link: &Path, target: &Path, arguments: &str, description: &str,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue 6: when Setup's own window cannot be shown, a first run is asked through Windows'
+    /// own message windows (Yes: install with the defaults; No: a portable copy; Cancel:
+    /// nothing), an update is offered for a newer copy, and a look that could not be made offers
+    /// nothing (the bar could not draw either) but says where the log is.
+    #[test]
+    fn a_setup_that_cannot_be_shown_asks_plainly() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IDCANCEL, IDNO};
+        let said = std::cell::RefCell::new(Vec::new());
+        let answering = |id: i32| {
+            let said = &said;
+            move |text: &str, _: MESSAGEBOX_STYLE| {
+                said.borrow_mut().push(text.to_string());
+                id
+            }
+        };
+        let window = Unshown::Window;
+        assert_eq!(ask_plainly(SetupKind::FirstRun, &window, answering(IDYES)), Some((SetupChoice::Install, Answers::default())));
+        assert_eq!(ask_plainly(SetupKind::FirstRun, &window, answering(IDNO)), Some((SetupChoice::Portable, Answers::default())));
+        assert_eq!(ask_plainly(SetupKind::FirstRun, &window, answering(IDCANCEL)), None);
+        let newer = SetupKind::OtherCopy { newer: true, can_run: false };
+        assert_eq!(ask_plainly(newer, &window, answering(IDYES)), Some((SetupChoice::Update, Answers::default())));
+        assert_eq!(ask_plainly(newer, &window, answering(IDNO)), None);
+        assert_eq!(ask_plainly(SetupKind::OtherCopy { newer: false, can_run: false }, &window, answering(IDYES)), None, "an older copy: nothing offered");
+        said.borrow_mut().clear();
+        let look = Unshown::Look("the font could not be made".into());
+        assert_eq!(ask_plainly(SetupKind::FirstRun, &look, answering(IDYES)), None, "no font: installing would help nobody");
+        let told = said.borrow();
+        assert_eq!(told.len(), 1);
+        assert!(told[0].contains("cannot draw its windows") && told[0].contains("bevel95.log"), "{}", told[0]);
+    }
 
     /// The one file started again while that very build runs tells so (the owner, 2026-11-18):
     /// the bar running is told by its window's program file. Only read: a file elsewhere is never

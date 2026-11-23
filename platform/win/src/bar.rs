@@ -549,7 +549,7 @@ pub fn run() -> u32 {
         {
             (Ok(regular), Ok(bold)) => (regular.with_period_glyphs(), bold.with_period_glyphs()),
             (Err(e), _) | (_, Err(e)) => {
-                log(&format!("cannot use the {} font: {e}", theme.font_face));
+                log(&format!("cannot use the {} font: {e} ({})", theme.font_face, font::system_facts()));
                 return 1;
             }
         };
@@ -2748,7 +2748,7 @@ fn set_era(bar: HWND, era: Era) {
         {
             (Ok(regular), Ok(bold)) => (regular.with_period_glyphs(), bold.with_period_glyphs()),
             (Err(e), _) | (_, Err(e)) => {
-                log(&format!("cannot switch to {}: the {} font failed: {e}", era.title(), theme.font_face));
+                log(&format!("cannot switch to {}: the {} font failed: {e} ({})", era.title(), theme.font_face, font::system_facts()));
                 return;
             }
         };

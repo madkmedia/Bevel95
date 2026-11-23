@@ -63,10 +63,16 @@ pub fn for_era(era: Era, scale: Scale) -> Result<Look, String> {
 }
 
 /// The GDI fonts and theme of `era` in `depth` colors at `scale`.
+/// An error says, in Bevel95's own words, which font could not be made and why (the call that
+/// failed and Windows' error number, or the face GDI gave instead), with the system's code page
+/// and DPI and the main screen's (issue 6: the log said nothing of why).
 pub fn for_look(era: Era, depth: Depth, scale: Scale) -> Result<Look, String> {
     let theme = theme::theme_in(era, depth);
-    let regular = font::render(theme.font_face, theme.font_px, false)?.with_period_glyphs();
-    let bold = font::render(theme.font_face, theme.font_px, true)?.with_period_glyphs();
+    let why = |weight: &str, e: String| {
+        format!("the {} look's {weight} font ({} {} px) could not be made: {e} ({}; the main screen's {} DPI)", era.setting(), theme.font_face, theme.font_px, font::system_facts(), main_screen().1)
+    };
+    let regular = font::render(theme.font_face, theme.font_px, false).map_err(|e| why("regular", e))?.with_period_glyphs();
+    let bold = font::render(theme.font_face, theme.font_px, true).map_err(|e| why("bold", e))?.with_period_glyphs();
     Ok(Look { theme, regular, bold, scale })
 }
 
