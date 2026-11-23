@@ -1366,7 +1366,7 @@ list's inside corner unless said.
 | 16x16 picture | row top, at the left (Details: 2 in) | same | same; Details 1 lower |
 | Label box | after the picture, text + 4 wide (Details: from 18 in, text + 8), the whole row | same | same |
 | Text | 2 in; 2 down (Small Icons: 0 down) | same | same |
-| Small Icons grid | 112 across | widest text + 28 | widest text + 28 |
+| Small Icons grid | 112 across (Large Icons' grid places kept); after Arrange Icons > by Name: widest text + 28, as many columns as fit (one capture, 2026-11-23: 89; not built) | widest text + 28 | widest text + 28 |
 | List column | widest text + 28 (112 when the window opened in List) | widest text + 28 | widest text + 28 |
 | Details header | 17 high: FFFFFF, DFDFDF, face, 808080, 000000 | same | 17 high: FFFFFF, face, 808080, 404040; rows from 19 |
 | Details default widths | Name 120, Size 60, Type 120, Modified 120 | same | Name 120, Size 96, Type 120, Modified 120 |
@@ -1392,7 +1392,8 @@ list's inside corner unless said.
   the arrow 4 in and 19 down), the button cycles Large, Small, List, Details; 2000's one drop-down 31
   wide (picture 4 in, the arrow 22 in and 10 down) whose press opens the menu at once.
 - The empty area's menu starts with View and a line under it (95's My Computer too).
-- Not measured: a 16x16 shortcut arrow (Bevel95 shrinks the look's 32x32 one); 2000's Thumbnails
+- The 16x16 shortcut arrow (measured 2026-11-23, `-fileicons-` captures): shell32's own 16x16
+  arrow, 2000's gray 848484 (its image list's 5 bits). Not measured: 2000's Thumbnails
   (left out); the menu titles 2000 grays in a window without the keyboard (not built); one pixel at
   the lower left of 98's hot Views arrow (masked in its case).
 ## The web view panel (Windows 98 and 2000 folder windows)
@@ -1833,4 +1834,5 @@ All on the Reference PCs at 800x600 True Color, Small Fonts; every value checked
   the small views).
 - Maximized windows of the survey: 2000's True Color one put its first column at x 17 (Bevel95 and
   its 256-color capture: 23); 95's Small Icons, arranged after Large Icons, put its columns 89 apart
-  (the widest label + 28), where 112 is measured above for 95. Neither is followed yet.
+  (the widest label + 28), where 112 is measured above for 95 before any arranging (see "Folder
+  views"). Neither is followed yet (decisions.md, "Icons for kinds of file").

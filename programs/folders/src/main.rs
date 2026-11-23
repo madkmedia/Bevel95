@@ -214,9 +214,86 @@ struct Snapshot {
     attributes: HashMap<String, u32>,
 }
 
-static SNAPSHOTS: Mutex<Vec<(usize, Snapshot)>> = Mutex::new(Vec::new());
-/// Files' own pictures read after their names showed, by window id: (item id, picture).
-static PICTURES: Mutex<Vec<(usize, PictureUpdates)>> = Mutex::new(Vec::new());
+/// What readers found, by window id and the reader's generation (`Generations`).
+static SNAPSHOTS: Mutex<Vec<(usize, u64, Snapshot)>> = Mutex::new(Vec::new());
+/// Files' own pictures read after their names showed, by window id and reader generation: (item
+/// id, picture).
+static PICTURES: Mutex<Vec<(usize, u64, PictureUpdates)>> = Mutex::new(Vec::new());
+
+/// Each window's readers by generation: a window whose reader is started again (the look changed,
+/// Refresh) keeps its id, so what an earlier reader still delivers is told apart by its
+/// generation and dropped, at the reader (before it posts) and at the window (when it takes it).
+#[derive(Default)]
+struct Generations {
+    next: u64,
+    current: HashMap<usize, u64>,
+}
+
+impl Generations {
+    /// A new reader of window `id`: its generation, from now on the window's current one.
+    fn start(&mut self, id: usize) -> u64 {
+        self.next += 1;
+        self.current.insert(id, self.next);
+        self.next
+    }
+
+    fn is_current(&self, id: usize, generation: u64) -> bool {
+        self.current.get(&id) == Some(&generation)
+    }
+
+    fn forget(&mut self, id: usize) {
+        self.current.remove(&id);
+    }
+}
+
+static GENERATIONS: Mutex<Option<Generations>> = Mutex::new(None);
+
+/// Whether reader `generation` is window `id`'s current one.
+fn is_current(id: usize, generation: u64) -> bool {
+    GENERATIONS.lock().ok().is_some_and(|g| g.as_ref().is_some_and(|g| g.is_current(id, generation)))
+}
+
+/// Takes window `id`'s entries out of `all`, giving back the current reader's (the last) and
+/// dropping any earlier reader's.
+fn take_current<T>(all: &mut Vec<(usize, u64, T)>, id: usize, current: impl Fn(u64) -> bool) -> Vec<T> {
+    let mut out = Vec::new();
+    let mut k = 0;
+    while k < all.len() {
+        if all[k].0 == id {
+            let (_, g, t) = all.remove(k);
+            if current(g) {
+                out.push(t);
+            }
+        } else {
+            k += 1;
+        }
+    }
+    out
+}
+
+/// Who started a reader: the person (opening, navigating, Refresh) or the look's change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StartedBy {
+    Person,
+    LookChange,
+}
+
+/// Whether a reader tells that its drive cannot be read: once, and only when the person's own
+/// doing started it (finding 1 of the review of 2026-11-23: a look change asked again).
+struct Unreadable {
+    told: bool,
+}
+
+impl Unreadable {
+    fn new(by: StartedBy) -> Unreadable {
+        Unreadable { told: by == StartedBy::LookChange }
+    }
+
+    /// True the first time only (and never for a reader the look's change started).
+    fn tell(&mut self) -> bool {
+        !std::mem::replace(&mut self.told, true)
+    }
+}
 type PictureUpdates = Vec<(String, Picture)>;
 /// The items each window shows on its screen now (their pictures are read first).
 static WANTED: Mutex<Option<HashMap<usize, Vec<String>>>> = Mutex::new(None);
@@ -441,14 +518,20 @@ fn read_my_computer(era: Era, ask_lock: bool) -> Snapshot {
 /// Reads a folder (or My Computer, or the Desktop) again and again on a thread of its own until
 /// `stop`, handing what changed to the program's window (`WM_ITEMS`). Pictures are read only for
 /// new or changed items.
-fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: HWND) {
+///
+/// `by`: whether the person's own doing started it (opening, navigating, Refresh) or the look's
+/// change: only the person's doing tells that a drive cannot be read (the look's message, or
+/// Windows' unlock window for a locked drive). Whatever an earlier reader of the same window still
+/// delivers after this one started is dropped (`Generations`).
+fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: HWND, by: StartedBy) {
     let hub = hub as usize;
+    let generation = GENERATIONS.lock().map(|mut g| g.get_or_insert_with(Generations::default).start(id)).unwrap_or(0);
     let spawned = std::thread::Builder::new().name("folder reader".into()).spawn(move || {
         bevel_winkit::com::init();
         let mut last: Option<(Vec<Seen>, usize, u64)> = None;
         let mut last_drives: Option<Vec<(String, String)>> = None;
         let mut known: HashMap<(PathBuf, u64), Item> = HashMap::new();
-        let mut told = false;
+        let mut unreadable = Unreadable::new(by);
         // Each kind of file asked about once; the files whose own picture is still to be read.
         let mut kinds: HashMap<(String, bool), shell::Kind> = HashMap::new();
         let mut pending: Vec<(PathBuf, u64)> = Vec::new();
@@ -484,9 +567,8 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
                         if let Shows::Folder(dir) = &shows
                             && dir.parent().is_none()
                             && last.is_none()
-                            && !told
+                            && unreadable.tell()
                         {
-                            told = true;
                             let letter = dir.to_string_lossy().chars().next().unwrap_or('A');
                             // Locked by BitLocker (asked here, on the reader's thread): Windows'
                             // unlock window instead of the look's message (`LOCKED_FLAG`).
@@ -547,8 +629,13 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
             };
             if let Some(s) = snapshot {
                 if let Ok(mut all) = SNAPSHOTS.lock() {
-                    all.retain(|(i, _)| *i != id);
-                    all.push((id, s));
+                    // A newer reader of this window took over: this one's reading goes nowhere
+                    // (and never replaces the newer one's).
+                    if !is_current(id, generation) {
+                        break;
+                    }
+                    all.retain(|(i, ..)| *i != id);
+                    all.push((id, generation, s));
                 }
                 // SAFETY: posting to the program's own window (a stale handle just fails).
                 unsafe { PostMessageW(hub as HWND, WM_ITEMS.id(), id, 0) };
@@ -596,7 +683,10 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
                 }
                 if !updates.is_empty() {
                     if let Ok(mut all) = PICTURES.lock() {
-                        all.push((id, updates));
+                        if !is_current(id, generation) {
+                            break;
+                        }
+                        all.push((id, generation, updates));
                     }
                     // SAFETY: posting to the program's own window.
                     unsafe { PostMessageW(hub as HWND, WM_PICTURES.id(), id, 0) };
@@ -747,7 +837,8 @@ fn window_of(id: usize) -> Option<HWND> {
 /// Files' own pictures reach their windows (nothing moves; the rows on screen were read first).
 fn pictures_ready() {
     let all = PICTURES.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
-    for (id, updates) in all {
+    // An earlier reader's pictures (the window's reader started again since) are dropped.
+    for (id, _, updates) in all.into_iter().filter(|&(id, g, _)| is_current(id, g)) {
         let Some(hwnd) = window_of(id) else { continue };
         kit::scope::<FolderHost, _>(hwnd, || {
             kit::update::<FolderHost>(|h| {
@@ -774,10 +865,7 @@ fn publish_wanted() {
 
 /// A reader's new items reach their window.
 fn items_ready(id: usize) {
-    let Some(snapshot) = SNAPSHOTS.lock().ok().and_then(|mut all| {
-        let at = all.iter().position(|(i, _)| *i == id)?;
-        Some(all.remove(at).1)
-    }) else {
+    let Some(snapshot) = SNAPSHOTS.lock().ok().and_then(|mut all| take_current(&mut all, id, |g| is_current(id, g)).pop()) else {
         return;
     };
     let Some(hwnd) = window_of(id) else { return };
@@ -1670,7 +1758,7 @@ fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
         unsafe { ShowWindow(hwnd, SW_MAXIMIZE) };
     }
     log(&format!("folders: opened a window{} ({} open)", if exploring { " with the tree" } else { "" }, WINDOWS.with(|w| w.borrow().len())));
-    start_reader(id, shows, era, stop, HUB.with(Cell::get));
+    start_reader(id, shows, era, stop, HUB.with(Cell::get), StartedBy::Person);
     if with_tree {
         let wanted = kit::scope::<FolderHost, _>(hwnd, || kit::with::<FolderHost, _>(|h| h.form.tree.wanted()).unwrap_or_default());
         read_tree_rows(hwnd, era, wanted, OpenedBy::Person);
@@ -1784,7 +1872,7 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
     unsafe { SetWindowTextW(hwnd, text.as_ptr()) };
     kit::set_program_icons::<FolderHost>(&icon, &icon);
     kit::update::<FolderHost>(|_| {});
-    start_reader(id, shows.clone(), era, stop, HUB.with(Cell::get));
+    start_reader(id, shows.clone(), era, stop, HUB.with(Cell::get), StartedBy::Person);
     // The place's names, space and known folders, read off this thread; they reach the window
     // while it still shows that place (`prepared_ready`).
     let hub = HUB_FOR_THREADS.load(Ordering::SeqCst);
@@ -2994,8 +3082,11 @@ impl Hosted for FolderHost {
     fn closed(&mut self) {
         let id = self.id;
         WINDOWS.with(|w| w.borrow_mut().retain(|(i, _, _)| *i != id));
+        if let Ok(mut g) = GENERATIONS.lock() && let Some(g) = g.as_mut() {
+            g.forget(id);
+        }
         if let Ok(mut all) = SNAPSHOTS.lock() {
-            all.retain(|(i, _)| *i != id);
+            all.retain(|(i, ..)| *i != id);
         }
         let left = WINDOWS.with(|w| w.borrow().len());
         log(&format!("folders: closed a window ({left} open)"));
@@ -3042,7 +3133,7 @@ impl Hosted for FolderHost {
                         // picture (never the old look's).
                         h.stop.store(true, Ordering::SeqCst);
                         h.stop = Arc::new(AtomicBool::new(false));
-                        start_reader(h.id, h.shows.clone(), era, h.stop.clone(), HUB.with(Cell::get));
+                        start_reader(h.id, h.shows.clone(), era, h.stop.clone(), HUB.with(Cell::get), StartedBy::LookChange);
                     }
                     h.form.set_font(&look.regular);
                 });
@@ -3361,7 +3452,7 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
                 kit::with::<FolderHost, _>(|h| {
                     h.stop.store(true, Ordering::SeqCst);
                     h.stop = Arc::new(AtomicBool::new(false));
-                    start_reader(h.id, h.shows.clone(), h.form.era, h.stop.clone(), HUB.with(Cell::get));
+                    start_reader(h.id, h.shows.clone(), h.form.era, h.stop.clone(), HUB.with(Cell::get), StartedBy::Person);
                 });
             }
             _ => {}
@@ -4702,6 +4793,49 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// A window's reader started again because the look changed never tells that its drive cannot
+    /// be read (no message, no unlock window); the person's own doing tells it once.
+    #[test]
+    fn only_the_persons_doing_tells_an_unreadable_drive() {
+        use super::{StartedBy, Unreadable};
+        // Opened (or Refresh, or navigated): told at the first reading, not again.
+        let mut opened = Unreadable::new(StartedBy::Person);
+        assert!(opened.tell());
+        assert!(!opened.tell());
+        // Then the look changed: a new reader for the same window says nothing, ever.
+        let mut again = Unreadable::new(StartedBy::LookChange);
+        assert!(!again.tell());
+        assert!(!again.tell());
+        // Refresh afterwards is the person's doing again.
+        assert!(Unreadable::new(StartedBy::Person).tell());
+    }
+
+    /// The look changed, then Refresh: what each earlier reader of the window still delivers (a
+    /// snapshot, a batch of pictures) is dropped; the newest reader's comes through, in whichever
+    /// order they arrive.
+    #[test]
+    fn an_earlier_readers_deliveries_are_dropped() {
+        use super::{Generations, take_current};
+        let mut g = Generations::default();
+        let opened = g.start(7);
+        let other_window = g.start(8);
+        let after_look = g.start(7);
+        assert!(!g.is_current(7, opened) && g.is_current(7, after_look) && g.is_current(8, other_window));
+        // The old reader's snapshot lands after the new one's: only the new one is taken.
+        let mut all = vec![(7, after_look, "new look"), (8, other_window, "window 8"), (7, opened, "old look")];
+        assert_eq!(take_current(&mut all, 7, |x| g.is_current(7, x)), vec!["new look"]);
+        assert_eq!(all, vec![(8, other_window, "window 8")], "the other window's stays");
+        // Refresh: the look change's reader is earlier now.
+        let refreshed = g.start(7);
+        let mut all = vec![(7, after_look, "look"), (7, refreshed, "refresh")];
+        assert_eq!(take_current(&mut all, 7, |x| g.is_current(7, x)), vec!["refresh"]);
+        let mut late = vec![(7, after_look, "late pictures")];
+        assert!(take_current(&mut late, 7, |x| g.is_current(7, x)).is_empty(), "a late batch of pictures goes nowhere");
+        // A closed window's readers are all earlier ones.
+        g.forget(7);
+        assert!(!g.is_current(7, refreshed));
+    }
+
     /// A drive whose last reading found it locked by BitLocker gets Unlock Drive... on its menu,
     /// and only while that is so; for Open the reading must be recent. (Letters no PC here has, so
     /// no real drive is asked; nothing is started.)

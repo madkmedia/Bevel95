@@ -97,10 +97,16 @@ pub fn public_desktop_folder() -> Option<PathBuf> {
 
 /// Explorer's display name and type name of a file.
 pub fn names(path: &str) -> Option<(String, String)> {
+    names_asking(path, true)
+}
+
+/// `names`, the type name asked for only when `type_name` (else it comes back empty).
+fn names_asking(path: &str, type_name: bool) -> Option<(String, String)> {
     let p = wide(path);
     let mut info = SHFILEINFOW::default();
+    let flags = if type_name { SHGFI_DISPLAYNAME | SHGFI_TYPENAME } else { SHGFI_DISPLAYNAME };
     // SAFETY: a null-terminated path and a correctly sized out-struct; nothing to free.
-    let ok = unsafe { SHGetFileInfoW(p.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_DISPLAYNAME | SHGFI_TYPENAME) };
+    let ok = unsafe { SHGetFileInfoW(p.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, flags) };
     if ok == 0 {
         return None;
     }
@@ -252,14 +258,13 @@ pub fn list_folder_with(dir: &Path, switches: bevel_core::hidden::Switches) -> O
 /// Off every window's thread: the shell may read the file (never run it).
 pub fn read_item(s: &Seen, era: Era) -> Item {
     let path = s.path.to_string_lossy().into_owned();
-    let (name, today_type) = names(&path).unwrap_or_else(|| {
-        let name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        (name, String::new())
-    });
-    let extension = s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    let shortcut = !s.folder && (extension == "lnk" || extension == "url");
     let file_name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let decision = if s.folder { None } else { Some(file_kinds::decide(era, &file_name)) };
+    // Today's Type name only where the look does not give its own.
+    let ask_type = decision.and_then(|d| d.type_name).is_none();
+    let (name, today_type) = names_asking(&path, ask_type).unwrap_or_else(|| (file_name.clone(), String::new()));
+    let extension = ending_of(&s.path, s.folder);
+    let shortcut = !s.folder && (extension == "lnk" || extension == "url");
     let picture = match decision.map(|d| d.picture) {
         None => Picture::Folder,
         Some(Choice::Look(kind)) => Picture::Kind(kind),
@@ -271,6 +276,15 @@ pub fn read_item(s: &Seen, era: Era) -> Item {
     };
     let type_name = decision.and_then(|d| d.type_name).map_or(today_type, str::to_string);
     Item { id: path, name, picture, shortcut, folder: s.folder, type_name, size: s.size, modified: s.modified }
+}
+
+/// A file's ending by Windows' rule (`file_kinds::ending`: ".exe" alone is a program, "a.b c" has
+/// none), lower case; empty for a folder or a name without one. Every place here takes it so.
+fn ending_of(path: &Path, folder: bool) -> String {
+    if folder {
+        return String::new();
+    }
+    path.file_name().and_then(|n| file_kinds::ending(&n.to_string_lossy())).unwrap_or_default()
 }
 
 /// A program's own 32×32 picture, if it has one: the shell's picture of the file is not the one it
@@ -409,7 +423,7 @@ pub fn pictures_at(index: i32) -> Arc<ShellPicture> {
 pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>, era: Era) -> Item {
     let path = s.path.to_string_lossy().into_owned();
     let file_name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let extension = if s.folder { String::new() } else { s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default() };
+    let extension = ending_of(&s.path, s.folder);
     let kind = kinds.entry((extension.clone(), s.folder)).or_insert_with(|| kind_of(&extension, s.folder)).clone();
     // The name without its extension is the path's own stem, never a cut by the lowercase
     // extension's length: lowercasing can change a letter's length in bytes (Kelvin sign, İ),
@@ -454,7 +468,7 @@ pub fn own_picture(path: &str, kind_index: Option<i32>) -> Option<Arc<ShellPictu
 
 /// The place in the shell's list of icons a kind of file has (for `own_picture`).
 pub fn kind_index(path: &Path, kinds: &mut HashMap<(String, bool), Kind>) -> Option<i32> {
-    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let extension = ending_of(path, false);
     kinds.entry((extension.clone(), false)).or_insert_with(|| kind_of(&extension, false)).index
 }
 
@@ -531,6 +545,33 @@ mod kind_tests {
             let text = read_item(&seen(&dir.join("Notes.TXT")), era);
             assert!(matches!(text.picture, Picture::Kind(LookKind::Ending)) && text.type_name == "Text Document");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every place takes a file's ending by Windows' one rule (`file_kinds::ending`): a program
+    /// named only ".exe" is a program everywhere (its own picture compared with the kind's), and
+    /// "a.b c" has no ending (finding 3 of the review of 2026-11-23).
+    #[test]
+    fn every_place_takes_the_ending_by_one_rule() {
+        crate::com::init();
+        assert_eq!(ending_of(Path::new("C:\\x\\.exe"), false), "exe");
+        assert_eq!(ending_of(Path::new("C:\\x\\Notes.TXT"), false), "txt");
+        assert_eq!(ending_of(Path::new("C:\\x\\a.b c"), false), "");
+        assert_eq!(ending_of(Path::new("C:\\x\\a.txt"), true), "", "a folder has none");
+        let dir = scratch("file-kinds-dot-exe");
+        std::fs::copy(std::env::current_exe().unwrap(), dir.join(".exe")).unwrap();
+        let path = dir.join(".exe");
+        let mut kinds = HashMap::new();
+        let item = quick_item(&seen(&path), &mut kinds, Era::Win98);
+        assert!(matches!(item.picture, Picture::Kind(LookKind::Program)), "{:?}", item.picture);
+        assert_eq!(item.type_name, "Application");
+        // Its own picture is compared with the programs' kind ("exe"), not with "no ending". (What
+        // the shell answers is not checked here: while other tests ask it at the same time, its
+        // answers about this file came back different or empty now and then.)
+        assert!(kinds.contains_key(&("exe".to_string(), false)) && !kinds.contains_key(&(String::new(), false)));
+        let _ = kind_index(&path, &mut kinds);
+        assert_eq!(kinds.len(), 1, "kind_index asked about the same kind");
+        assert_eq!(read_item(&seen(&path), Era::Win98).type_name, "Application");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

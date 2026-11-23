@@ -6174,11 +6174,31 @@ files shown in every view and depth and found pixel for pixel).
 - **Proof**: golden scenes `<look>-folder-kinds-large/-small/-details`; comparison cases
   `vm-<look>-fileicons-*` (11: True Color Large and Small of each, 256 colors of each, 16 colors of 95
   and 98) against the PCs' `C:\ICONS`, exact, masking only the pictures that are the file's own or
-  today's, and in Small Icons the Internet shortcut's arrow (Bevel95 shrinks its 32×32 arrow; the
-  PCs drew shell32's own 16×16 one: not changed here). Two captures' arrangement differs from
-  Bevel95's and is compared cell by cell where the PC put each item: 2000's True Color window had its
-  columns 6 pixels further left, 95's Small Icons eight columns 89 apart. 2000's 16-color captures
-  (640×480) were not made a case.
+  today's. Two captures' arrangement differs from Bevel95's and is compared cell by cell where the
+  PC put each item: 2000's True Color window had its columns 6 pixels further left, 95's Small
+  Icons eight columns 89 apart. 2000's 16-color captures (640×480) were not made a case.
+- **The small views' shortcut arrow** (repaired 2026-11-23 after the review): Small Icons, List
+  and Details draw shell32's own 16×16 arrow (`icons::SHORTCUT_ARROW`, the one 95, 98 and 2000
+  drew in Remove Shortcuts' tree), Windows 2000's through its image list's 5 bits (808080 shows
+  848484), as the `-fileicons-` captures show it; before, the 32×32 arrow was shrunk. The cases'
+  arrow mask is gone; the golden scenes `win95-folder-kinds-small`, `-details` and
+  `win98|win2000-folder-kinds-small` changed by it (their Internet shortcut).
+- **95's Small Icons columns, read off the captures, not built**: before any arranging, Small Icons
+  keeps each item's place of Large Icons' grid with columns 112 apart (`view-v1-small-*`,
+  `view-many-small-open`: names of two letters, still 112, seven columns as the Large window had);
+  after View > Arrange Icons > by Name (`win95-truecolor-fileicons-small`, the only such capture)
+  the columns stand as wide as the widest label + 28 (89 there, exactly 98's cell for the same
+  names in `win98-truecolor-fileicons-small`), as many as fit the window (eight in 796). Bevel95
+  keeps 112 in 95 always: building the second state needs it measured more (private/todo.md).
+  2000's True Color window putting its first column 6 pixels left of its 256-color one (both
+  maximized) has no reading yet.
+- **Reader restarts** (repaired 2026-11-23 after the review): a reader started because the look
+  changed never tells that its drive cannot be read (`StartedBy::LookChange`, `Unreadable`); each
+  reader of a window has a generation (`Generations`) and whatever an earlier one still delivers
+  is dropped, at the reader before it posts (it then ends) and at the window when it takes a
+  snapshot or pictures, for the look change and Refresh alike. Every place that takes a file's
+  ending for its kind uses `file_kinds::ending` (`shell::ending_of`: ".exe" alone is a program);
+  `read_item` asks the shell for no Type name the look replaces.
 - **Not built**: Folder Options' File Types page; the old Windows hiding .dll, .sys, .vxd, .386,
   .drv by their ending (95, 98); opening a file with an old program; the pictures in menus.
 - Programs grew: bevel95.exe and folders.exe by about 280 KB each (the three sheets, 218,542 bytes,

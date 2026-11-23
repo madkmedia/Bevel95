@@ -524,8 +524,16 @@ impl Desktop {
         };
         let mut icon = icon;
         if item.shortcut {
-            // The look's 32×32 arrow made small (no 16×16 shortcut was among the measured items).
-            let arrow = crate::desktop_art::shortcut_arrow(self.era).downscaled(SMALL_PICTURE);
+            // Shell32's own 16×16 arrow, as the Reference PCs drew it in the small views (the
+            // `-fileicons-` captures' Internet shortcut, 2026-11-23); Windows 2000's through its
+            // image list's 5 bits per channel (its gray 808080 shows as 848484, as its 32×32 one).
+            let mut arrow = crate::icons::SHORTCUT_ARROW.icon();
+            if self.era == Era::Win2000 {
+                let five = |v: u32| (v & 0xF8) | (v >> 5);
+                for p in arrow.pixels.iter_mut().filter(|p| **p >> 24 != 0) {
+                    *p = (*p & 0xFF00_0000) | five((*p >> 16) & 0xFF) << 16 | five((*p >> 8) & 0xFF) << 8 | five(*p & 0xFF);
+                }
+            }
             for (p, a) in icon.pixels.iter_mut().zip(&arrow.pixels) {
                 if a >> 24 != 0 {
                     *p = *a;

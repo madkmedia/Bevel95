@@ -7,9 +7,10 @@
 //!
 //! Masked, each with its reason: the pictures that are the file's own or today's (icons, cursors,
 //! shortcuts, the screen saver, the program with an icon, and every kind the PC did not know:
-//! Bevel95 reads those from today's shell); 98's tooltip and the pointer where a capture shows
-//! them. The selection's tint is not in these captures (nothing selected; 95's and 98's focus
-//! frame on the first label is).
+//! Bevel95 reads those from today's shell). Only the list is compared (98's tooltip over its title
+//! bar lies outside it). The selection's tint is not in these captures (nothing selected; 95's
+//! and 98's focus frame on the first label is). The shortcut arrows are compared, 32×32 and
+//! 16×16.
 
 use super::*;
 use bevel_core::desktop_icons::{Item, Picture, ViewMode};
@@ -138,14 +139,7 @@ pub fn fileicons_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 }
             }
         };
-        let mut masks: Vec<Rect> = masked.iter().map(|&i| moved(i, w.view.icon_rect(i))).collect();
-        if mode == ViewMode::Small {
-            // The Internet shortcut's arrow: Bevel95 shrinks the 32×32 arrow, the PCs drew
-            // shell32's own 16×16 one (measured here for the first time; not this job's).
-            let url = FILES.iter().position(|f| *f == "url.url").unwrap();
-            let r = moved(url, w.view.icon_rect(url));
-            masks.push(Rect::new(r.x, r.y + 8, 8, 8));
-        }
+        let masks: Vec<Rect> = masked.iter().map(|&i| moved(i, w.view.icon_rect(i))).collect();
         let regions = match placed {
             Same => {
                 let list = Rect::new(2, list_top, 796, 550 - list_top);
