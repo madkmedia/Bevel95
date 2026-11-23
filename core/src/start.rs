@@ -249,9 +249,85 @@ pub fn fixed_target(entry: StartEntry, era: Era, index: usize) -> Option<Target>
     fixed_submenu(entry, era).get(index).copied().flatten().map(|(_, target)| target)
 }
 
+/// Which of the Start menu's long menus a menu is, for its look's rule (`long_rule`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LongKind {
+    /// The Programs menu and its folders.
+    Programs,
+    /// Favorites and its folders.
+    Favorites,
+    /// Any other menu of the Start menu's family: the Start menu itself, Documents, Settings,
+    /// Find, a task button's list of windows, Windows 2000's Quick Launch list.
+    Other,
+}
+
+/// How a menu longer than the screen goes on in `era` (brief 91; the Reference PCs, survey
+/// part 1): Windows 95 in columns; Windows 98 scrolls every long menu; Windows 2000 in columns,
+/// its Programs menu scrolling with "Scroll the Programs menu" on and its Favorites always.
+pub fn long_rule(era: Era, kind: LongKind, scroll_programs: bool) -> crate::paint::Long {
+    use crate::paint::Long;
+    match era {
+        Era::Win95 => Long::Columns,
+        Era::Win98 => Long::Scroll { flat: false },
+        Era::Win2000 => match kind {
+            LongKind::Favorites => Long::Scroll { flat: true },
+            LongKind::Programs if scroll_programs => Long::Scroll { flat: true },
+            _ => Long::Columns,
+        },
+    }
+}
+
+/// What a look's menu does when its columns would not fit the screen: it scrolls (never an entry
+/// off the screen: the owner's decision for Windows 95, which ran off; applied to Windows 2000 too,
+/// PROVISIONAL), Windows 95 with strips drawn as 98's (it had none), 2000 with its own flat ones.
+pub fn scroll_instead(era: Era) -> crate::paint::Long {
+    crate::paint::Long::Scroll { flat: era == Era::Win2000 }
+}
+
+/// Where a menu of columns `w` wide stands across a screen `screen_x..screen_x + screen_w`, opening
+/// at `beside` (right of the entry it cascades from): there if it fits; Windows 95 moves it to the
+/// screen's left edge when it would pass the right one (covering the Start menu), Windows 2000
+/// never moves it. `None`: it does not fit even so, and scrolls instead (`scroll_instead`).
+pub fn place_columns(era: Era, beside: i32, w: i32, screen_x: i32, screen_w: i32) -> Option<i32> {
+    let right = screen_x + screen_w;
+    if beside + w <= right {
+        return Some(beside);
+    }
+    (era == Era::Win95 && w <= screen_w).then_some(screen_x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each look's own way with a menu longer than the screen (survey part 1).
+    #[test]
+    fn each_look_has_its_own_long_menus() {
+        use crate::paint::Long;
+        for kind in [LongKind::Programs, LongKind::Favorites, LongKind::Other] {
+            assert_eq!(long_rule(Era::Win95, kind, true), Long::Columns);
+            assert_eq!(long_rule(Era::Win98, kind, false), Long::Scroll { flat: false });
+        }
+        assert_eq!(long_rule(Era::Win2000, LongKind::Programs, false), Long::Columns, "a fresh installation");
+        assert_eq!(long_rule(Era::Win2000, LongKind::Programs, true), Long::Scroll { flat: true }, "Scroll the Programs menu");
+        assert_eq!(long_rule(Era::Win2000, LongKind::Favorites, false), Long::Scroll { flat: true }, "Favorites always");
+        assert_eq!(long_rule(Era::Win2000, LongKind::Other, true), Long::Columns);
+        assert_eq!(scroll_instead(Era::Win95), Long::Scroll { flat: false });
+        assert_eq!(scroll_instead(Era::Win2000), Long::Scroll { flat: true });
+    }
+
+    /// Windows 95 moves columns that pass the right edge to the left one (measured: 80 entries at
+    /// 640x480 from x 0); Windows 2000 never moves them; what fits nowhere scrolls (`None`).
+    #[test]
+    fn columns_stand_beside_or_move_to_the_left_edge() {
+        assert_eq!(place_columns(Era::Win95, 160, 400, 0, 640), Some(160), "fits beside");
+        assert_eq!(place_columns(Era::Win95, 160, 494, 0, 640), Some(0), "moved to the left edge");
+        assert_eq!(place_columns(Era::Win95, 160, 640, 0, 640), Some(0), "just fits the width");
+        assert_eq!(place_columns(Era::Win95, 160, 641, 0, 640), None, "one pixel too wide: scrolls");
+        assert_eq!(place_columns(Era::Win2000, 250, 398, 0, 800), Some(250));
+        assert_eq!(place_columns(Era::Win2000, 250, 551, 0, 800), None, "would run off: scrolls");
+        assert_eq!(place_columns(Era::Win95, 1920 + 160, 494, 1920, 640), Some(1920), "a second screen's left edge");
+    }
 
     /// As read on the reference PCs after opening zebra, apple and mango (in that order).
     #[test]

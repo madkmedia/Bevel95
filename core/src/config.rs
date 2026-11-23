@@ -138,11 +138,14 @@ pub struct StartOptions {
     pub favorites: bool,
     /// "Display Logoff": the "Log Off <user>..." entry.
     pub log_off: bool,
+    /// "Scroll the Programs menu": a Programs menu longer than the screen scrolls instead of going
+    /// on in columns (brief 91; off on a fresh installation, as measured).
+    pub scroll_programs: bool,
 }
 
 impl Default for StartOptions {
     fn default() -> StartOptions {
-        StartOptions { favorites: false, log_off: true }
+        StartOptions { favorites: false, log_off: true, scroll_programs: false }
     }
 }
 
@@ -232,9 +235,11 @@ auto_hide = no
 small_icons = no
 show_clock = yes
 
-# Windows 2000's Start menu: show Favorites, show Log Off (yes or no).
+# Windows 2000's Start menu: show Favorites, show Log Off, scroll a Programs menu longer than the
+# screen instead of more columns (yes or no).
 favorites = no
 log_off = yes
+scroll_programs = no
 
 # Bevel95's own clock: seconds ahead of the PC's clock (negative: behind). Double-click the
 # clock to set it; 0 shows the PC's time. The PC's own clock is never changed.
@@ -280,7 +285,7 @@ battery_percent = no
 type Flag = fn(&mut Config) -> &mut bool;
 
 /// The settings-file names of the yes/no settings, with their field.
-const FLAG_KEYS: [(&str, Flag); 8] = [
+const FLAG_KEYS: [(&str, Flag); 9] = [
     ("always_on_top", |c| &mut c.options.always_on_top),
     ("auto_hide", |c| &mut c.options.auto_hide),
     ("small_icons", |c| &mut c.options.small_icons),
@@ -289,10 +294,11 @@ const FLAG_KEYS: [(&str, Flag); 8] = [
     ("log_off", |c| &mut c.start.log_off),
     ("desktop", |c| &mut c.desktop),
     ("group", |c| &mut c.group),
+    ("scroll_programs", |c| &mut c.start.scroll_programs),
 ];
 
 /// The settings-file lines of the yes/no settings in `config`, as (name, value) pairs.
-pub fn flag_settings(config: &Config) -> [(&'static str, &'static str); 8] {
+pub fn flag_settings(config: &Config) -> [(&'static str, &'static str); 9] {
     let mut config = *config;
     FLAG_KEYS.map(|(key, field)| (key, if *field(&mut config) { "yes" } else { "no" }))
 }
@@ -643,7 +649,7 @@ mod tests {
     fn options_round_trip_through_the_file() {
         let config = Config {
             options: TaskbarOptions { always_on_top: false, auto_hide: true, small_icons: true, show_clock: false },
-            start: StartOptions { favorites: true, log_off: false },
+            start: StartOptions { favorites: true, log_off: false, scroll_programs: false },
             desktop: false,
             ..Config::default()
         };

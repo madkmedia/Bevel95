@@ -603,11 +603,29 @@ pub struct MenuLayout {
     pub rects: Vec<Rect>,
     /// Where shortcut texts start, from the left of an entry (0 when there are none).
     pub shortcut_x: i32,
+    /// The menu's frame width.
+    pub frame: i32,
+    /// Each column's left edge and width (one for a menu that fits one column).
+    pub columns: Vec<(i32, i32)>,
+    /// Where an etched line between two columns stands (its first pixel; it is 2 wide).
+    pub lines: Vec<i32>,
+    /// A menu that scrolls (`Long::Scroll`): its entries' `rects` are then where they stand
+    /// unscrolled, and `shown_rect` says where they show.
+    pub scroll: Option<Scroll>,
 }
 
 impl MenuLayout {
-    /// The entry under (x, y), if it can be highlighted (`Menu::selectable`).
+    /// The entry under (x, y), if it can be highlighted (`Menu::selectable`); in a scrolling
+    /// menu only one that shows there between the strips.
     pub fn hit(&self, menu: &Menu, style: MenuStyle, x: i32, y: i32) -> Option<usize> {
+        if self.scroll.is_some() {
+            let (top, bottom) = self.view();
+            if y < top || y >= bottom {
+                return None;
+            }
+            let i = (0..self.rects.len()).find(|&i| self.shown_rect(i).is_some_and(|r| r.contains(x, y)))?;
+            return menu.selectable(i, style).then_some(i);
+        }
         let i = self.rects.iter().position(|r| r.contains(x, y))?;
         menu.selectable(i, style).then_some(i)
     }
@@ -702,6 +720,7 @@ fn layout_menu_with(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle,
     let mut first_separator = true;
     let (mut x, mut y, mut bottom) = (left, frame, frame);
     let mut rects = Vec::with_capacity(menu.entries.len());
+    let mut columns = vec![(left, item_w)];
     for e in &menu.entries {
         let h = match (e.kind, style) {
             (EntryKind::Separator, MenuStyle::Popup) => theme.popup.sep.h,
@@ -718,13 +737,283 @@ fn layout_menu_with(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle,
         if y + h > max_height - frame - pad && y > frame {
             x += item_w;
             y = frame;
+            columns.push((x, item_w));
         }
         rects.push(Rect::new(x, y, item_w, h));
         y += h;
         bottom = bottom.max(y);
     }
     let shortcut_x = if style == MenuStyle::Popup { popup_columns(theme, fonts, menu).1 } else { 0 };
-    MenuLayout { width: x + item_w + frame, height: bottom + pad + frame, rects, shortcut_x }
+    MenuLayout { width: x + item_w + frame, height: bottom + pad + frame, rects, shortcut_x, frame, columns, lines: Vec::new(), scroll: None }
+}
+
+/// How a menu longer than the screen goes on (brief 91; the Reference PCs, survey part 1 of
+/// `private/probes/start-long`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Long {
+    /// Further columns, each as wide as its own widest entry, with an etched line between them
+    /// (Windows 95, and Windows 2000 on a fresh installation).
+    Columns,
+    /// One column the screen's height whose entries scroll between arrow strips (Windows 98;
+    /// `flat`: Windows 2000's strips, which do not sink under the pointer).
+    Scroll { flat: bool },
+}
+
+/// One of a scrolling menu's arrow strips.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Strip {
+    Up,
+    Down,
+}
+
+/// A scrolling menu's state: how far its entries are scrolled, in 1× pixels from the top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Scroll {
+    /// How far the entries are scrolled (0: the first entry at the top).
+    pub offset: i32,
+    /// The furthest it goes: the last entry then reaches the bottom of the frame.
+    pub end: i32,
+    /// One step: an entry's height (98 scrolls one entry at a time).
+    pub row: i32,
+    /// Windows 2000's flat strips (they do not sink under the pointer, the arrow stays).
+    pub flat: bool,
+    /// The strip under the pointer.
+    pub hot: Option<Strip>,
+}
+
+/// The height of an arrow strip, inside the frame (all three Reference PCs that scroll: 12).
+pub const STRIP_H: i32 = 12;
+
+impl Scroll {
+    /// Whether `strip` shows: only when there is more on its side.
+    pub fn shows(&self, strip: Strip) -> bool {
+        match strip {
+            Strip::Up => self.offset > 0,
+            Strip::Down => self.offset < self.end,
+        }
+    }
+
+    /// Scrolls by `px` toward `strip`'s side, never past either end. True if it moved.
+    pub fn step(&mut self, strip: Strip, px: i32) -> bool {
+        let before = self.offset;
+        self.set(match strip {
+            Strip::Up => self.offset - px,
+            Strip::Down => self.offset + px,
+        });
+        self.offset != before
+    }
+
+    /// Scrolls to `offset`, kept between the two ends.
+    pub fn set(&mut self, offset: i32) {
+        self.offset = offset.clamp(0, self.end);
+    }
+}
+
+/// How often a scrolling menu steps while the pointer rests on a strip, in milliseconds: the
+/// first step, then each further one (measured: Windows 98 one entry 100..200 ms after the pointer
+/// came, then one every ~300 ms; Windows 2000 20 px every ~60 ms).
+pub fn scroll_pace(flat: bool) -> (u32, u32) {
+    if flat { (60, 60) } else { (150, 300) }
+}
+
+/// How far one step of the pace scrolls, in 1× pixels: Windows 98 one entry, Windows 2000 20 px
+/// (its last step a part step to land on the end, as `Scroll::step` does).
+pub fn scroll_step(scroll: &Scroll) -> i32 {
+    if scroll.flat { 20 } else { scroll.row }
+}
+
+impl MenuLayout {
+    /// Entry `i`'s rectangle where it shows now (scrolled), from the menu's top-left corner;
+    /// `None` when it is scrolled out of sight altogether.
+    pub fn shown_rect(&self, i: usize) -> Option<Rect> {
+        let r = *self.rects.get(i)?;
+        let Some(s) = self.scroll else { return Some(r) };
+        let shifted = Rect::new(r.x, r.y - s.offset, r.w, r.h);
+        let (top, bottom) = self.view();
+        (shifted.bottom() > top && shifted.y < bottom).then_some(shifted)
+    }
+
+    /// The rows where entries show, between the strips (the whole inside without scrolling).
+    pub fn view(&self) -> (i32, i32) {
+        let frame = self.frame;
+        let Some(s) = self.scroll else { return (frame, self.height - frame) };
+        let top = frame + if s.shows(Strip::Up) { STRIP_H } else { 0 };
+        let bottom = self.height - frame - if s.shows(Strip::Down) { STRIP_H } else { 0 };
+        (top, bottom)
+    }
+
+    /// The strip at (x, y), if one shows there.
+    pub fn strip_at(&self, x: i32, y: i32) -> Option<Strip> {
+        let s = self.scroll?;
+        let inside = x >= self.frame && x < self.width - self.frame;
+        if !inside {
+            return None;
+        }
+        if s.shows(Strip::Up) && y >= self.frame && y < self.frame + STRIP_H {
+            return Some(Strip::Up);
+        }
+        let bottom = self.height - self.frame;
+        (s.shows(Strip::Down) && y >= bottom - STRIP_H && y < bottom).then_some(Strip::Down)
+    }
+
+    /// Scrolls so that entry `i` shows whole: up to its top (or to the very top for the first
+    /// rows), down until it sits just above the bottom strip (or to the end). True if it moved.
+    pub fn reveal(&mut self, i: usize) -> bool {
+        let (Some(mut s), Some(&r)) = (self.scroll, self.rects.get(i)) else { return false };
+        let before = s.offset;
+        let (frame, inner_bottom) = (self.frame, self.height - self.frame);
+        if r.y - s.offset < frame + if s.offset > 0 { STRIP_H } else { 0 } {
+            // Up: the entry's top just under the top strip (none at the very top).
+            let to = r.y - frame - STRIP_H;
+            s.set(if to <= 0 { 0 } else { to });
+        } else if r.bottom() - s.offset > inner_bottom - if s.offset < s.end { STRIP_H } else { 0 } {
+            // Down: the entry's bottom just above the bottom strip, or the end.
+            let to = r.bottom() - (inner_bottom - STRIP_H);
+            s.set(if to >= s.end { s.end } else { to });
+        }
+        self.scroll = Some(s);
+        s.offset != before
+    }
+
+    /// The column entry `i` stands in (0 for a menu of one column).
+    pub fn column_of(&self, i: usize) -> usize {
+        let Some(r) = self.rects.get(i) else { return 0 };
+        self.columns.iter().rposition(|&(x, _)| x <= r.x).unwrap_or(0)
+    }
+
+    /// The entry in the same row of the column `toward` the left (-1) or right (+1) of entry
+    /// `i`'s, or the last entry of that column if it is shorter (Windows 95's Left and Right).
+    pub fn beside(&self, i: usize, toward: i32) -> Option<usize> {
+        let col = self.column_of(i) as i32 + toward;
+        let &(x, _) = self.columns.get(usize::try_from(col).ok()?)?;
+        let y = self.rects.get(i)?.y;
+        let in_col: Vec<usize> = (0..self.rects.len()).filter(|&j| self.rects[j].x == x).collect();
+        in_col.iter().copied().find(|&j| self.rects[j].y >= y).or_else(|| in_col.last().copied())
+    }
+}
+
+/// Lays out a menu of the Start menu's family for a screen `screen_h` high (1× pixels), long
+/// menus as `long` says (brief 91). A menu that fits one column is laid out exactly as
+/// `layout_menu` lays it out. `Long::Scroll` makes one column the whole screen's height whose
+/// entries scroll (`MenuLayout::scroll`, starting at `offset`); `Long::Columns` fills columns
+/// down then across, each as wide as its own widest entry, an etched line between them.
+pub fn layout_long_menu(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, screen_h: i32, long: Long, offset: i32) -> MenuLayout {
+    menu_fonts(fonts, menu, |fonts| {
+        let base = layout_menu_with(theme, fonts, menu, style, screen_h);
+        if base.columns.len() <= 1 {
+            return base;
+        }
+        match long {
+            Long::Scroll { flat } => {
+                // One column of every entry, as tall as it is; shown through the screen's height.
+                let tall = layout_menu_with(theme, fonts, menu, style, i32::MAX);
+                // At the end the last entry reaches the frame (no bottom padding: the Reference
+                // PC's last entry ends on the inner bottom row).
+                let frame = tall.frame;
+                let content = tall.rects.iter().map(|r| r.bottom()).max().unwrap_or(frame) - frame;
+                let end = (content - (screen_h - 2 * frame)).max(0);
+                let row = icon_items(theme, style).h;
+                let scroll = Scroll { offset: offset.clamp(0, end), end, row, flat, hot: None };
+                MenuLayout { height: screen_h, scroll: Some(scroll), ..tall }
+            }
+            Long::Columns => lined_columns(theme, fonts, menu, style, &base),
+        }
+    })
+}
+
+/// `base`'s columns (as `layout_menu` breaks them), each as wide as its own widest entry, with
+/// the 2-pixel etched line between neighbours (Windows 95 and 2000, survey part 1, 2).
+fn lined_columns(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, base: &MenuLayout) -> MenuLayout {
+    let frame = base.frame;
+    let mut rects = base.rects.clone();
+    let mut columns = Vec::with_capacity(base.columns.len());
+    let mut lines = Vec::new();
+    let mut x = base.columns[0].0;
+    for (k, &(old_x, _)) in base.columns.iter().enumerate() {
+        let members: Vec<usize> = (0..rects.len()).filter(|&i| base.rects[i].x == old_x).collect();
+        let w = column_width(theme, fonts, menu, style, &members);
+        for &i in &members {
+            rects[i] = Rect::new(x, rects[i].y, w, rects[i].h);
+        }
+        columns.push((x, w));
+        x += w;
+        if k + 1 < base.columns.len() {
+            lines.push(x);
+            x += 2;
+        }
+    }
+    MenuLayout { width: x + frame, rects, columns, lines, ..base.clone() }
+}
+
+/// The width of a column holding the entries `members`: room for its own longest label, with the
+/// style's columns around it (an arrow's room only if one of them opens a submenu).
+fn column_width(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, members: &[usize]) -> i32 {
+    if style == MenuStyle::Popup {
+        return item_width(theme, fonts, menu, style);
+    }
+    let raw = style == MenuStyle::Cascade && theme.start_menu.cascade_counts_ampersands;
+    let entries = || members.iter().filter_map(|&i| menu.entries.get(i)).filter(|e| e.kind != EntryKind::Separator);
+    let measure = |e: &MenuEntry| if raw { e.font(fonts).measure(&e.label) } else { e.font(fonts).measure_label(&e.label) };
+    let widest = entries().map(measure).max().unwrap_or(0);
+    let items = icon_items(theme, style);
+    let widest = if style == MenuStyle::Cascade { widest.min(theme.start_menu.max_label_w) } else { widest };
+    let arrows = entries().any(|e| e.kind == EntryKind::Submenu);
+    let pad = if arrows { items.pad_right } else { items.pad_right_no_arrows };
+    items.icon_x + items.icon + items.text_gap + widest + pad
+}
+
+/// A scrolling menu (`Long::Scroll`): its entries painted as one tall column, the rows that show
+/// copied in between the strips, then the strips (Windows 98: 12 rows of the face color, a black
+/// arrow 5, 3 and 1 pixels wide in the middle 3 rows in from the inner edge; under the pointer
+/// sunken, black above and left, the light 3-D color below and right, without its arrow; Windows
+/// 2000: the same, flat always, its down arrow one row lower). Measured, survey part 1, 3.
+fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, layout: &MenuLayout, scroll: Scroll) {
+    let c = &theme.colors;
+    let frame = layout.frame;
+    let tall_h = layout.rects.iter().map(|r| r.bottom()).max().unwrap_or(frame) + frame;
+    let tall_h = tall_h.max(scroll.end + layout.height);
+    let tall_layout = MenuLayout { height: tall_h, scroll: None, ..layout.clone() };
+    let mut tall = Framebuffer::new(layout.width, tall_h, 0);
+    paint_menu_with(&mut tall, theme, fonts, menu, style, &tall_layout);
+    menu_frame(fb, c);
+    let (top, bottom) = layout.view();
+    for y in top..bottom {
+        for x in frame..layout.width - frame {
+            fb.set(x, y, tall.get(x, y + scroll.offset));
+        }
+    }
+    let inner_w = layout.width - 2 * frame;
+    let arrow_x = frame + (inner_w - 1 - 5) / 2;
+    for strip in [Strip::Up, Strip::Down] {
+        if !scroll.shows(strip) {
+            continue;
+        }
+        let y = match strip {
+            Strip::Up => frame,
+            Strip::Down => layout.height - frame - STRIP_H,
+        };
+        let r = Rect::new(frame, y, inner_w, STRIP_H);
+        fb.fill(r, c.face);
+        if scroll.hot == Some(strip) && !scroll.flat {
+            fb.hline(r.x, r.y, r.w, c.dark_shadow);
+            fb.vline(r.x, r.y, r.h, c.dark_shadow);
+            fb.hline(r.x + 1, r.bottom() - 1, r.w - 1, c.light);
+            fb.vline(r.right() - 1, r.y + 1, r.h - 1, c.light);
+            continue;
+        }
+        // Up: 1, 3, 5 wide from 3 rows under the strip's top; down: 5, 3, 1 ending 3 rows above
+        // the inner bottom (2 on Windows 2000).
+        let rows: [(i32, i32); 3] = match strip {
+            Strip::Up => [(r.y + 3, 1), (r.y + 4, 3), (r.y + 5, 5)],
+            Strip::Down => {
+                let last = r.bottom() - 1 - if scroll.flat { 2 } else { 3 };
+                [(last - 2, 5), (last - 1, 3), (last, 1)]
+            }
+        };
+        for (row, w) in rows {
+            fb.hline(arrow_x + (5 - w) / 2, row, w, c.text);
+        }
+    }
 }
 
 /// The menu window's border: a raised window edge plus face color inside it.
@@ -836,8 +1125,19 @@ pub fn paint_menu(
 }
 
 fn paint_menu_with(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, layout: &MenuLayout) {
+    if let Some(scroll) = layout.scroll {
+        paint_scrolled(fb, theme, fonts, menu, style, layout, scroll);
+        return;
+    }
     let (c, m, p) = (&theme.colors, &theme.start_menu, &theme.popup);
     menu_frame(fb, c);
+    // The etched line between two columns (Windows 95 and 2000), from the inner top to the
+    // inner bottom: the shadow color, then the highlight.
+    for &x in &layout.lines {
+        let frame = layout.frame;
+        fb.vline(x, frame, fb.height - 2 * frame, c.shadow);
+        fb.vline(x + 1, frame, fb.height - 2 * frame, c.highlight);
+    }
     let frame = frame_of(theme, style);
     if style == MenuStyle::Start {
         // The banner runs the full height inside the frame, under the bottom padding too.
@@ -907,5 +1207,138 @@ fn paint_menu_with(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Me
         if e.kind == EntryKind::Submenu {
             arrow(fb, r, if style == MenuStyle::StartSmall { &m.start_small_arrow } else { &m.arrow }, color);
         }
+    }
+}
+
+#[cfg(test)]
+mod long_menu_tests {
+    use super::*;
+    use crate::text::Font;
+    use crate::theme::{Era, WIN95, WIN98, WIN2000};
+
+    fn fonts() -> (Font, Font) {
+        (
+            Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).unwrap(),
+            Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap(),
+        )
+    }
+
+    /// `folders` folders, then `n` entries "Entry 000" and on (the survey's test entries).
+    fn long(folders: usize, n: usize) -> Menu {
+        let mut entries: Vec<MenuEntry> = (0..folders).map(|i| MenuEntry::submenu(&format!("Folder {i}"), None)).collect();
+        entries.extend((0..n).map(|i| MenuEntry::item(&format!("Entry {i:03}"), None)));
+        Menu::new(entries)
+    }
+
+    /// Rows per column from the screen's height, as measured: Windows 95 27 rows of 22 at 600 and
+    /// 21 at 480; Windows 2000 29 rows of 20 at 600 and 23 at 480 (survey part 1, the table).
+    #[test]
+    fn rows_per_column_from_the_screens_height() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        for (theme, h, rows) in [(&WIN95, 600, 27), (&WIN95, 480, 21), (&WIN2000, 600, 29), (&WIN2000, 480, 23)] {
+            let l = layout_long_menu(theme, &f, &long(0, 110), MenuStyle::Cascade, h, Long::Columns, 0);
+            let first = l.rects.iter().filter(|r| r.x == l.columns[0].0).count();
+            assert_eq!(first, rows, "{h}");
+            assert!(l.height <= h);
+        }
+    }
+
+    /// A menu that just fits one column is laid out as before; one entry more goes on as the look
+    /// says. Nothing changes for a menu that fits.
+    #[test]
+    fn a_menu_that_just_fits_and_one_entry_more() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let fits = long(0, 29);
+        let old = layout_menu(&WIN98, &f, &fits, MenuStyle::Cascade, 600);
+        let new = layout_long_menu(&WIN98, &f, &fits, MenuStyle::Cascade, 600, Long::Scroll { flat: false }, 0);
+        assert_eq!(old, new, "29 entries of 20 fit 600");
+        assert_eq!(new.columns.len(), 1);
+        let more = layout_long_menu(&WIN98, &f, &long(0, 30), MenuStyle::Cascade, 600, Long::Scroll { flat: false }, 0);
+        let s = more.scroll.expect("30 entries scroll");
+        assert_eq!((more.height, s.offset, s.end), (600, 0, 30 * 20 - (600 - 2 * more.frame)));
+    }
+
+    /// Each column as wide as its own widest entry, the 2-pixel etched line between them, filled
+    /// down then across (Windows 95 and 2000).
+    #[test]
+    fn columns_are_each_as_wide_as_their_widest_entry() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let mut menu = long(0, 40);
+        menu.entries[3] = MenuEntry::item("A much longer entry in the first column", None);
+        let l = layout_long_menu(&WIN95, &f, &menu, MenuStyle::Cascade, 600, Long::Columns, 0);
+        assert_eq!(l.columns.len(), 2);
+        let ((x0, w0), (x1, w1)) = (l.columns[0], l.columns[1]);
+        assert!(w0 > w1, "the first column is wider: {w0} {w1}");
+        assert_eq!(l.lines, vec![x0 + w0]);
+        assert_eq!(x1, x0 + w0 + 2);
+        assert_eq!(l.width, x1 + w1 + l.frame);
+        assert_eq!(l.rects[27], Rect::new(x1, l.frame, w1, 22), "the 28th entry tops the second column");
+        let mut fb = Framebuffer::new(l.width, l.height, 0);
+        paint_menu(&mut fb, &WIN95, &f, &menu, MenuStyle::Cascade, &l);
+        let c = &WIN95.colors;
+        assert_eq!((fb.get(x0 + w0, l.frame), fb.get(x0 + w0 + 1, l.height - l.frame - 1)), (c.shadow, c.highlight));
+        // Windows 95's Left and Right go to the same row of the column beside.
+        assert_eq!(l.beside(5, 1), Some(27 + 5));
+        assert_eq!(l.beside(27 + 5, -1), Some(5));
+        assert_eq!(l.beside(20, 1), Some(39), "a shorter column: its last entry");
+        assert_eq!(l.beside(5, -1), None);
+    }
+
+    /// The scroll steps and their ends; the strips show only when there is more on their side; a
+    /// key's entry is brought into view, just above the bottom strip (Windows 98, survey part 1, 3).
+    #[test]
+    fn a_long_menu_scrolls_between_its_strips() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let menu = long(0, 37);
+        let mut l = layout_long_menu(&WIN98, &f, &menu, MenuStyle::Cascade, 600, Long::Scroll { flat: false }, 0);
+        let frame = l.frame;
+        let mut s = l.scroll.unwrap();
+        assert_eq!(s.end, 37 * 20 - (600 - 2 * frame));
+        assert!(!s.shows(Strip::Up) && s.shows(Strip::Down), "at the top only the bottom strip");
+        assert_eq!(l.view(), (frame, 600 - frame - STRIP_H));
+        assert_eq!(l.strip_at(50, 600 - frame - 1), Some(Strip::Down));
+        assert_eq!(l.strip_at(50, frame), None, "no top strip yet");
+        assert_eq!(l.hit(&menu, MenuStyle::Cascade, 50, frame + 5), Some(0));
+        // One step: one entry.
+        assert!(s.step(Strip::Down, scroll_step(&s)));
+        assert_eq!(s.offset, 20);
+        // To the end: the last step lands on the end exactly, then nothing moves.
+        while s.step(Strip::Down, 20) {}
+        assert_eq!(s.offset, s.end);
+        assert!(!s.shows(Strip::Down) && s.shows(Strip::Up));
+        l.scroll = Some(s);
+        assert_eq!(l.shown_rect(36).unwrap().bottom(), 600 - frame, "the last entry reaches the frame");
+        assert_eq!(l.hit(&menu, MenuStyle::Cascade, 50, frame + 5), None, "under the top strip");
+        // Back to the top by a key on the first entry; then down past the bottom: just above the strip.
+        assert!(l.reveal(0));
+        assert_eq!(l.scroll.unwrap().offset, 0);
+        assert!(l.reveal(30));
+        let shown = l.shown_rect(30).unwrap();
+        assert_eq!(shown.bottom(), 600 - frame - STRIP_H, "just above the bottom strip");
+        assert!(!l.reveal(30), "already in view");
+        // The pace as plain numbers.
+        assert_eq!(scroll_pace(false), (150, 300));
+        assert_eq!(scroll_pace(true), (60, 60));
+        // Painted: the bottom strip's arrow in the middle of the inner width (98: x 227..231 for a
+        // menu at 165..294 is its 62nd..66th inner pixel... here by the same rule).
+        let mut fb = Framebuffer::new(l.width, l.height, 0);
+        let mut l2 = l.clone();
+        l2.scroll = Some(Scroll { offset: 0, ..l.scroll.unwrap() });
+        paint_menu(&mut fb, &WIN98, &f, &menu, MenuStyle::Cascade, &l2);
+        let inner_w = l.width - 2 * frame;
+        let ax = frame + (inner_w - 1 - 5) / 2;
+        let row = 600 - frame - 1 - 3;
+        assert_eq!(fb.get(ax + 2, row), WIN98.colors.text, "the down arrow's point");
+        assert_eq!(fb.get(ax + 1, row), WIN98.colors.face);
+        // Under the pointer (98): sunken, without its arrow.
+        l2.scroll = Some(Scroll { hot: Some(Strip::Down), ..l2.scroll.unwrap() });
+        paint_menu(&mut fb, &WIN98, &f, &menu, MenuStyle::Cascade, &l2);
+        assert_eq!(fb.get(ax + 2, row), WIN98.colors.face, "no arrow under the pointer");
+        assert_eq!(fb.get(frame, 600 - frame - STRIP_H), WIN98.colors.dark_shadow);
+        let _ = Era::Win98;
     }
 }

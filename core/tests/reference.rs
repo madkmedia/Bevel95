@@ -3348,7 +3348,7 @@ fn small_start_case(out: &mut Vec<Case>, f98: &Fonts) {
 /// our menu's rows are compared one row down, from the left edge to past the labels.
 fn small_start_case_2000(out: &mut Vec<Case>, f2k: &Fonts) {
     use bevel_core::config::StartOptions;
-    let opts = StartOptions { favorites: false, log_off: false };
+    let opts = StartOptions { favorites: false, log_off: false, scroll_programs: false };
     let menu = bevel_core::start::menu(Era::Win2000, opts, "", |e| bevel_core::icons::start_icon_small(Era::Win2000, e));
     // Opened with Ctrl+Esc, so even Windows 2000 underlines the access keys.
     let menu = Menu { show_keys: true, ..menu };
@@ -3381,7 +3381,7 @@ fn own_start_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
     use bevel_core::start::StartEntry;
     let screen_rect = Rect::new(0, 0, 800, 600);
     let draw = |theme: &Theme, fonts: &Fonts, era: Era, user: &str, small: bool, hover: Option<usize>| {
-        let opts = StartOptions { favorites: true, log_off: true };
+        let opts = StartOptions { favorites: true, log_off: true, scroll_programs: false };
         let icon = |e: StartEntry| {
             if small { bevel_core::icons::start_icon_small(era, e) } else { bevel_core::icons::start_icon(era, e) }
         };
@@ -3485,7 +3485,7 @@ fn own_properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             let values = Values {
                 options,
                 // The PCs' settings when captured: 2000's Display Favorites and Display Logoff off.
-                start: StartOptions { favorites: false, log_off: era != Era::Win2000 },
+                start: StartOptions { favorites: false, log_off: era != Era::Win2000, scroll_programs: false },
                 era,
                 colors: bevel_core::theme::Depth::TrueColor,
                 scale: bevel_core::scale::Scale::whole(2),
@@ -4534,7 +4534,7 @@ fn properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             Era::Win2000 => (&WIN2000, f2k),
         };
         // Windows 2000's emulator had Display Logoff off.
-        let start = StartOptions { favorites: false, log_off: era != Era::Win2000 };
+        let start = StartOptions { favorites: false, log_off: era != Era::Win2000, scroll_programs: false };
         let values = Values {
             options,
             start,

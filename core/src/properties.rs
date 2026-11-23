@@ -132,7 +132,7 @@ impl Setting {
 
     /// Whether Bevel95 carries it out; the others are shown grayed out.
     pub fn supported(self) -> bool {
-        matches!(self, Setting::Favorites | Setting::LogOff)
+        matches!(self, Setting::Favorites | Setting::LogOff | Setting::ScrollPrograms)
     }
 }
 
@@ -953,6 +953,7 @@ fn setting_value(start: &mut StartOptions, s: Setting) -> Option<&mut bool> {
     match s {
         Setting::Favorites => Some(&mut start.favorites),
         Setting::LogOff => Some(&mut start.log_off),
+        Setting::ScrollPrograms => Some(&mut start.scroll_programs),
         _ => None,
     }
 }

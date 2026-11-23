@@ -151,7 +151,7 @@ fn start_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
     for era in [Era::Win95, Era::Win2000] {
         let theme = bevel_core::theme::theme_in(era, bevel_core::theme::Depth::Sixteen);
         let fonts = fonts_of(era, f95, f2k);
-        let opts = StartOptions { favorites: false, log_off: era != Era::Win2000 };
+        let opts = StartOptions { favorites: false, log_off: era != Era::Win2000, scroll_programs: false };
         let mut menu = bevel_core::start::menu(era, opts, "Admin", |e| bevel_core::icons::start_icon(era, e));
         // Both opened from the keyboard: 2000 shows the access keys too.
         menu.show_keys = true;
@@ -324,7 +324,7 @@ pub(super) fn sixteen_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             use bevel_core::properties::{self, Check, Part, Properties, Sheet, Values};
             let values = Values {
                 options: TaskbarOptions::default(),
-                start: StartOptions { favorites: false, log_off: era != Era::Win2000 },
+                start: StartOptions { favorites: false, log_off: era != Era::Win2000, scroll_programs: false },
                 era,
                 colors: bevel_core::theme::Depth::Sixteen,
                 scale: bevel_core::scale::Scale::whole(2),

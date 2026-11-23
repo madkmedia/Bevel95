@@ -463,7 +463,7 @@ mod tests {
     fn every_start_entry_has_an_icon_in_its_era() {
         use StartEntry::*;
         for era in Era::ALL {
-            for entry in crate::start::entries(era, crate::config::StartOptions { favorites: true, log_off: true }).iter().flatten() {
+            for entry in crate::start::entries(era, crate::config::StartOptions { favorites: true, log_off: true, scroll_programs: false }).iter().flatten() {
                 assert!(start_icon(era, *entry).is_some(), "{era:?} {entry:?}");
                 assert!(start_icon_small(era, *entry).is_some(), "small {era:?} {entry:?}");
             }
