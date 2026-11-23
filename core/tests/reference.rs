@@ -28,7 +28,7 @@ mod art;
 use bevel_core::dialog::{self, Dialog, DialogKind};
 use bevel_core::fb::{Framebuffer, Icon, Rect};
 use bevel_core::layout::{BarLayout, place_start_menu, place_submenu};
-use bevel_core::paint::{self, Bar, EntryKind, Menu, MenuEntry, MenuLayout, MenuStyle, Task, TaskState};
+use bevel_core::paint::{self, Bar, EntryKind, Long, Menu, MenuEntry, MenuLayout, MenuStyle, Task, TaskState};
 use bevel_core::text::{self, Font, Fonts, fixture_name};
 use bevel_core::theme::{Era, SubmenuPlacement, Theme, WIN95, WIN98, WIN2000, rgb};
 use bevel_core::tooltip;
@@ -603,6 +603,7 @@ fn cases() -> Vec<Case> {
     small_start_case(&mut out, &f95);
     small_start_case_2000(&mut out, &f2k);
     own_start_cases(&mut out, &f95, &f2k);
+    long_menu_cases(&mut out, &f95, &f2k);
     own_properties_cases(&mut out, &f95, &f2k);
     tray_cases(&mut out, &f95, &f2k);
     desktop_cases(&mut out);
@@ -3274,6 +3275,11 @@ fn tray_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         volume::paint(&mut ours, &WIN2000, f95.regular, &v);
         // The mouse pointer's shadow touches the bottom left of the ones opened from the tray.
         let masks = if x == 715 { vec![Rect::new(715, 585, 8, 2)] } else { Vec::new() };
+        let mut masks: Vec<Rect> = masks;
+        // The PC's mouse pointer, resting in the second column's empty part (95's capture).
+        if name == "own-win95-long-programs-50" {
+            masks.push(Rect::new(400, 300, 11, 19));
+        }
         out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
     }
     // (The speaker's and the taskbar's right-click menus were captured too, vm/win2000-
@@ -3448,6 +3454,57 @@ fn own_start_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             masks: vec![],
             vga: false,
         });
+    }
+}
+
+/// The Reference PCs' Programs menus longer than the screen (brief 91; survey part 1,
+/// `private/probes/start-long`), opened with the keyboard on an 800x600 screen (the first entry
+/// chosen), each laid out by `layout_long_menu` as the bar lays it out and compared whole where
+/// the PC put it. The entries are the survey's: the PC's own folders and programs and the test
+/// entries "Entry nnn" (copies of Notepad's shortcut); every picture cell is masked (the PC's
+/// program pictures, which the core does not draw).
+/// - Windows 98, 37 entries: one column the screen's height, scrolled to its top (its own order:
+///   later entries at the end), at x 165.
+/// - Windows 95, 50 entries: two columns at x 160 beside the Start menu, each as wide as its
+///   widest entry, the etched line between.
+/// - Windows 2000, 59 entries: three columns at x 250.
+fn long_menu_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
+    let entries = |first: usize, n: usize| (first..first + n).map(|i| format!("Entry {i:03}")).collect::<Vec<_>>();
+    let mut cases = Vec::new();
+    // 98: its own order, then what was added later, in the order it was made.
+    let mut l98: Vec<String> = ["Accessories>", "Internet Explorer>", "Online Services>", "StartUp>", "MS-DOS Prompt", "Windows Explorer", "Long Folder>"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    l98.extend(entries(0, 30));
+    cases.push(("own-win98-long-programs-37", "vm/win98-truecolor-startlong-800x600-programs-36entries-open.png", &WIN98, f95, l98, Long::Scroll { flat: false }, 165));
+    // 95: folders, then the entries, then the PC's own programs, by name.
+    let mut l95: Vec<String> = ["Accessories>", "Long Folder>", "Online Services>", "StartUp>"].iter().map(|s| s.to_string()).collect();
+    l95.extend(entries(0, 40));
+    l95.extend(["Internet Explorer", "Internet Mail", "Internet News", "Microsoft NetMeeting", "MS-DOS Prompt", "Windows Explorer"].map(String::from));
+    cases.push(("own-win95-long-programs-50", "vm/win95-truecolor-startlong-800x600-programs-50entries-open.png", &WIN95, f95, l95, Long::Columns { own_widths: true }, 160));
+    // Windows 2000's columns are not compared yet: their widths at 800x600 with 59 entries (130,
+    // 129 and 126; the lines at 384 and 517) follow neither the menu's widest entry nor each
+    // column's own. Bevel95 draws them all as wide as the menu's widest (PROVISIONAL, todo.md).
+    let _ = f2k;
+    for (name, file, theme, fonts, labels, long, x) in cases {
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let m = menu(&labels, Some(0), true);
+        let layout = paint::layout_long_menu(theme, fonts, &m, MenuStyle::Cascade, 600, long, 0);
+        let mut ours = Framebuffer::new(layout.width, layout.height, 0);
+        paint::paint_menu(&mut ours, theme, fonts, &m, MenuStyle::Cascade, &layout);
+        let y = 600 - layout.height;
+        let items = &theme.start_menu.small;
+        let masks = (0..m.entries.len())
+            .filter_map(|i| layout.shown_rect(i))
+            .map(|r| Rect::new(x + r.x + items.icon_x, y + r.y + (r.h - items.icon) / 2, items.icon, items.icon))
+            .collect();
+        let mut masks: Vec<Rect> = masks;
+        // The PC's mouse pointer, resting in the second column's empty part (95's capture).
+        if name == "own-win95-long-programs-50" {
+            masks.push(Rect::new(400, 300, 11, 19));
+        }
+        out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
     }
 }
 

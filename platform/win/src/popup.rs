@@ -624,7 +624,7 @@ fn long_of(kind: &Kind) -> (Long, i32) {
         let long = start::long_rule(app.era, long_kind(kind), app.start_options.scroll_programs);
         (long, app.menu_scroll.get(&scroll_key(kind)).copied().unwrap_or(0))
     })
-    .unwrap_or((Long::Columns, 0))
+    .unwrap_or((Long::Columns { own_widths: true }, 0))
 }
 
 /// The name under which a menu's scroll place is remembered while the bar runs (which menu, by

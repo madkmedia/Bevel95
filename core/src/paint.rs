@@ -751,9 +751,10 @@ fn layout_menu_with(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle,
 /// `private/probes/start-long`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Long {
-    /// Further columns, each as wide as its own widest entry, with an etched line between them
-    /// (Windows 95, and Windows 2000 on a fresh installation).
-    Columns,
+    /// Further columns with an etched line between them (Windows 95, and Windows 2000 on a fresh
+    /// installation): each as wide as its own widest entry (`own_widths`, Windows 95), or all as
+    /// wide as the menu's widest entry (Windows 2000); one pixel of the face after each column.
+    Columns { own_widths: bool },
     /// One column the screen's height whose entries scroll between arrow strips (Windows 98;
     /// `flat`: Windows 2000's strips, which do not sink under the pointer).
     Scroll { flat: bool },
@@ -916,30 +917,34 @@ pub fn layout_long_menu(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuSt
                 let scroll = Scroll { offset: offset.clamp(0, end), end, row, flat, hot: None };
                 MenuLayout { height: screen_h, scroll: Some(scroll), ..tall }
             }
-            Long::Columns => lined_columns(theme, fonts, menu, style, &base),
+            Long::Columns { own_widths } => lined_columns(theme, fonts, menu, style, &base, own_widths),
         }
     })
 }
 
-/// `base`'s columns (as `layout_menu` breaks them), each as wide as its own widest entry, with
-/// the 2-pixel etched line between neighbours (Windows 95 and 2000, survey part 1, 2).
-fn lined_columns(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, base: &MenuLayout) -> MenuLayout {
+/// `base`'s columns (as `layout_menu` breaks them), each as wide as its own widest entry
+/// (`own_widths`, Windows 95) or as the menu's widest (Windows 2000), and between neighbours a
+/// pixel of the face, the 2-pixel etched line, a pixel of the face (Windows 95 and 2000, survey
+/// part 1, 2: Windows 95's 50 entries at 800x600: the first column's entries at x 163..289, the
+/// line at 291, the second's at 294; Windows 2000's 59: the lines at 384 and 517).
+fn lined_columns(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, base: &MenuLayout, own_widths: bool) -> MenuLayout {
     let frame = base.frame;
     let mut rects = base.rects.clone();
     let mut columns = Vec::with_capacity(base.columns.len());
     let mut lines = Vec::new();
     let mut x = base.columns[0].0;
-    for (k, &(old_x, _)) in base.columns.iter().enumerate() {
+    for (k, &(old_x, old_w)) in base.columns.iter().enumerate() {
         let members: Vec<usize> = (0..rects.len()).filter(|&i| base.rects[i].x == old_x).collect();
-        let w = column_width(theme, fonts, menu, style, &members);
+        let w = if own_widths { column_width(theme, fonts, menu, style, &members) } else { old_w };
         for &i in &members {
             rects[i] = Rect::new(x, rects[i].y, w, rects[i].h);
         }
         columns.push((x, w));
         x += w;
         if k + 1 < base.columns.len() {
-            lines.push(x);
-            x += 2;
+            // A pixel of the face, the line, a pixel of the face.
+            lines.push(x + 1);
+            x += 4;
         }
     }
     MenuLayout { width: x + frame, rects, columns, lines, ..base.clone() }
@@ -1237,7 +1242,7 @@ mod long_menu_tests {
         let (r, b) = fonts();
         let f = Fonts { regular: &r, bold: &b };
         for (theme, h, rows) in [(&WIN95, 600, 27), (&WIN95, 480, 21), (&WIN2000, 600, 29), (&WIN2000, 480, 23)] {
-            let l = layout_long_menu(theme, &f, &long(0, 110), MenuStyle::Cascade, h, Long::Columns, 0);
+            let l = layout_long_menu(theme, &f, &long(0, 110), MenuStyle::Cascade, h, Long::Columns { own_widths: true }, 0);
             let first = l.rects.iter().filter(|r| r.x == l.columns[0].0).count();
             assert_eq!(first, rows, "{h}");
             assert!(l.height <= h);
@@ -1268,18 +1273,18 @@ mod long_menu_tests {
         let f = Fonts { regular: &r, bold: &b };
         let mut menu = long(0, 40);
         menu.entries[3] = MenuEntry::item("A much longer entry in the first column", None);
-        let l = layout_long_menu(&WIN95, &f, &menu, MenuStyle::Cascade, 600, Long::Columns, 0);
+        let l = layout_long_menu(&WIN95, &f, &menu, MenuStyle::Cascade, 600, Long::Columns { own_widths: true }, 0);
         assert_eq!(l.columns.len(), 2);
         let ((x0, w0), (x1, w1)) = (l.columns[0], l.columns[1]);
         assert!(w0 > w1, "the first column is wider: {w0} {w1}");
-        assert_eq!(l.lines, vec![x0 + w0]);
-        assert_eq!(x1, x0 + w0 + 2);
+        assert_eq!(l.lines, vec![x0 + w0 + 1], "a pixel of the face, then the line");
+        assert_eq!(x1, x0 + w0 + 4, "and a pixel after it");
         assert_eq!(l.width, x1 + w1 + l.frame);
         assert_eq!(l.rects[27], Rect::new(x1, l.frame, w1, 22), "the 28th entry tops the second column");
         let mut fb = Framebuffer::new(l.width, l.height, 0);
         paint_menu(&mut fb, &WIN95, &f, &menu, MenuStyle::Cascade, &l);
         let c = &WIN95.colors;
-        assert_eq!((fb.get(x0 + w0, l.frame), fb.get(x0 + w0 + 1, l.height - l.frame - 1)), (c.shadow, c.highlight));
+        assert_eq!((fb.get(x0 + w0 + 1, l.frame), fb.get(x0 + w0 + 2, l.height - l.frame - 1)), (c.shadow, c.highlight));
         // Windows 95's Left and Right go to the same row of the column beside.
         assert_eq!(l.beside(5, 1), Some(27 + 5));
         assert_eq!(l.beside(27 + 5, -1), Some(5));

@@ -267,12 +267,12 @@ pub enum LongKind {
 pub fn long_rule(era: Era, kind: LongKind, scroll_programs: bool) -> crate::paint::Long {
     use crate::paint::Long;
     match era {
-        Era::Win95 => Long::Columns,
+        Era::Win95 => Long::Columns { own_widths: true },
         Era::Win98 => Long::Scroll { flat: false },
         Era::Win2000 => match kind {
             LongKind::Favorites => Long::Scroll { flat: true },
             LongKind::Programs if scroll_programs => Long::Scroll { flat: true },
-            _ => Long::Columns,
+            _ => Long::Columns { own_widths: false },
         },
     }
 }
@@ -305,13 +305,13 @@ mod tests {
     fn each_look_has_its_own_long_menus() {
         use crate::paint::Long;
         for kind in [LongKind::Programs, LongKind::Favorites, LongKind::Other] {
-            assert_eq!(long_rule(Era::Win95, kind, true), Long::Columns);
+            assert_eq!(long_rule(Era::Win95, kind, true), Long::Columns { own_widths: true });
             assert_eq!(long_rule(Era::Win98, kind, false), Long::Scroll { flat: false });
         }
-        assert_eq!(long_rule(Era::Win2000, LongKind::Programs, false), Long::Columns, "a fresh installation");
+        assert_eq!(long_rule(Era::Win2000, LongKind::Programs, false), Long::Columns { own_widths: false }, "a fresh installation");
         assert_eq!(long_rule(Era::Win2000, LongKind::Programs, true), Long::Scroll { flat: true }, "Scroll the Programs menu");
         assert_eq!(long_rule(Era::Win2000, LongKind::Favorites, false), Long::Scroll { flat: true }, "Favorites always");
-        assert_eq!(long_rule(Era::Win2000, LongKind::Other, true), Long::Columns);
+        assert_eq!(long_rule(Era::Win2000, LongKind::Other, true), Long::Columns { own_widths: false });
         assert_eq!(scroll_instead(Era::Win95), Long::Scroll { flat: false });
         assert_eq!(scroll_instead(Era::Win2000), Long::Scroll { flat: true });
     }

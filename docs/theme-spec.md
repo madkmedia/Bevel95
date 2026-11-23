@@ -376,6 +376,27 @@ colors off the window's picture. Documents opened from the Run box did not appea
 those opened from Explorer); Bevel95 lists what Windows 11 records, less its app links (screen
 clips, Game Bar), Control Panel pages and folders, which these Windows never listed.
 
+### A menu longer than the screen (brief 91)
+
+Measured on the Reference PCs (`private/probes/start-long/survey.md`, part 1; captures
+`<pc>-truecolor-startlong-*`). Lengths are 1× pixels of the look's screen.
+
+| | Windows 95 | Windows 98 | Windows 2000 |
+|---|---|---|---|
+| Too many entries | further columns | one scrolling column | further columns; scrolls with "Scroll the Programs menu" on (Favorites always) |
+| Rows (cascade rows 22 / 20 / 20) | as many as fit the screen: 27 at 600, 21 at 480 | the screen's whole height, y 0..h | 29 at 600, 23 at 480 |
+| Between columns | a pixel of the face, the etched pair (808080, FFFFFF) from the inner top to the inner bottom, a pixel of the face (50 entries at 800x600: entries x 163..289, line 291, entries from 294; compared exactly) | | the same pair (lines at 384 and 517 with 59 entries) |
+| Column width | each its own widest entry (as a one-column menu's width) | | 130, 129, 126 measured with 59 entries: no rule found; Bevel95 gives each the menu's widest (PROVISIONAL) |
+| Wider than the screen | moved to the screen's left edge; where even that does not fit: scrolls (the owner's decision; the PC ran off) | | never moved; where it would run off: scrolls (PROVISIONAL) |
+| Strips | (when it scrolls: 98's) | 12 rows inside the frame; up arrow 1, 3, 5 wide from 3 rows under the inner top; down arrow 5, 3, 1 ending 3 rows above the inner bottom; arrow x = inner left + (inner width − 6) / 2; under the pointer sunken (000000 top and left, DFDFDF bottom and right), no arrow; a strip only where there is more | flat always, the arrow stays; the down arrow ends 2 rows above the inner bottom |
+| At the end | | the bottom strip goes, the last entry reaches the inner bottom (no padding) | the same |
+| Pace | | first step 150 ms (measured 100..200), then one entry every 300 ms | 20 px every 60 ms, the last a part step |
+| Scrolled rows | | rows are not moved by the top strip: it covers the part of a row under it | the same |
+
+Compared exactly: Windows 98's 37 entries at 800x600 scrolled to the top, Windows 95's 50 entries
+at 800x600 in two columns (`own-win98-long-programs-37`, `own-win95-long-programs-50`; the
+pictures masked, and 95's pointer).
+
 ## Windows' own menus
 
 Text menus as Windows itself draws them: the bar's right-click menu with its Bevel95 submenu (and

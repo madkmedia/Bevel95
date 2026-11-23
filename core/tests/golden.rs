@@ -17,7 +17,7 @@ use bevel_core::bar_menu::{self, BarEntry};
 use bevel_core::dialog::{self, Dialog, DialogKind};
 use bevel_core::fb::{Framebuffer, Icon, Rect};
 use bevel_core::layout::{self, place_popup, place_start_menu, place_submenu};
-use bevel_core::paint::{self, Bar, Menu, MenuEntry, MenuLayout, MenuStyle, ScrollArrow, Task, TaskState};
+use bevel_core::paint::{self, Bar, Long, Menu, MenuEntry, MenuLayout, MenuStyle, ScrollArrow, Strip, Task, TaskState};
 use bevel_core::programs::{self, Folder, Item, Shown};
 use bevel_core::scale::upscale;
 use bevel_core::tasks::{self, Group, TaskList, WindowInfo};
@@ -321,6 +321,103 @@ fn start_menu_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
     let entry = entry_on_screen(parent, &layout, programs_index);
     let (sx, sy) = place_submenu(parent, entry, sub_fb.width, sub_fb.height, 3, theme.start_menu.submenu, screen_rect);
     screen.blit(&sub_fb, sx, sy);
+    screen
+}
+
+/// What a long-menu scene shows (brief 91).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LongScene {
+    /// The Programs menu as it opens (opened by the keyboard: the first entry chosen).
+    Open,
+    /// Scrolled to the middle.
+    Middle,
+    /// Scrolled to the end, the pointer on the top strip.
+    EndStripHot,
+    /// Windows 2000 with "Scroll the Programs menu" on.
+    ScrollSetting,
+    /// The test folder "Long Folder" (60 items) open beside its entry.
+    Submenu,
+}
+
+/// A `w`×`h` screen with the bar, the Start menu (Programs chosen) and a Programs menu of `n`
+/// entries longer than the screen, laid out and placed as the bar does it (`start::long_rule`,
+/// `place_columns`, scrolling where columns would not fit): the survey's test entries ("Long
+/// Folder", "Entry nnn") after a few folders. Brief 91.
+fn long_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, w: i32, h: i32, n: usize, scene: LongScene) -> Framebuffer {
+    let screen_rect = Rect::new(0, 0, w, h);
+    let mut screen = Framebuffer::new(w, h, desktop(era));
+    let mut bar = Framebuffer::new(w, theme.bar.height, 0);
+    paint::paint_bar(&mut bar, theme, fonts, &Bar { start_pressed: true, clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() });
+    let bar_top = h - bar.height;
+    screen.blit(&bar, 0, bar_top);
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
+    let programs_index = menu.entries.iter().position(|e| e.label == "&Programs").expect("Programs");
+    menu.hover = Some(programs_index);
+    menu.show_keys = true;
+    let layout = paint::layout_menu(theme, fonts, &menu, MenuStyle::Start, h);
+    let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut fb, theme, fonts, &menu, MenuStyle::Start, &layout);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
+    let parent = Rect::new(x, y, fb.width, fb.height);
+    let entry = entry_on_screen(parent, &layout, programs_index);
+
+    let group = icons::program_group(era);
+    let folders: &[&str] = if era == Era::Win2000 { &["Accessories", "Long Folder", "Startup"] } else { &["Accessories", "Long Folder", "StartUp"] };
+    let mut labels: Vec<MenuEntry> = folders.iter().map(|f| MenuEntry::submenu(f, Some(group.clone()))).collect();
+    let first = if era == Era::Win2000 { 100 } else { 0 };
+    labels.extend((first..first + n - folders.len()).map(|i| MenuEntry::item(&format!("Entry {i:03}"), Some(icon(&DOCUMENT, 1)))));
+    let mut programs = Menu::new(labels);
+    programs.show_keys = true;
+    programs.hover = Some(if scene == LongScene::Submenu { 1 } else { 0 });
+    let scroll_programs = scene == LongScene::ScrollSetting;
+    let rule = theme.start_menu.submenu;
+    // Lays out and places a menu cascading from `entry` of `parent` (in columns: beside the
+    // entry's column), as `popup::open_child` does.
+    let place = |menu: &Menu, long: Long, offset: i32, parent: Rect, entry: Rect, in_columns: bool| {
+        let parent = if in_columns { Rect::new(entry.x - 3, parent.y, entry.w + 6, parent.h) } else { parent };
+        let mut l = paint::layout_long_menu(theme, fonts, menu, MenuStyle::Cascade, h, long, offset);
+        let mut forced = None;
+        if l.columns.len() > 1 {
+            match start::place_columns(era, parent.right() - rule.overlap, l.width, 0, w) {
+                Some(x) => forced = Some(x),
+                None => l = paint::layout_long_menu(theme, fonts, menu, MenuStyle::Cascade, h, start::scroll_instead(era), offset),
+            }
+        }
+        let (px, py) = place_submenu(parent, entry, l.width, l.height, 3, rule, screen_rect);
+        (l, forced.unwrap_or(px), py, parent)
+    };
+    let long = start::long_rule(era, start::LongKind::Programs, scroll_programs);
+    let (mut pl, px, py, _) = place(&programs, long, 0, parent, entry, false);
+    if let Some(mut s) = pl.scroll {
+        match scene {
+            LongScene::Middle => s.set(s.end / 2 / s.row * s.row),
+            LongScene::EndStripHot => {
+                s.set(s.end);
+                s.hot = Some(Strip::Up);
+            }
+            _ => {}
+        }
+        pl.scroll = Some(s);
+    }
+    let mut pfb = Framebuffer::new(pl.width, pl.height, 0);
+    paint::paint_menu(&mut pfb, theme, fonts, &programs, MenuStyle::Cascade, &pl);
+    screen.blit(&pfb, px, py);
+    if scene == LongScene::Submenu {
+        let items: Vec<MenuEntry> = (0..60).map(|i| MenuEntry::item(&format!("Item {:02}", i + if era == Era::Win2000 { 10 } else { 0 }), Some(icon(&DOCUMENT, 1)))).collect();
+        let mut sub = Menu::new(items);
+        sub.show_keys = true;
+        let p = Rect::new(px, py, pl.width, pl.height);
+        let e = pl.shown_rect(1).unwrap();
+        let e = Rect::new(px + e.x, py + e.y, e.w, e.h);
+        let sub_long = start::long_rule(era, start::LongKind::Programs, false);
+        let (sl, sx, sy, _) = place(&sub, sub_long, 0, p, e, pl.columns.len() > 1);
+        let mut sfb = Framebuffer::new(sl.width, sl.height, 0);
+        paint::paint_menu(&mut sfb, theme, fonts, &sub, MenuStyle::Cascade, &sl);
+        screen.blit(&sfb, sx, sy);
+    }
     screen
 }
 
@@ -1850,6 +1947,57 @@ fn scenes() -> Vec<Scene> {
                 dialog_scene(theme, &fonts, DialogKind::LogOff, era),
             );
         }
+        // A Programs menu longer than the screen, as each look's Windows showed it (brief 91; the
+        // survey's test entries; the screen at 640x480 and at 800x600).
+        let (n640, n800) = match era {
+            Era::Win95 => (80, 50),
+            Era::Win98 => (117, 57),
+            Era::Win2000 => (46, 59),
+        };
+        let long_caption: &'static str = match era {
+            Era::Win95 => "A Programs menu longer than the screen (640x480, 80 entries): columns, moved to the screen's left edge as they pass the right one",
+            Era::Win98 => "A Programs menu longer than the screen (640x480, 117 entries): one column the screen's height, scrolling between its arrow strips",
+            Era::Win2000 => "A Programs menu longer than the screen (640x480, 46 entries): columns beside the Start menu",
+        };
+        add("long-programs-640", long_caption, long_menu_scene(theme, era, &fonts, 640, 480, n640, LongScene::Open));
+        let long_caption: &'static str = match era {
+            Era::Win95 => "800x600, 50 entries: two columns beside the Start menu, each as wide as its widest entry, an etched line between",
+            Era::Win98 => "800x600, 57 entries: one scrolling column",
+            Era::Win2000 => "800x600, 59 entries: three columns beside the Start menu (their widths provisional)",
+        };
+        add("long-programs-800", long_caption, long_menu_scene(theme, era, &fonts, 800, 600, n800, LongScene::Open));
+        add(
+            "long-submenu-800",
+            "800x600: a long folder (60 items) open beside its entry, as its look opened a long submenu",
+            long_menu_scene(theme, era, &fonts, 800, 600, if era == Era::Win98 { 57 } else { 40 }, LongScene::Submenu),
+        );
+        match era {
+            Era::Win95 => add(
+                "long-programs-640-scrolls",
+                "640x480, 110 entries: the columns would not fit even at the left edge (the real Windows 95 ran off the screen), so it scrolls, with Windows 98's strips (provisional)",
+                long_menu_scene(theme, era, &fonts, 640, 480, 110, LongScene::Open),
+            ),
+            Era::Win98 => {
+                add("long-programs-800-middle", "800x600, 117 entries, scrolled to the middle: both strips", long_menu_scene(theme, era, &fonts, 800, 600, 117, LongScene::Middle));
+                add(
+                    "long-programs-800-end",
+                    "800x600, 117 entries, scrolled to the end with the pointer on the top strip: it is drawn sunken, without its arrow; the bottom strip is gone",
+                    long_menu_scene(theme, era, &fonts, 800, 600, 117, LongScene::EndStripHot),
+                );
+            }
+            Era::Win2000 => {
+                add(
+                    "long-programs-640-scrolls",
+                    "640x480, 92 entries: the columns would run off the right edge (as the real Windows 2000 did), so it scrolls (provisional)",
+                    long_menu_scene(theme, era, &fonts, 640, 480, 92, LongScene::Open),
+                );
+                add(
+                    "long-programs-800-scroll-setting",
+                    "800x600, 59 entries, \"Scroll the Programs menu\" on: one column with Windows 2000's flat strips",
+                    long_menu_scene(theme, era, &fonts, 800, 600, 59, LongScene::ScrollSetting),
+                );
+            }
+        }
         if era == Era::Win98 {
             add(
                 "favorites",
@@ -2519,6 +2667,41 @@ fn draw_quick_launch_sheet() {
 /// also with its list open), Bevel95's own icons only, drawn by the real code, labels outside the
 /// pictures, enlarged 3 times by whole pixels. `BEVEL95_SHEET=<file> cargo test -p bevel-core
 /// --test golden -- --ignored --exact draw_quick_launch_size_sheet`.
+/// The owner's sheet for brief 91 (laid out as the survey's `menus.png`): per look the long
+/// Programs menu at 640x480 and at 800x600 as Bevel95 now shows it, drawn by the real code with
+/// the survey's test entries, at true size, each labeled above its picture.
+#[test]
+#[ignore = "writes the owner's sheet of long menus to BEVEL95_SHEET; run it on request"]
+fn draw_long_menu_sheet() {
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const GAP: i32 = 12;
+    const LABEL: i32 = 18;
+    let bold = load_font(&WIN95, true);
+    let width = GAP + 640 + GAP + 800 + GAP;
+    let height = GAP + 3 * (LABEL + 600 + GAP);
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    for (row, era) in Era::ALL.into_iter().enumerate() {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let (n640, n800) = match era {
+            Era::Win95 => (80, 50),
+            Era::Win98 => (117, 57),
+            Era::Win2000 => (46, 59),
+        };
+        let y = GAP + row as i32 * (LABEL + 600 + GAP);
+        let look = era.title();
+        bold.draw(&mut sheet, GAP, y, &format!("{look}, 640x480, {n640} entries"), rgb(0x000000));
+        sheet.blit(&long_menu_scene(theme, era, &fonts, 640, 480, n640, LongScene::Open), GAP, y + LABEL);
+        bold.draw(&mut sheet, GAP + 640 + GAP, y, &format!("{look}, 800x600, {n800} entries"), rgb(0x000000));
+        sheet.blit(&long_menu_scene(theme, era, &fonts, 800, 600, n800, LongScene::Open), GAP + 640 + GAP, y + LABEL);
+    }
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
+
 #[test]
 #[ignore = "writes the owner's sheet of Quick Launch sizes to BEVEL95_SHEET; run it on request"]
 fn draw_quick_launch_size_sheet() {

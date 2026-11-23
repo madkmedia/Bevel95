@@ -26,7 +26,9 @@ Website: https://madkmedia.github.io/Bevel95/
   Drag the grip after the icons to make the band wider or narrower: icons that do not fit are reached
   by small arrows (98 look) or by the "»" button's list (2000 look), as those Windows did.
 - **The Start menu**: your programs, Documents, Settings, Find, Help, Run and Shut Down, as each
-  of the three Windows showed them.
+  of the three Windows showed them. A menu longer than the screen goes on as its Windows did: in
+  columns (95 and 2000; 2000's "Scroll the Programs menu" in Taskbar Properties makes it scroll)
+  or scrolling between arrow strips (98), and never off the screen.
 - **Three looks**: Windows 95, Windows 98 and Windows 2000, each with its own pictures, fonts and
   behaviour, never mixed. Each can also be shown as on a 16-color screen.
 - **Sizes**: drawn at the original size and enlarged by a whole number (2x on a 150% screen),
