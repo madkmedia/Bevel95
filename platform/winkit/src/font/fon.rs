@@ -12,12 +12,19 @@ use super::{Cell1252, charset_1252, windows_font_file};
 
 /// The cell the looks' MS Sans Serif has (8pt at 96 DPI).
 const CELL: u16 = 13;
+/// Its baseline, rows below the cell's top.
+const ASCENT: u16 = 11;
 
 /// The letters of code page 1252 of MS Sans Serif 8pt from Windows' own SSERIFE.FON.
 pub(super) fn ms_sans_serif_1252(bold: bool) -> Result<Cell1252, String> {
     let path = windows_font_file("SSERIFE.FON").ok_or("Windows' folder was not found")?;
     let bytes = std::fs::read(&path).map_err(|e| format!("SSERIFE.FON: {e}"))?;
     let fnt = fonts(&bytes)?.into_iter().find(|f| f.height == CELL && f.vert_res == 96).ok_or("SSERIFE.FON holds no 8pt font at 96 DPI")?;
+    // Taken only with the cell's own baseline, as the GDI way requires (the review of 2026-11-23,
+    // finding 9).
+    if fnt.ascent != ASCENT {
+        return Err(format!("SSERIFE.FON's 8pt font has its baseline {} rows down, not {ASCENT}", fnt.ascent));
+    }
     let mut glyphs = Vec::new();
     for ch in charset_1252() {
         let Some(byte) = cp1252_byte(ch) else { continue };

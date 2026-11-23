@@ -1490,7 +1490,17 @@ it, but write nothing).
     bytes, never loaded as code; its bold made up as GDI makes it, each row again a pixel to the
     right), which gives GDI's atlas letter for letter, regular and bold, on this PC
     (`font::tests::the_font_file_gives_gdis_pixels`), and the reason is logged once. Tahoma (the
-    2000 look) has no second way: a TrueType file would need a rasterizer.
+    2000 look) has no second way: a TrueType file would need a rasterizer. On a PC where Windows
+    registered another MS Sans Serif file (the 120-DPI set, another language's file), Bevel95 now
+    draws the original 96-DPI letters of SSERIFE.FON, which may differ from what it drew there
+    before (the owner's rule: each look draws the original letters). Never worse than 0.1.4 (the
+    review of 2026-11-23): when GDI gives MS Sans Serif in another size and the file cannot be
+    read either, what GDI gave is taken as 0.1.4 took it, and the log says so; only with no usable
+    font at all is it an error. Every log line names what really failed (a failed GDI call is not
+    "GDI did not give the font"), gives the system's real DPI (read with the thread aware of it),
+    and writes an error number only where Windows gave one (cleared before each call: "Windows
+    gave no error number" otherwise); the letters from the file are taken only with the cell's
+    own baseline (11).
   - **Setup can always be answered**: if its own window still cannot be created, the one file
     asks through Windows' own message windows (a first run: Yes installs with the second page's
     defaults, No unpacks a portable copy beside the file, Cancel does nothing; a newer copy over

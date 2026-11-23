@@ -19,7 +19,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
 
-use crate::log::{log, log_win32};
+use crate::log::log;
 
 mod fon;
 use windows_sys::Win32::UI::HiDpi::{
@@ -162,66 +162,131 @@ struct Cell1252 {
     overhang: i32,
 }
 
-/// The letters of code page 1252 of `face` at `px` from GDI (`gdi_1252`); for the looks' MS Sans
-/// Serif 8pt, if GDI does not hand it out as asked (another face, a TrueType one, another cell:
-/// issue 6, "Bevel95 Setup could not be shown"), read from Windows' own SSERIFE.FON
-/// (`fon::ms_sans_serif_1252`: the same pixels, proved letter for letter against GDI on a PC
-/// where GDI gives it), and the reason logged. Any other failure says what failed.
+/// The letters of code page 1252 of `face` at `px` from GDI (`gdi_1252`). For the looks' MS Sans
+/// Serif 8pt, when GDI does not hand it out as asked (another face, a TrueType one, another cell,
+/// or a GDI call failing: issue 6, "Bevel95 Setup could not be shown"), its letters are read from
+/// Windows' own SSERIFE.FON (`fon::ms_sans_serif_1252`: the same pixels, proved letter for letter
+/// against GDI on a PC where GDI gives it); and if that cannot be read either, what GDI gave is
+/// taken as 0.1.4 took it (MS Sans Serif in another size), so that no PC that drew before fails
+/// now. Only when there is no usable font at all is it an error. Each step's reason is logged,
+/// naming what really happened.
 fn cell_1252(face: &str, px: i32, bold: bool) -> Result<Cell1252, String> {
-    match gdi_1252(face, px, bold) {
-        Ok(cell) => Ok(cell),
-        Err(e) if face.eq_ignore_ascii_case("MS Sans Serif") && px == MS_SANS_SERIF_PX => match fon::ms_sans_serif_1252(bold) {
-            Ok(cell) => {
-                log_once(format!("font: GDI did not give MS Sans Serif ({e}; {}); its letters are read from Windows' own SSERIFE.FON instead", system_facts()));
+    let gdi = gdi_1252(face, px, bold);
+    if !(face.eq_ignore_ascii_case("MS Sans Serif") && px == MS_SANS_SERIF_PX) {
+        return gdi.map_err(|e| e.to_string());
+    }
+    let (why, as_before) = match gdi {
+        Ok(cell) => return Ok(cell),
+        Err(Gdi::Unlike { why, as_before }) => (why, as_before),
+        Err(Gdi::Failed(why)) => (why, None),
+    };
+    match file_1252(bold) {
+        Ok(cell) => {
+            log_once(format!("font: MS Sans Serif from GDI: {why} ({}); its letters are read from Windows' own SSERIFE.FON instead", system_facts()));
+            Ok(cell)
+        }
+        Err(f) => match as_before {
+            Some(cell) => {
+                log_once(format!(
+                    "font: MS Sans Serif from GDI: {why}, and SSERIFE.FON could not be read ({f}) ({}); what GDI gave is taken, as Bevel95 0.1.4 did",
+                    system_facts()
+                ));
                 Ok(cell)
             }
-            Err(f) => Err(format!("{e}; and SSERIFE.FON could not be read either ({f})")),
+            None => Err(format!("{why}; and SSERIFE.FON could not be read either ({f})")),
         },
-        Err(e) => Err(e),
     }
+}
+
+/// The letters from SSERIFE.FON (a test can make the file way fail).
+fn file_1252(bold: bool) -> Result<Cell1252, String> {
+    #[cfg(test)]
+    if tests::FILE_FAILS.with(std::cell::Cell::get) {
+        return Err("a test's stand-in for a missing file".into());
+    }
+    fon::ms_sans_serif_1252(bold)
 }
 
 /// The looks' MS Sans Serif size (8pt at 96 DPI: a 13-pixel cell).
 const MS_SANS_SERIF_PX: i32 = 11;
 
+/// How GDI did not give a font as asked.
+enum Gdi {
+    /// It gave another font than asked (`why`); `as_before`: the letters 0.1.4 would have taken
+    /// (MS Sans Serif, but in another size or kind), where it would have taken any.
+    Unlike { why: String, as_before: Option<Cell1252> },
+    /// A GDI call failed, or a letter could not be read (`why` says which).
+    Failed(String),
+}
+
+impl std::fmt::Display for Gdi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Gdi::Unlike { why, .. } | Gdi::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
 /// `cell_1252` from GDI alone. MS Sans Serif must be the bitmap font of the 13-pixel cell (the
 /// 96-DPI SSERIFE.FON), not a TrueType one or another size of it.
-fn gdi_1252(face: &str, px: i32, bold: bool) -> Result<Cell1252, String> {
+fn gdi_1252(face: &str, px: i32, bold: bool) -> Result<Cell1252, Gdi> {
     #[cfg(test)]
     if tests::GDI_REFUSES.with(std::cell::Cell::get) {
-        return Err(format!("asked GDI for \"{face}\" but got \"Microsoft Sans Serif\" (a test's stand-in)"));
+        return Err(Gdi::Unlike { why: format!("asked for \"{face}\" but got \"Microsoft Sans Serif\" (a test's stand-in)"), as_before: None });
     }
-    let mut canvas = Canvas::new(GLYPH_W, GLYPH_H, face, px, bold)?;
+    let mut canvas = Canvas::asked(GLYPH_W, GLYPH_H, face, bold, Ask::em(px, ANSI_CHARSET)).map_err(Gdi::Failed)?;
+    if !canvas.face.eq_ignore_ascii_case(face) {
+        return Err(Gdi::Unlike { why: format!("asked for \"{face}\" but got \"{}\" (font not installed?)", canvas.face), as_before: None });
+    }
     let tm = canvas.metrics;
+    let glyphs = canvas.glyphs(face, &charset_1252(), tm.tmAscent, tm.tmHeight, true).map_err(Gdi::Failed)?;
+    let cell = Cell1252 { glyphs, height: tm.tmHeight, ascent: tm.tmAscent, overhang: tm.tmOverhang };
+    #[cfg(test)]
+    if tests::GDI_OTHER_SIZE.with(std::cell::Cell::get) {
+        return Err(Gdi::Unlike { why: "got a bitmap one, 16 pixels tall (a test's stand-in)".into(), as_before: Some(cell) });
+    }
     if face.eq_ignore_ascii_case("MS Sans Serif") && px == MS_SANS_SERIF_PX && (canvas.truetype || tm.tmHeight != 13 || tm.tmAscent != 11) {
         let kind = if canvas.truetype { "TrueType" } else { "bitmap" };
-        return Err(format!("asked GDI for the bitmap font \"{face}\" with a 13-pixel cell but got a {kind} one, {} pixels tall", tm.tmHeight));
+        return Err(Gdi::Unlike {
+            why: format!("asked for the bitmap font \"{face}\" with a 13-pixel cell but got a {kind} one, {} pixels tall", tm.tmHeight),
+            as_before: Some(cell),
+        });
     }
-    let glyphs = canvas.glyphs(face, &charset_1252(), tm.tmAscent, tm.tmHeight, true)?;
-    Ok(Cell1252 { glyphs, height: tm.tmHeight, ascent: tm.tmAscent, overhang: tm.tmOverhang })
+    Ok(cell)
 }
 
 /// The looks' own font files in Windows' Fonts folder, by face: loaded for this process alone
 /// before GDI is first asked for the face, so that the atlases do not depend on what happens to
-/// be registered on the PC (issue 6). Where Windows registers them already (as it does), the
-/// same file twice changes no pixel.
+/// be registered on the PC (issue 6). Where Windows registered these very files (a 96-DPI PC of
+/// code page 1252), nothing changes. Where it registered another MS Sans Serif file (the 120-DPI
+/// set, another language's file), Bevel95 now draws the original 96-DPI letters, which may differ
+/// from what it drew there before (the owner's rule: each look draws the original letters).
 const OWN_FILES: [(&str, &[&str]); 2] = [("MS Sans Serif", &["SSERIFE.FON"]), ("Tahoma", &["tahoma.ttf", "tahomabd.ttf"])];
 
 fn load_own_files(face: &str) {
     for (f, files) in OWN_FILES {
         if f.eq_ignore_ascii_case(face) {
-            for file in files {
-                load_file_privately(file);
+            for &file in files {
+                load_file_privately(file, true);
             }
         }
     }
 }
 
-/// The code page and the screen's DPI as Windows set them at sign-in (for the log: the two
-/// things that decide which font files Windows registers and hands out).
+/// The code page and the system's DPI as Windows set them at sign-in (for the log: the two things
+/// that decide which font files Windows registers and hands out). The DPI is read with the thread
+/// aware of it for the moment, so it is the real one even where the caller is inside `DpiUnaware`
+/// (which would read 96 everywhere: the review of 2026-11-23, finding 1).
 pub fn system_facts() -> String {
-    // SAFETY: plain calls without arguments.
-    let (acp, dpi) = unsafe { (windows_sys::Win32::Globalization::GetACP(), windows_sys::Win32::UI::HiDpi::GetDpiForSystem()) };
+    // SAFETY: plain calls; the thread's context is put back at once.
+    let (acp, dpi) = unsafe {
+        let old = SetThreadDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let dpi = windows_sys::Win32::UI::HiDpi::GetDpiForSystem();
+        if !old.is_null() {
+            SetThreadDpiAwarenessContext(old);
+        }
+        (windows_sys::Win32::Globalization::GetACP(), dpi)
+    };
     format!("code page {acp}, the system's {dpi} DPI")
 }
 
@@ -273,7 +338,8 @@ fn other_letters(cp: &CodePage, face: &str, px: i32, bold: bool, ascent: i32, he
 /// Loads `cp`'s MS Sans Serif file from Windows' Fonts folder for this process alone, once
 /// (whether it worked is remembered). False when there is no such file or it would not load.
 fn load_privately(cp: &CodePage) -> bool {
-    load_file_privately(cp.ms_sans_serif_file)
+    // Missing, it is not logged here: `other_letters` says once what came instead.
+    load_file_privately(cp.ms_sans_serif_file, false)
 }
 
 /// The path of `file` in Windows' own Fonts folder (whether it is there or not).
@@ -284,40 +350,58 @@ pub(crate) fn windows_font_file(file: &str) -> Option<PathBuf> {
     (n > 0 && n < dir.len()).then(|| PathBuf::from(String::from_utf16_lossy(&dir[..n])).join("Fonts").join(file))
 }
 
-/// Loads `file` from Windows' Fonts folder for this process alone, once (whether it worked is
-/// remembered). False when there is no such file or it would not load (logged).
-fn load_file_privately(file: &str) -> bool {
-    static TRIED: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
+/// Loads `own_font_file` from Windows' Fonts folder for this process alone, once (whether it
+/// worked is remembered). False when there is no such file or it would not load. Its name is a
+/// `&'static str`: by its type it can only be one of Bevel95's own constants (`OWN_FILES`,
+/// `OTHER_CODE_PAGES`), never a name read from the PC, which is why the log may name it.
+/// `log_missing`: a missing file is logged here (the looks' own files; a code page's is told by
+/// `other_letters`, one line per fact).
+fn load_file_privately(own_font_file: &'static str, log_missing: bool) -> bool {
+    static TRIED: Mutex<Vec<(&'static str, bool)>> = Mutex::new(Vec::new());
     let mut tried = TRIED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(&(_, ok)) = tried.iter().find(|(n, _)| n.eq_ignore_ascii_case(file)) {
+    if let Some(&(_, ok)) = tried.iter().find(|(n, _)| n.eq_ignore_ascii_case(own_font_file)) {
         return ok;
     }
-    let ok = match windows_font_file(file) {
+    let ok = match windows_font_file(own_font_file) {
         Some(path) if path.is_file() => {
             let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+            clear_last_error();
             // SAFETY: a null-terminated path; FR_PRIVATE keeps the font to this process, and it
             // goes with the process (never removed earlier: atlases are made again on a change).
             let loaded = unsafe { AddFontResourceExW(wide.as_ptr(), FR_PRIVATE, null()) };
             if loaded == 0 {
-                // `file` is one of Bevel95's own names of Windows' font files (OWN_FILES, OTHER_CODE_PAGES).
-                log_win32(&format!("AddFontResourceExW({font_file})", font_file = file));
+                log(&win32_failed(&format!("font: AddFontResourceExW({own_font_file})")));
             }
             loaded > 0
         }
         _ => {
-            log(&format!("font: {font_file} is not in Windows' Fonts folder", font_file = file));
+            if log_missing {
+                log(&format!("font: {own_font_file} is not in Windows' Fonts folder"));
+            }
             false
         }
     };
-    tried.push((file.to_string(), ok));
+    tried.push((own_font_file, ok));
     ok
 }
 
-/// "`what` failed (Win32 error n)", the error read right after the call.
+/// Clears the thread's last error before a call that is not documented to set one, so that a 0
+/// afterwards means Windows gave no error number (the review of 2026-11-23, finding 7).
+fn clear_last_error() {
+    // SAFETY: sets the calling thread's last-error value.
+    unsafe { windows_sys::Win32::Foundation::SetLastError(0) };
+}
+
+/// "`what` failed (Win32 error n)", the error read right after the call (`clear_last_error`
+/// before it): "(Windows gave no error number)" where it is 0.
 fn win32_failed(what: &str) -> String {
     // SAFETY: reads the calling thread's last-error value.
     let code = unsafe { windows_sys::Win32::Foundation::GetLastError() };
-    format!("{what} failed (Win32 error {code})")
+    failed_with(what, code)
+}
+
+fn failed_with(what: &str, code: u32) -> String {
+    if code == 0 { format!("{what} failed (Windows gave no error number)") } else { format!("{what} failed (Win32 error {code})") }
 }
 
 /// Logs `line` the first time this process has it (a program makes its atlases again whenever
@@ -401,7 +485,8 @@ struct Canvas {
 }
 
 impl Canvas {
-    /// `face` asked with `ANSI_CHARSET`; an error if GDI gives another face.
+    /// `face` asked with `ANSI_CHARSET`; an error if GDI gives another face (the tests').
+    #[cfg(test)]
     fn new(width: i32, height: i32, face: &str, px: i32, bold: bool) -> Result<Canvas, String> {
         let canvas = Canvas::asked(width, height, face, bold, Ask::em(px, ANSI_CHARSET))?;
         if !canvas.face.eq_ignore_ascii_case(face) {
@@ -475,11 +560,13 @@ impl Canvas {
         // SAFETY: every handle is checked before use; `Drop` releases what was created
         // (a partially built Canvas is never returned, so each error path cleans up here).
         unsafe {
+            clear_last_error();
             let dc = CreateCompatibleDC(null_mut());
             if dc.is_null() {
                 return Err(win32_failed("CreateCompatibleDC"));
             }
             let mut bits: *mut c_void = null_mut();
+            clear_last_error();
             let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
             if bitmap.is_null() || bits.is_null() {
                 // The error number read before DeleteDC can change it.
@@ -490,6 +577,7 @@ impl Canvas {
             let old_bitmap = SelectObject(dc, bitmap);
             let weight = if bold { FW_BOLD } else { FW_NORMAL };
             let precision = if ask.raster { OUT_RASTER_PRECIS } else { OUT_DEFAULT_PRECIS };
+            clear_last_error();
             let font = CreateFontW(
                 ask.lf_height,
                 0,
@@ -529,6 +617,7 @@ impl Canvas {
             };
             SetTextColor(dc, 0x00FF_FFFF);
             SetBkMode(dc, TRANSPARENT as i32);
+            clear_last_error();
             if GetTextMetricsW(dc, &mut canvas.metrics) == 0 {
                 return Err(win32_failed("GetTextMetricsW"));
             }
@@ -862,6 +951,44 @@ mod tests {
         /// While set, GDI "gives another face" for every 1252 atlas of this thread (as on the
         /// reporter's PC of issue 6, whatever the cause there).
         pub(super) static GDI_REFUSES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// While set, GDI "gives MS Sans Serif in another size" (its letters as 0.1.4 took them).
+        pub(super) static GDI_OTHER_SIZE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// While set, SSERIFE.FON "cannot be read".
+        pub(super) static FILE_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Never worse than 0.1.4: GDI gives MS Sans Serif in another size and the file cannot be
+    /// read either: what GDI gave is taken, as 0.1.4 took it. Only with no usable font at all (GDI
+    /// gives another face and the file fails) is it an error.
+    #[test]
+    fn without_the_file_what_gdi_gave_is_taken_as_before() {
+        let normal = render_1252("MS Sans Serif", 11, false).unwrap();
+        GDI_OTHER_SIZE.with(|g| g.set(true));
+        FILE_FAILS.with(|f| f.set(true));
+        let as_before = render_1252("MS Sans Serif", 11, false);
+        GDI_OTHER_SIZE.with(|g| g.set(false));
+        GDI_REFUSES.with(|g| g.set(true));
+        let none = render_1252("MS Sans Serif", 11, false);
+        GDI_REFUSES.with(|g| g.set(false));
+        FILE_FAILS.with(|f| f.set(false));
+        assert!(as_before.unwrap() == normal, "GDI's letters, as 0.1.4 drew them");
+        let e = none.expect_err("no usable font at all");
+        assert!(e.contains("Microsoft Sans Serif") && e.contains("SSERIFE.FON could not be read"), "{e}");
+    }
+
+    /// The system's DPI in the log is the real one also inside `DpiUnaware` (where Windows answers
+    /// 96 to a thread that is not aware), and an error number of 0 is said as none given.
+    #[test]
+    fn the_logs_facts_tell_the_truth() {
+        let outside = system_facts();
+        let inside = {
+            let _dpi = DpiUnaware::enter();
+            system_facts()
+        };
+        assert_eq!(inside, outside);
+        assert!(outside.starts_with("code page ") && outside.ends_with(" DPI"), "{outside}");
+        assert_eq!(failed_with("CreateFontW(x)", 0), "CreateFontW(x) failed (Windows gave no error number)");
+        assert_eq!(failed_with("CreateWindowExW", 8), "CreateWindowExW failed (Win32 error 8)");
     }
 
     /// When GDI does not hand out MS Sans Serif, the looks' fonts are still made, from the file,
@@ -888,7 +1015,7 @@ mod tests {
         let _dpi = DpiUnaware::enter();
         load_own_files("MS Sans Serif");
         for bold in [false, true] {
-            let gdi = gdi_1252("MS Sans Serif", 11, bold).unwrap();
+            let gdi = gdi_1252("MS Sans Serif", 11, bold).unwrap_or_else(|e| panic!("{e}"));
             let file = fon::ms_sans_serif_1252(bold).unwrap();
             assert_eq!((file.height, file.ascent, file.overhang), (gdi.height, gdi.ascent, gdi.overhang), "bold={bold}");
             assert_eq!(file.glyphs.len(), gdi.glyphs.len());

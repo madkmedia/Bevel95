@@ -233,16 +233,15 @@ pub fn setup(forced: bool) -> bool {
     let answer = match ask(kind, settings.era, settings.colors) {
         Ok(answer) => answer,
         Err(why) => {
-            log(&format!("setup: the window could not be shown ({})", match &why {
-                Unshown::Look(_) => "the look's fonts could not be made",
-                Unshown::Window => "the window could not be created",
-            }));
+            // One line per fact: the look's reason here (`CreateWindowExW`'s own failure is
+            // logged where it failed); what was then done, below.
             if let Unshown::Look(e) = &why {
-                log(&format!("setup: {e}"));
+                log(&format!("setup: the window could not be shown: {e}"));
             }
             // A copy as built runs from where it is, as before (`not_started_here`); only the one
             // file asks plainly, and never runs as a bar from where it is.
             if !bundle.packed {
+                log("setup: this copy runs from where it is without Setup");
                 return true;
             }
             match ask_plainly(kind, &why, message) {
@@ -396,7 +395,7 @@ fn ask_plainly(kind: SetupKind, why: &Unshown, ask: impl Fn(&str, MESSAGEBOX_STY
             None
         }
         Unshown::Window => {
-            log("setup: its window could not be created; asked through Windows' own message windows instead");
+            log("setup: asked through Windows' own message windows instead of its own");
             let place = log_place();
             match kind {
                 SetupKind::FirstRun => {
