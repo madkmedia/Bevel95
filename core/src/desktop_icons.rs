@@ -462,7 +462,7 @@ pub enum RenameEnd {
 
 impl Rename {
     fn new(id: String, name: &str) -> Rename {
-        let mut edit = crate::edit::Edit::new(name);
+        let mut edit = crate::edit::Edit::new(name).with_rule(Some(crate::edit::RENAME_LIMIT), crate::edit::Allow::Any);
         edit.select_all();
         let mut r = Rename { id, edit, text: Vec::new(), caret: 0, anchor: 0, copied: None, caret_on: true, asking: false, declined: false };
         r.sync();
@@ -805,6 +805,10 @@ impl Desktop {
 
     /// The mouse dragged to (x, y) while renaming: the selection runs from where it was pressed.
     pub fn rename_drag(&mut self, font: &Font, x: i32, y: i32) -> bool {
+        // No mouse while the extension warning is up (brief 97).
+        if self.is_asking() {
+            return false;
+        }
         let Some(at) = self.rename_index_at(font, x, y) else { return false };
         let Some(r) = self.rename.as_mut() else { return false };
         let before = (r.caret, r.anchor);
@@ -815,6 +819,10 @@ impl Desktop {
 
     /// A double click in the rename box: the word there selected.
     pub fn rename_double_click(&mut self, font: &Font, x: i32, y: i32) -> bool {
+        // Only on the box, and not while the extension warning is up (brief 97).
+        if self.is_asking() || !self.rename_box(font).is_some_and(|(r, _)| r.contains(x, y)) {
+            return false;
+        }
         let Some(at) = self.rename_index_at(font, x, y) else { return false };
         let Some(r) = self.rename.as_mut() else { return false };
         r.edit.double_click(at);

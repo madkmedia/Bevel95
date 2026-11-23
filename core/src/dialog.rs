@@ -710,7 +710,7 @@ impl DialogWindow {
             screen_bottom: i32::MAX,
             field_x: 0,
             advances: Vec::new(),
-            edit: crate::edit::Edit::default(),
+            edit: crate::edit::Edit::default().with_rule(Some(crate::edit::RUN_LIMIT), crate::edit::Allow::Any),
             copied: None,
             shift: false,
         }
@@ -719,7 +719,10 @@ impl DialogWindow {
     /// The command field takes in a command put into `dialog.text` from outside (an earlier
     /// command, a test), the caret where it was put.
     fn pull(&mut self) {
-        if self.edit.text != self.dialog.text {
+        // A command put in from outside clears `dialog.anchor` (`show_command`, Browse...): it is
+        // taken in even when it equals what is there, so the caret, the selection and Undo follow
+        // (brief 97).
+        if self.edit.text != self.dialog.text || self.dialog.anchor.is_none() {
             self.edit.set(&self.dialog.text);
             self.edit.place(self.dialog.caret);
         }
@@ -747,7 +750,7 @@ impl DialogWindow {
     /// The character of the command nearest `x` (the window's pixels).
     fn command_index(&self, x: i32) -> usize {
         let advances = &self.advances;
-        self.edit.index_at(&|s: &str| advances.iter().take(s.chars().count()).sum(), x - self.field_x)
+        self.edit.index_at(&|i, _| advances.get(i).copied().unwrap_or(0), x - self.field_x)
     }
 
     /// Where Run's list of earlier commands goes: under the field, as wide, one row per command
@@ -1139,6 +1142,8 @@ impl kit::Form for DialogWindow {
                 }
             }
             Part::Command => {
+                // The scroll as painted (brief 97: not the one from the press).
+                self.edit.scroll.set(self.dialog.scroll.get());
                 let at = self.command_index(x);
                 let was = (self.edit.caret, self.edit.anchor);
                 self.edit.drag(at);

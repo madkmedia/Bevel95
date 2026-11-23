@@ -419,7 +419,7 @@ impl FindWindow {
             name_w: NAME_W,
             divider_drag: None,
             font: None,
-            edit: crate::edit::Edit::default(),
+            edit: crate::edit::Edit::default().with_rule(Some(crate::edit::QUICK_SEARCH_LIMIT), crate::edit::Allow::Any),
             anchor: 0,
             copied: None,
             shift: false,
@@ -451,7 +451,7 @@ impl FindWindow {
     /// The character of the field nearest `x` (the window's pixels).
     fn field_index(&self, x: i32) -> usize {
         let advances = &self.advances;
-        self.edit.index_at(&|s: &str| advances.iter().take(s.chars().count()).sum(), x - self.field_x)
+        self.edit.index_at(&|i, _| advances.get(i).copied().unwrap_or(0), x - self.field_x)
     }
 
     /// Whether no program is known yet (only the commands).

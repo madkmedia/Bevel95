@@ -51,7 +51,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, VK_A, VK_APPS, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
-    VK_ESCAPE, VK_F2, VK_F10, VK_HOME, VK_LEFT, VK_SHIFT, VK_V, VK_X, VK_Z,
+    VK_ESCAPE, VK_F2, VK_F10, VK_HOME, VK_LEFT, VK_MENU, VK_SHIFT, VK_V, VK_X, VK_Z,
     VK_RETURN, VK_RIGHT, VK_UP,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -680,7 +680,9 @@ fn items_wait(pressed: Option<u32>, now: u32, double: u32) -> u32 {
         if gone < double { double - gone + 10 } else { 0 }
     })
 }
-/// The keys held with a click (wParam of a mouse message): MK_SHIFT and MK_CONTROL.
+/// The keys held with a click (wParam of a mouse message): MK_SHIFT and MK_CONTROL; and the left
+/// button held (MK_LBUTTON, with a move).
+const MK_LBUTTON: usize = 0x1;
 const MK_SHIFT: usize = 0x4;
 const MK_CONTROL: usize = 0x8;
 
@@ -1526,6 +1528,11 @@ fn desktop_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_w
     Some(effect)
 }
 
+/// Whether a label of the desktop is being renamed now.
+fn renaming_now() -> bool {
+    STATE.with(|c| c.borrow().as_ref().is_some_and(|st| st.view.renaming().is_some()))
+}
+
 thread_local! {
     /// The left button went down in the rename box: moving selects until it comes up.
     static RENAME_DRAG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -1858,7 +1865,11 @@ fn rename_key(hwnd: HWND, msg: u32, wparam: WPARAM) -> bool {
         return false;
     }
     // SAFETY: plain queries of the keyboard's state for this message.
-    let (ctrl, shift) = unsafe { (GetKeyState(i32::from(VK_CONTROL)) < 0, GetKeyState(i32::from(VK_SHIFT)) < 0) };
+    let (ctrl, shift, alt) = unsafe {
+        (GetKeyState(i32::from(VK_CONTROL)) < 0, GetKeyState(i32::from(VK_SHIFT)) < 0, GetKeyState(i32::from(VK_MENU)) < 0)
+    };
+    // Ctrl counts only while Alt is up: AltGr (Ctrl and Alt) types letters (brief 97).
+    let ctrl = bevel_core::kit::shortcut_ctrl(ctrl, alt);
     let key = match (msg, wparam as u16) {
         (WM_KEYDOWN, VK_RETURN) => Some(EditKey::Enter),
         (WM_KEYDOWN, VK_ESCAPE) => Some(EditKey::Escape),
@@ -1955,7 +1966,9 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
         }
         WM_ACTIVATE => {
             ACTIVATING.store(false, Ordering::SeqCst);
-            let active = (wparam & 0xFFFF) as u32 != WA_INACTIVE;
+            // Bevel95's own menu of this window (the rename box's) keeps it active, as the kit's
+            // host does (brief 97): the rename goes on while the box's menu is open.
+            let active = (wparam & 0xFFFF) as u32 != WA_INACTIVE || bevel_winkit::menu::is_ours(lparam as HWND, hwnd);
             // Another window took the keyboard while a label was renamed: the name typed is
             // taken, as Windows did.
             if !active && STATE.with(|c| c.borrow().as_ref().is_some_and(|st| st.view.renaming().is_some())) {
@@ -1982,6 +1995,10 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
                 return 0;
             }
             activate(hwnd);
+            // Every press starts afresh: a press on the rename box sets its flag again below
+            // (brief 97: neither can stick).
+            RENAME_DRAG.set(false);
+            RENAME_RIGHT.set(false);
             // While a label is renamed: a left click in its box moves the caret; any other
             // click takes the name typed and goes on as usual (Windows did the same).
             if STATE.with(|c| c.borrow().as_ref().is_some_and(|st| st.view.renaming().is_some())) {
@@ -2053,8 +2070,9 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             }
             return 0;
         }
-        // A drag in the rename box selects (brief 95).
-        WM_MOUSEMOVE if RENAME_DRAG.get() => {
+        // A drag in the rename box selects (brief 95): only with the left button down and a rename
+        // going on (brief 97: the flag never sticks).
+        WM_MOUSEMOVE if RENAME_DRAG.get() && wparam & MK_LBUTTON != 0 && renaming_now() => {
             with_state(hwnd, |st, font| {
                 let (x, y) = point_1x(st, lparam);
                 st.view.update(font, |v| v.rename_drag(font, x, y)).1
@@ -2066,7 +2084,9 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             unsafe { ReleaseCapture() };
             return 0;
         }
-        WM_RBUTTONUP if RENAME_RIGHT.replace(false) => {
+        // The right button came up after a press on the rename box: the box's menu, if the rename
+        // is still going on; else the ordinary menu comes (below).
+        WM_RBUTTONUP if RENAME_RIGHT.replace(false) && renaming_now() => {
             rename_menu(hwnd, false);
             return 0;
         }
@@ -2098,6 +2118,8 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
         }
         // Another window took the mouse (or the press was given up): a drag goes back.
         WM_CAPTURECHANGED if lparam as HWND != hwnd => {
+            // A drag in the rename box ends with the capture (brief 97).
+            RENAME_DRAG.set(false);
             with_state(hwnd, |st, font| {
                 st.pointer = None;
                 if st.view.gesture_active() { st.view.update(font, |v| v.cancel()).1 } else { Vec::new() }
@@ -2157,7 +2179,12 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
                 return 0;
             }
             // SAFETY: plain queries of the keyboard's state for this message.
-            let (ctrl, shift) = unsafe { (GetKeyState(i32::from(VK_CONTROL)) < 0, GetKeyState(i32::from(VK_SHIFT)) < 0) };
+            let (ctrl, shift, alt) = unsafe {
+                (GetKeyState(i32::from(VK_CONTROL)) < 0, GetKeyState(i32::from(VK_SHIFT)) < 0, GetKeyState(i32::from(VK_MENU)) < 0)
+            };
+            // A Ctrl shortcut counts only while Alt is up: an AltGr letter never cuts, copies,
+            // pastes or undoes the person's files (brief 97).
+            let ctrl = bevel_core::kit::shortcut_ctrl(ctrl, alt);
             if msg == WM_KEYDOWN {
                 let key = match wparam as u16 {
                     VK_DELETE => Some(ShortcutKey::Delete),
@@ -2166,7 +2193,7 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
                     k @ (VK_X | VK_C | VK_V | VK_Z) => char::from_u32(u32::from(k)).map(ShortcutKey::Letter),
                     _ => None,
                 };
-                match key.and_then(|k| bevel_core::desktop::shortcut(k, ctrl, shift, false)) {
+                match key.and_then(|k| bevel_core::desktop::shortcut(k, ctrl, shift, alt)) {
                     Some(None) => {
                         keyboard_menu(hwnd);
                         return 0;

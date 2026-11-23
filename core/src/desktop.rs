@@ -611,6 +611,12 @@ mod tests {
         assert_eq!(shortcut(ShortcutKey::Menu, false, false, false), Some(None));
         assert_eq!(shortcut(ShortcutKey::Letter('X'), false, false, false), None, "a plain letter goes to an icon's name");
         assert_eq!(shortcut(ShortcutKey::Enter, false, false, false), None, "Enter opens (desktop_icons)");
+        // Brief 97: with Alt down (AltGr types letters) no Ctrl shortcut acts on the files, both
+        // as the desktop passes Ctrl (`kit::shortcut_ctrl`) and if Ctrl came through raw.
+        for k in ['X', 'C', 'V', 'Z'] {
+            assert_eq!(shortcut(ShortcutKey::Letter(k), true, false, true), None, "AltGr+{k}");
+            assert_eq!(shortcut(ShortcutKey::Letter(k), crate::kit::shortcut_ctrl(true, true), false, true), None);
+        }
     }
 
     #[test]

@@ -17,7 +17,7 @@ use windows_sys::Win32::Foundation::{GlobalFree, HWND};
 use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
 };
-use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock};
 use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 
 use crate::log::counted;
@@ -53,17 +53,20 @@ pub fn text() -> Option<String> {
     if IN_TESTS || !has_text() || !open(null_mut()) {
         return None;
     }
-    // SAFETY: the clipboard is open; the locked memory is read as the null-terminated UTF-16 text
-    // Windows documents for CF_UNICODETEXT, and unlocked and closed here.
+    // SAFETY: the clipboard is open; the locked memory is read as the UTF-16 text Windows documents
+    // for CF_UNICODETEXT, never further than the block is long (`GlobalSize`: text from another
+    // program without its ending NUL is not read past its end; brief 97), unlocked and closed here.
     unsafe {
         let handle = GetClipboardData(u32::from(CF_UNICODETEXT));
         let text = if handle.is_null() {
             None
         } else {
+            let units = GlobalSize(handle) / 2;
             let p = GlobalLock(handle) as *const u16;
             let text = (!p.is_null()).then(|| {
-                let len = (0..).take_while(|&i| *p.add(i) != 0).count();
-                String::from_utf16_lossy(std::slice::from_raw_parts(p, len))
+                let all = std::slice::from_raw_parts(p, units);
+                let len = all.iter().position(|&u| u == 0).unwrap_or(units);
+                String::from_utf16_lossy(&all[..len])
             });
             GlobalUnlock(handle);
             text
@@ -81,29 +84,45 @@ pub fn has_text() -> bool {
 
 /// Puts `text` on the clipboard for window `owner` (Cut, Copy). False: not done (logged by name).
 pub fn set_text(owner: HWND, text: &str) -> bool {
-    if IN_TESTS || !open(owner) {
+    if IN_TESTS {
         return false;
     }
     let units: Vec<u16> = text.encode_utf16().chain([0]).collect();
-    // SAFETY: the clipboard is open; the memory handed to it is a moveable global block holding
-    // the null-terminated text, which the clipboard owns once set (freed here if it was not taken).
-    let done = unsafe {
-        EmptyClipboard();
+    // The block is made and filled first, and only then is the clipboard opened and emptied: a
+    // failure never leaves the person's clipboard empty (brief 97).
+    // SAFETY: a moveable global block of the text's size, locked, filled and unlocked here.
+    let block = unsafe {
         let block = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2);
-        let mut done = false;
         if !block.is_null() {
             let p = GlobalLock(block) as *mut u16;
             if p.is_null() {
                 GlobalFree(block);
+                null_mut()
             } else {
                 std::ptr::copy_nonoverlapping(units.as_ptr(), p, units.len());
                 GlobalUnlock(block);
-                if SetClipboardData(u32::from(CF_UNICODETEXT), block).is_null() {
-                    GlobalFree(block);
-                } else {
-                    done = true;
-                }
+                block
             }
+        } else {
+            block
+        }
+    };
+    if block.is_null() {
+        counted(&SET_FAILED, "GlobalAlloc failed (the clipboard was left as it was)");
+        return false;
+    }
+    if !open(owner) {
+        // SAFETY: the block was never handed over.
+        unsafe { GlobalFree(block) };
+        return false;
+    }
+    // SAFETY: the clipboard is open; the clipboard owns the block once set (freed here if it was
+    // not taken).
+    let done = unsafe {
+        EmptyClipboard();
+        let done = !SetClipboardData(u32::from(CF_UNICODETEXT), block).is_null();
+        if !done {
+            GlobalFree(block);
         }
         CloseClipboard();
         done

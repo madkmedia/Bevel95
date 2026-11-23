@@ -16,6 +16,13 @@
 
 use std::cell::Cell;
 
+/// The fields' limits in characters (brief 97): Windows' own (the Run box's and Quick Search's
+/// MAX_PATH less one, the address bar's 2,047, a file name's 255); Minesweeper's keep theirs.
+pub const RUN_LIMIT: usize = 259;
+pub const QUICK_SEARCH_LIMIT: usize = 259;
+pub const ADDRESS_LIMIT: usize = 2047;
+pub const RENAME_LIMIT: usize = 255;
+
 /// What a field lets in (control characters never).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Allow {
@@ -399,25 +406,25 @@ impl Edit {
     }
 
     /// The character nearest `x` pixels into the text as shown (`x` counts from the text's first
-    /// pixel in the box; the scroll is added here), by `measure` (the field's own font).
-    pub fn index_at(&self, measure: &dyn Fn(&str) -> i32, x: i32) -> usize {
+    /// pixel in the box; the scroll is added here), by `advance` (the width of character `i`, `c`,
+    /// in the field's own font). The widths are added up once along the text (brief 97: before,
+    /// every beginning was measured again, which a long line made slow).
+    pub fn index_at(&self, advance: &dyn Fn(usize, char) -> i32, x: i32) -> usize {
         let x = x + self.scroll.get();
-        let mut best = 0;
-        let mut best_d = i32::MAX;
-        let mut prefix = String::new();
-        for (k, ch) in std::iter::once(None).chain(self.text.chars().map(Some)).enumerate() {
-            if let Some(ch) = ch {
-                prefix.push(ch);
-            }
-            let d = (measure(&prefix) - x).abs();
+        let (mut best, mut best_d, mut at) = (0, x.abs(), 0);
+        for (i, c) in self.text.chars().enumerate() {
+            at += advance(i, c);
+            let d = (at - x).abs();
             if d < best_d {
                 best_d = d;
-                best = k;
+                best = i + 1;
+            }
+            if at > x {
+                break;
             }
         }
         best
     }
-
     /// A press of the mouse at character `at`: the caret there, nothing selected (`extend`, with
     /// Shift: the selection grows to there).
     pub fn press(&mut self, at: usize, extend: bool) {
@@ -502,7 +509,13 @@ pub fn paint_line(
         return;
     }
     let measure = |s: &str| font.measure(s);
-    let scroll = if focused { edit.fit(&measure, width) } else { 0 };
+    // A field without the keyboard shows its start and keeps no left-over scroll (brief 97).
+    let scroll = if focused {
+        edit.fit(&measure, width)
+    } else {
+        edit.scroll.set(0);
+        0
+    };
     let mut line = Framebuffer::new(width, font.height, 0);
     line.blit_part(fb, Rect::new(x, y, width, font.height), 0, 0);
     font.draw(&mut line, -scroll, 0, &edit.text, colors.text);
@@ -729,13 +742,12 @@ mod tests {
 
     #[test]
     fn mouse_click_drag_and_double_click() {
-        let measure = |s: &str| 6 * s.chars().count() as i32;
         let mut e = Edit::new("C:\\WINDOWS\\Desktop");
-        let at = e.index_at(&measure, 13);
+        let at = e.index_at(&|_, _| 6, 13);
         assert_eq!(at, 2);
         e.press(at, false);
         assert!(!e.has_selection());
-        e.drag(e.index_at(&measure, 66));
+        e.drag(e.index_at(&|_, _| 6, 66));
         assert_eq!(e.selected_text(), "\\WINDOWS\\");
         e.double_click(4);
         assert!(e.all_selected(), "an address without spaces is one word (survey part 3)");
@@ -798,6 +810,55 @@ mod tests {
         let mut e2 = e.clone();
         e2.place(0);
         assert_eq!(e2.fit(&measure, 61), 0);
+    }
+
+    /// Brief 97: AltGr (Ctrl and Alt together) types letters on many keyboards; with Alt down a
+    /// Ctrl shortcut is no shortcut: nothing selected, cut, copied, pasted or undone, the clipboard
+    /// left alone (the letter then comes as a character).
+    #[test]
+    fn altgr_letters_are_no_shortcuts() {
+        use crate::kit::{Key, Mods, field_key, shortcut_ctrl};
+        assert!(shortcut_ctrl(true, false));
+        assert!(!shortcut_ctrl(true, true), "AltGr");
+        assert!(!shortcut_ctrl(false, true));
+        assert!(!shortcut_ctrl(false, false));
+        for k in *b"AXCVZL" {
+            let mut e = Edit::new("abc");
+            e.place(1);
+            e.type_char('x');
+            e.select_all();
+            let mut copy = None;
+            let altgr = Mods { shift: false, ctrl: shortcut_ctrl(true, true) };
+            assert!(field_key::<()>(&mut e, Key::Other(u16::from(k)), altgr, &mut copy).is_none(), "AltGr+{}", k as char);
+            assert!(copy.is_none() && e.text == "axbc" && e.all_selected(), "AltGr+{}: nothing done", k as char);
+            assert!(e.type_char('ż'), "the letter is typed");
+            assert_eq!(e.text, "ż");
+            // Ctrl alone still is the shortcut.
+            let ctrl = Mods { shift: false, ctrl: shortcut_ctrl(true, false) };
+            assert!(field_key::<()>(&mut e, Key::Other(u16::from(b'A')), ctrl, &mut copy).is_some());
+        }
+    }
+
+    /// Brief 97: every field has a limit; a pasted line of a million characters is cut to it, and
+    /// finding the character under the pointer afterwards answers at once.
+    #[test]
+    fn a_million_character_paste_is_cut_and_a_click_answers_at_once() {
+        let long: String = std::iter::repeat_n('w', 1_000_000).collect();
+        for limit in [255, 259, 2047] {
+            let mut e = Edit::new("").with_rule(Some(limit), Allow::Any);
+            assert!(e.paste(&long));
+            assert_eq!(e.len(), limit);
+            let started = std::time::Instant::now();
+            let at = e.index_at(&|_, _| 7, 7 * 100 + 2);
+            assert_eq!(at, 100);
+            assert!(started.elapsed() < std::time::Duration::from_millis(50), "{:?}", started.elapsed());
+        }
+        // Without a limit the click is still one pass, stopping where the pointer is.
+        let mut free = Edit::new("");
+        free.paste(&long);
+        let started = std::time::Instant::now();
+        assert_eq!(free.index_at(&|_, _| 7, 7 * 10), 10);
+        assert!(started.elapsed() < std::time::Duration::from_millis(50));
     }
 
     #[test]

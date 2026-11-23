@@ -93,7 +93,7 @@ impl TextField {
     /// The character nearest `x` (the sheet's pixels).
     fn index_at(&self, x: i32) -> usize {
         let advances = &self.advances;
-        self.edit.index_at(&|s: &str| advances.iter().take(s.chars().count()).sum(), x - self.text_x())
+        self.edit.index_at(&|i, _| advances.get(i).copied().unwrap_or(0), x - self.text_x())
     }
 }
 

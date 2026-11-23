@@ -545,6 +545,10 @@ fn drop_effect_format() -> u32 {
 
 /// Opens the clipboard for `owner`, trying a few times (another program may hold it a moment).
 fn open_clipboard(owner: HWND) -> bool {
+    // A build for tests never reaches the person's clipboard (brief 97, as `clipboard`).
+    if cfg!(any(test, feature = "test-scratch")) {
+        return false;
+    }
     for _ in 0..10 {
         // SAFETY: a plain call; closed by the caller.
         if unsafe { OpenClipboard(owner) } != 0 {
@@ -655,8 +659,8 @@ fn clipboard_allowed(paths: &[PathBuf], what: &str) -> bool {
 
 /// Whether the clipboard holds files (Paste and Paste Shortcut are grayed without).
 pub fn clipboard_has_files() -> bool {
-    // SAFETY: a plain query.
-    unsafe { IsClipboardFormatAvailable(u32::from(CF_HDROP)) != 0 }
+    // SAFETY: a plain query (never in a build for tests, brief 97).
+    !cfg!(any(test, feature = "test-scratch")) && unsafe { IsClipboardFormatAvailable(u32::from(CF_HDROP)) != 0 }
 }
 
 /// The files on the clipboard and whether they were cut (to be moved).

@@ -23,13 +23,8 @@ use bevel_winkit::log::{data_dir, log};
 use bevel_winkit::look;
 use bevel_winkit::menu;
 use bevel_winkit::util::wide;
-use windows_sys::Win32::Foundation::{GlobalFree, HWND, RECT};
+use windows_sys::Win32::Foundation::{HWND, RECT};
 use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromRect};
-use windows_sys::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
-};
-use windows_sys::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
-use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CW_USEDEFAULT, CreateWindowExW, DestroyWindow, GetWindowRect, MB_ICONERROR, MB_OK, MessageBoxW, SW_MINIMIZE,
@@ -289,38 +284,13 @@ fn default_origin(w: i32, h: i32) -> (i32, i32) {
 
 /// Whether the clipboard holds text (Edit > Paste is grayed when not).
 fn clipboard_has_text() -> bool {
-    // SAFETY: a plain query.
-    unsafe { IsClipboardFormatAvailable(u32::from(CF_UNICODETEXT)) != 0 }
+    bevel_winkit::clipboard::has_text()
 }
 
-/// Puts `text` on the clipboard (Edit > Copy).
+/// Puts `text` on the clipboard (Edit > Copy), through `winkit::clipboard` (brief 97: its rules and
+/// its test guard hold here too).
 fn set_clipboard_text(owner: HWND, text: &str) {
-    let units: Vec<u16> = text.encode_utf16().chain([0]).collect();
-    // SAFETY: the clipboard is opened and closed here; the memory handed to it is a moveable
-    // global block holding the null-terminated text, which the clipboard owns once set (and is
-    // freed here if it was not taken).
-    unsafe {
-        if OpenClipboard(owner) == 0 {
-            log("Calculator: the clipboard could not be opened");
-            return;
-        }
-        EmptyClipboard();
-        let block = GlobalAlloc(GMEM_MOVEABLE, units.len() * 2);
-        if !block.is_null() {
-            let p = GlobalLock(block) as *mut u16;
-            if !p.is_null() {
-                std::ptr::copy_nonoverlapping(units.as_ptr(), p, units.len());
-                GlobalUnlock(block);
-                if SetClipboardData(u32::from(CF_UNICODETEXT), block).is_null() {
-                    log("Calculator: the clipboard did not take the text");
-                    GlobalFree(block);
-                }
-            } else {
-                GlobalFree(block);
-            }
-        }
-        CloseClipboard();
-    }
+    bevel_winkit::clipboard::set_text(owner, text);
 }
 
 /// Carries out a command of the menus (or of Ctrl+C).

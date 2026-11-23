@@ -261,6 +261,9 @@ pub struct FolderWindow {
     /// A press outside the rename box ended the rename; once the platform has taken the name it
     /// goes on as a click on that place (`click_after_rename`): where, with which keys.
     after_rename: Option<(i32, i32, IconMods)>,
+    /// The left press began in the rename box: its drag selects text, and its release is not the
+    /// list's (brief 97).
+    rename_drag: bool,
     /// A drag of icons began and waits to be handed over (`Form::pending`).
     drag_out: bool,
     /// What Undo would take back now (the platform reads the shared list before a menu opens).
@@ -333,6 +336,7 @@ impl FolderWindow {
             slow_rename: None,
             click_activated: false,
             after_rename: None,
+            rename_drag: false,
             drag_out: false,
             undo: None,
         };
@@ -1661,6 +1665,9 @@ impl FolderWindow {
     pub fn begin_rename(&mut self, i: usize) -> bool {
         let ok = self.view.begin_rename(i);
         if ok {
+            // The rename box takes the keyboard from the address field (brief 97).
+            self.field.blur();
+            self.list = None;
             self.show_icon(i);
         }
         ok
@@ -2143,15 +2150,16 @@ impl Form for FolderWindow {
     }
 
     fn typed(&mut self, ch: char) -> Vec<Effect<Part>> {
-        if self.field.focused {
-            if !ch.is_control() {
-                self.field.key(address::EditKey::Char(ch), false);
-            }
-            return Vec::new();
-        }
+        // A rename going on comes first, as for the keys (brief 97).
         if self.view.renaming().is_some() {
             if !ch.is_control() {
                 self.view.rename_key(EditKey::Char(ch), false);
+            }
+            return Vec::new();
+        }
+        if self.field.focused {
+            if !ch.is_control() {
+                self.field.key(address::EditKey::Char(ch), false);
             }
             return Vec::new();
         }
@@ -2188,6 +2196,7 @@ impl Form for FolderWindow {
         // Whether this press is the click that brought the window forward (used up by it).
         let activating = std::mem::take(&mut self.click_activated);
         self.after_rename = None;
+        self.rename_drag = false;
         match part {
             Some(p @ (Part::Minimize | Part::Maximize | Part::Close)) => Press::Hold(p),
             Some(Part::Icon) => Press::Act(Part::Icon),
@@ -2296,7 +2305,12 @@ impl Form for FolderWindow {
                 let Some(font) = self.font() else { return Press::Done };
                 let mods = IconMods { ctrl: self.mods.ctrl, shift: self.mods.shift };
                 if self.view.renaming().is_some() {
+                    // While the extension warning is up the box takes no mouse (brief 97).
+                    if self.view.is_asking() {
+                        return Press::Done;
+                    }
                     if self.view.rename_press(&font, x, y, self.mods.shift) {
+                        self.rename_drag = true;
                         return Press::Grab(Part::List, RENAME_DRAG);
                     }
                     // The rename ends, and the press then goes on as a click there
@@ -2515,7 +2529,7 @@ impl Form for FolderWindow {
         }
         // A drag in the rename box was only a selection.
         if part == Part::List
-            && self.view.renaming().is_none()
+            && !std::mem::take(&mut self.rename_drag)
             && let Some(font) = self.font()
         {
             self.view.release(&font, x, y);
@@ -2621,37 +2635,44 @@ impl Form for FolderWindow {
         }
     }
 
+    // Paste, Copy and the menu ask first whether a rename is going on, as the keys do (brief 97).
     fn paste(&mut self, text: &str) {
-        if self.field.focused {
-            self.field.paste(text);
-        } else {
+        if self.view.renaming().is_some() {
             self.view.rename_paste(text);
+        } else if self.field.focused {
+            self.field.paste(text);
         }
     }
 
     fn take_copy(&mut self) -> Option<String> {
-        self.field.copied.take().or_else(|| self.view.rename_take_copy())
+        if self.view.renaming().is_some() { self.view.rename_take_copy() } else { self.field.copied.take() }
     }
 
     fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
-        if self.field.focused {
-            Some(self.field.menu(clipboard_has_text))
-        } else {
+        if self.view.renaming().is_some() {
             self.view.rename_menu(clipboard_has_text)
+        } else {
+            self.field.focused.then(|| self.field.menu(clipboard_has_text))
         }
     }
 
     fn field_menu_at(&self) -> Option<(i32, i32)> {
         let font = self.font()?;
-        if self.field.focused {
-            crate::edit::middle(self.rect(Part::Address)?)
-        } else {
+        if self.view.renaming().is_some() {
             self.view.rename_caret_point(&font)
+        } else {
+            crate::edit::middle(self.rect(Part::Address)?)
         }
     }
 
     fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
-        if self.field.focused { self.field.menu_chosen(index) } else { self.view.rename_menu_chosen(index) }
+        if self.view.renaming().is_some() {
+            self.view.rename_menu_chosen(index)
+        } else if self.field.focused {
+            self.field.menu_chosen(index)
+        } else {
+            Vec::new()
+        }
     }
 
     fn has_caret(&self) -> bool {

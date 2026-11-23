@@ -41,7 +41,16 @@ pub enum Key {
     Other(u16),
 }
 
-/// Shift and Ctrl held with a key.
+/// Whether Ctrl held with a key makes a Ctrl shortcut (brief 97): only while Alt is up. AltGr is
+/// Ctrl and Alt together, and many keyboards type letters with it (Polish ą ć ł ż ź, the Hungarian
+/// and Czech @): such a letter is never Ctrl+X, C, V, Z, A, L... A shortcut defined with Alt is
+/// decided where Alt is (`Form::alt_key_with_mods`), not here.
+pub fn shortcut_ctrl(ctrl: bool, alt: bool) -> bool {
+    ctrl && !alt
+}
+
+/// Shift and Ctrl held with a key. For a key without Alt (`Form::key`) `ctrl` is already
+/// `shortcut_ctrl`: false while Alt is down too (AltGr).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Mods {
     pub shift: bool,

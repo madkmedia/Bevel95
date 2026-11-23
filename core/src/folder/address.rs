@@ -128,6 +128,7 @@ pub enum EditKey {
 impl Field {
     /// The place shown changed: its address, nothing typed (no Undo back to what was typed).
     pub fn show(&mut self, text: &str) {
+        self.edit.max = Some(crate::edit::ADDRESS_LIMIT);
         self.edit.set(text);
         self.place_text = text.to_string();
         self.edited = false;
@@ -229,7 +230,7 @@ impl Field {
     /// The character nearest `x` pixels into the text (as shown: `x` counts from the text's first
     /// pixel in the box, the scroll is added here).
     pub fn index_at(&self, font: &crate::text::Font, x: i32) -> usize {
-        self.edit.index_at(&|s| font.measure(s), x)
+        self.edit.index_at(&|_, c| font.glyph(c).advance, x)
     }
 
     /// The caret goes to the character nearest `x` (Shift: the selection grows to there).

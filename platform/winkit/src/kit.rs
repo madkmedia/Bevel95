@@ -345,7 +345,7 @@ impl<H: Hosted> Host<H> {
             }
             // The menu key opens the focused text field's menu (brief 95).
             WM_KEYDOWN if wparam == 0x5D && form.field_menu(false).is_some() => (Some(0), vec![Effect::FieldMenuKey], true),
-            WM_KEYDOWN => (Some(0), self.ctl.key(form, key_of(wparam as u16), mods()), true),
+            WM_KEYDOWN => (Some(0), self.ctl.key(form, key_of(wparam as u16), key_mods()), true),
             WM_CHAR => {
                 let effects = char::from_u32(wparam as u32).map(|ch| form.typed(ch)).unwrap_or_default();
                 (Some(0), effects, true)
@@ -1021,9 +1021,22 @@ fn key_of(vk: u16) -> Key {
     }
 }
 
+/// Shift and Ctrl as held now (the mouse's Ctrl+click and Shift+click, and keys with Alt: there
+/// Alt is part of the shortcut).
 fn mods() -> Mods {
     // SAFETY: plain queries.
     unsafe { Mods { shift: GetKeyState(i32::from(VK_SHIFT)) < 0, ctrl: GetKeyState(i32::from(VK_CONTROL)) < 0 } }
+}
+
+/// Shift and Ctrl for a key without Alt (WM_KEYDOWN): Ctrl counts only while Alt is up
+/// (`bevel_core::kit::shortcut_ctrl`, brief 97). AltGr is Ctrl and Alt together, and many
+/// keyboards type letters with it (Polish ą ć ł ż ź, the Hungarian and Czech @): such a letter is
+/// a letter, never Ctrl+X, C, V, Z, A or L, in a field or on the person's files.
+fn key_mods() -> Mods {
+    // SAFETY: a plain query.
+    let alt = unsafe { GetKeyState(i32::from(VK_MENU)) } < 0;
+    let held = mods();
+    Mods { ctrl: bevel_core::kit::shortcut_ctrl(held.ctrl, alt), ..held }
 }
 
 /// The clipboard's text, if it has any (`crate::clipboard::text`: a few tries, never in tests).
