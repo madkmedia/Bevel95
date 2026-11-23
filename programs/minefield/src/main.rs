@@ -147,9 +147,7 @@ impl Hosted for Game {
     }
     /// The bar changed its look or size: the game follows.
     fn look_changed() {
-        let Some((era, look)) = look::load_or_log() else {
-            return;
-        };
+        let (era, look) = look::load();
         // A box open in the old look goes away.
         kit::close::<GameBox>();
         let changed = kit::with::<Game, _>(|game| {
@@ -465,9 +463,7 @@ fn main() {
     }
     // This process is this copy's Minesweeper, for a later start's `already_running`.
     let _mark = bevel_winkit::copy::mark(COPY_MARK);
-    let Some((era, paints)) = look::load_or_log() else {
-        return;
-    };
+    let (era, paints) = look::load();
     let settings = Settings::parse(era, &bevel_winkit::state_file::load(&settings_path()).text().unwrap_or_default());
     // The custom field as remembered, if this screen can still show it.
     let most = most_squares(era, None, paints.scale);

@@ -1508,7 +1508,7 @@ fn right_drop_menu(
         let mut m = m.borrow_mut();
         let depth = bevel_winkit::look::colors();
         if !m.as_ref().is_some_and(|(e, d, s, _)| *e == era && *d == depth && *s == scale) {
-            *m = bevel_winkit::look::for_look(era, depth, scale).ok().map(|l| (era, depth, scale, l));
+            *m = Some((era, depth, scale, bevel_winkit::look::for_look(era, depth, scale)));
         }
         m.as_ref().map(|(_, _, _, l)| l.clone())
     })?;

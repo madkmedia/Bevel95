@@ -544,15 +544,8 @@ pub fn run() -> u32 {
     let settings = load_settings();
     zones::set_clock(settings.clock_zone, settings.clock_dst);
     let theme = theme::theme_in(settings.era, settings.colors);
-    let (regular, bold) =
-        match (font::render(theme.font_face, theme.font_px, false), font::render(theme.font_face, theme.font_px, true))
-        {
-            (Ok(regular), Ok(bold)) => (regular.with_period_glyphs(), bold.with_period_glyphs()),
-            (Err(e), _) | (_, Err(e)) => {
-                log(&format!("cannot use the {} font: {e} ({})", theme.font_face, font::system_facts()));
-                return 1;
-            }
-        };
+    let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
+    let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
 
     // SAFETY: the window procedures are valid for the life of the program; handles checked.
     let bar = unsafe {
@@ -602,13 +595,7 @@ pub fn run() -> u32 {
     TASKBAR_CREATED.store(unsafe { RegisterWindowMessageW(created.as_ptr()) }, Ordering::SeqCst);
 
     let clock_widest = widest_time(&regular);
-    let shell_font = match font::render("MS Sans Serif", 11, false) {
-        Ok(f) => f,
-        Err(e) => {
-            log(&format!("cannot use MS Sans Serif for the volume control: {e}"));
-            regular.clone()
-        }
-    };
+    let shell_font = font::letters("MS Sans Serif", 11, false);
     audio::init();
     let volume_muted = audio::Volume::open().is_some_and(|v| v.muted());
     APP.with(|cell| {
@@ -2743,15 +2730,8 @@ fn set_era(bar: HWND, era: Era) {
     }
     start_menu::set_era(era);
     let theme = theme::theme_in(era, with_app(|app| app.colors).unwrap_or_default());
-    let (regular, bold) =
-        match (font::render(theme.font_face, theme.font_px, false), font::render(theme.font_face, theme.font_px, true))
-        {
-            (Ok(regular), Ok(bold)) => (regular.with_period_glyphs(), bold.with_period_glyphs()),
-            (Err(e), _) | (_, Err(e)) => {
-                log(&format!("cannot switch to {}: the {} font failed: {e} ({})", era.title(), theme.font_face, font::system_facts()));
-                return;
-            }
-        };
+    let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
+    let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
     // A dialog open in the old look goes away, and so does a question of Quick Launch's (its
     // action with it: nothing is done); menus are already closed.
     dialogs::close();

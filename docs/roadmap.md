@@ -19,9 +19,6 @@ here is promised, and an issue is the place to say what matters to you.
 
 ## The looks
 - Windows 98 Second Edition, and the first 1995 release of Windows 95.
-- Large Fonts as each Windows had it (larger letters and more room at 125%, every edge still one
-  pixel), the exact way to sizes such as 1.25, 2.5 and 3.75; today such a size enlarges the
-  small picture.
 - In 16 and 256 Colors a few pictures are still converted by rule instead of drawn as the Windows
   drew them, and Help's pages at 256 colors are not yet dotted as the browser drew them.
 - Other languages of Windows than English. Names in Latin, Greek and Cyrillic letters show as

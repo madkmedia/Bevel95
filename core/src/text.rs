@@ -6,29 +6,45 @@
 //! is how the headless tests get real Windows glyphs without calling Windows.
 
 use std::fmt::Write as _;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
 use crate::fb::Framebuffer;
 
 /// The fixed MS Sans Serif face used by classic dialog templates and HTML Help controls,
-/// even when the system caption font is Tahoma: the platform's (`use_platform_ms_sans_serif`),
-/// else the bundled fixture (code page 1252 only, as in the headless tests).
+/// even when the system caption font is Tahoma: the stored letters (`stored`), with every
+/// alphabet's, in the programs and the headless tests alike.
 pub(crate) fn ms_sans_serif() -> &'static Font {
-    static FONT: LazyLock<Font> = LazyLock::new(|| {
-        PLATFORM_MS_SANS_SERIF.get().and_then(|make| make()).unwrap_or_else(|| {
-            Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).expect("bundled MS Sans Serif atlas")
-        })
-    });
+    static FONT: LazyLock<Font> = LazyLock::new(|| stored("MS Sans Serif", 11, false).expect("the stored MS Sans Serif letters"));
     &FONT
 }
 
-static PLATFORM_MS_SANS_SERIF: OnceLock<fn() -> Option<Font>> = OnceLock::new();
+/// The letters the programs draw with, stored as pixels (brief 89, 0.1.5: no program asks Windows
+/// for a font any more, so that step can never fail on anyone's PC): every face, size and weight
+/// Bevel95 uses, each with the letters of code page 1252 and of the other alphabets
+/// (`bevel_winkit::font::gdi::charset`), as Windows 11's own fonts draw them at 96 DPI without
+/// smoothing (made again by `cargo regen-letters`, and checked letter for letter against Windows
+/// on the PC, by `bevel_winkit::font::gdi`'s tests). Kept in bevel-art (`art/assets/fonts`).
+const STORED: [(&str, i32, bool, &[u8]); 8] = [
+    ("MS Sans Serif", 11, false, crate::art::bytes("letters/ms-sans-serif-11px", crate::art::ANY)),
+    ("MS Sans Serif", 11, true, crate::art::bytes("letters/ms-sans-serif-11px-bold", crate::art::ANY)),
+    ("Tahoma", 11, false, crate::art::bytes("letters/tahoma-11px", crate::art::ANY)),
+    ("Tahoma", 11, true, crate::art::bytes("letters/tahoma-11px-bold", crate::art::ANY)),
+    ("Tahoma", 17, true, crate::art::bytes("letters/tahoma-17px-bold", crate::art::ANY)),
+    ("Verdana", 11, false, crate::art::bytes("letters/verdana-11px", crate::art::ANY)),
+    ("Verdana", 11, true, crate::art::bytes("letters/verdana-11px-bold", crate::art::ANY)),
+    ("Verdana", 21, true, crate::art::bytes("letters/verdana-21px-bold", crate::art::ANY)),
+];
 
-/// Where `ms_sans_serif` gets its font in a program: `make`, called once when it is first
-/// needed (the platform's MS Sans Serif 8pt with the letters of other alphabets too). The first
-/// call counts; one made after `ms_sans_serif` was first used changes nothing.
-pub fn use_platform_ms_sans_serif(make: fn() -> Option<Font>) {
-    let _ = PLATFORM_MS_SANS_SERIF.set(make);
+/// Every stored face, size and weight (for the checks and for making them again).
+pub fn stored_list() -> impl Iterator<Item = (&'static str, i32, bool)> {
+    STORED.iter().map(|&(face, px, bold, _)| (face, px, bold))
+}
+
+/// The stored letters of `face` at `px` pixels per em, regular or bold (`None`: Bevel95 stores no
+/// such font).
+pub fn stored(face: &str, px: i32, bold: bool) -> Option<Font> {
+    let &(name, _, _, bytes) = STORED.iter().find(|&&(f, p, b, _)| f.eq_ignore_ascii_case(face) && p == px && b == bold)?;
+    Font::from_stored(bytes, name, bold).ok()
 }
 
 /// One character: how far it moves the pen, and its ink.
@@ -216,6 +232,56 @@ impl Font {
 
     pub fn glyphs(&self) -> &[Glyph] {
         &self.glyphs
+    }
+
+    /// The stored form of the letters (`stored`): the cell's height, its baseline and the
+    /// overhang (a byte each), then per letter its character (2 bytes, little-endian), advance,
+    /// ink's start (signed) and ink's width (a byte each) and its ink, `ink_w` × height bits row by
+    /// row, the first pixel in the highest bit.
+    pub fn to_stored(&self) -> Result<Vec<u8>, String> {
+        let byte = |v: i32, what: &str| u8::try_from(v).map_err(|_| format!("{}: {what} {v} does not fit a byte", self.name));
+        let mut out = vec![byte(self.height, "height")?, byte(self.ascent, "ascent")?, byte(self.overhang, "overhang")?];
+        for g in &self.glyphs {
+            let code = u16::try_from(g.ch as u32).map_err(|_| format!("{}: {:?} is beyond 16 bits", self.name, g.ch))?;
+            out.extend(code.to_le_bytes());
+            out.push(byte(g.advance, "advance")?);
+            out.push(i8::try_from(g.ink_x).map_err(|_| format!("{}: ink start {} does not fit", self.name, g.ink_x))? as u8);
+            out.push(byte(g.ink_w, "ink width")?);
+            let mut bits = vec![0u8; g.ink.len().div_ceil(8)];
+            for (k, _) in g.ink.iter().enumerate().filter(|(_, on)| **on) {
+                bits[k / 8] |= 0x80 >> (k % 8);
+            }
+            out.extend(bits);
+        }
+        Ok(out)
+    }
+
+    /// Letters back from `to_stored`'s bytes (an error, never a panic, on bytes that are not).
+    pub fn from_stored(bytes: &[u8], name: &str, bold: bool) -> Result<Font, String> {
+        let short = || format!("{name}: the stored letters end early");
+        let (&height, &ascent, &overhang) = match bytes {
+            [h, a, o, ..] => (h, a, o),
+            _ => return Err(short()),
+        };
+        let height = i32::from(height);
+        let mut at = 3;
+        let mut glyphs = Vec::new();
+        while at < bytes.len() {
+            let head = bytes.get(at..at + 5).ok_or_else(short)?;
+            let ch = char::from_u32(u32::from(u16::from_le_bytes([head[0], head[1]]))).ok_or_else(|| format!("{name}: not a character"))?;
+            let ink_w = i32::from(head[4]);
+            let pixels = (ink_w * height) as usize;
+            let bits = bytes.get(at + 5..at + 5 + pixels.div_ceil(8)).ok_or_else(short)?;
+            glyphs.push(Glyph {
+                ch,
+                advance: i32::from(head[2]),
+                ink_x: i32::from(head[3] as i8),
+                ink_w,
+                ink: (0..pixels).map(|k| bits[k / 8] & (0x80 >> (k % 8)) != 0).collect(),
+            });
+            at += 5 + pixels.div_ceil(8);
+        }
+        Ok(Font::new(name.to_string(), bold, height, i32::from(ascent), glyphs)?.with_overhang(i32::from(overhang)))
     }
 
     /// The same font with GDI's overhang (see `overhang`).
@@ -537,11 +603,18 @@ mod tests {
         for ch in ['\u{25CF}', 'Ж', 'a', '\u{20AC}', '\u{1F600}'] {
             assert_eq!(crate::best_fit::best_fit(ch), None, "U+{:04X}", ch as u32);
         }
-        let f = ms_sans_serif();
+        // In letters of code page 1252 alone (the fixtures).
+        let f = Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).unwrap();
         assert_eq!(f.glyph('\u{0141}'), f.glyph('L'));
         assert_eq!(f.measure("\u{0141}\u{00F3}d\u{017A}"), f.measure("L\u{00F3}dz"));
         assert_eq!(f.glyph('\u{202F}'), f.glyph('\u{A0}'));
         assert_eq!(f.glyph('Ж').ch, '?');
+        // The stored letters have the other alphabets' own: no stand-in is needed there.
+        let stored = ms_sans_serif();
+        assert_eq!(stored.glyph('\u{0141}').ch, '\u{0141}');
+        assert_eq!(stored.glyph('Ж').ch, 'Ж');
+        assert_eq!(stored.glyph('\u{202F}'), stored.glyph('\u{A0}'));
+        assert_eq!(stored.glyph('\u{0634}').ch, '?', "Arabic: not stored, '?' as before");
     }
 
     #[test]

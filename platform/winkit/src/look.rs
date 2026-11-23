@@ -1,6 +1,6 @@
 //! What a program paints with, as the bar is set up: the look (Windows 95, 98 or 2000), its
 //! colors (True Color, 256 Colors or 16 Colors) and the size from Bevel95's settings.txt, and that look's
-//! fonts from GDI. A program reads it when it
+//! letters (stored in the program: `font::letters`). A program reads it when it
 //! starts and again when the bar says its look or size changed (`kit::Hosted::look_changed`).
 
 
@@ -15,7 +15,7 @@ use windows_sys::Win32::UI::HiDpi::{
 
 use crate::font;
 use crate::kit::Look;
-use crate::log::{data_dir, log};
+use crate::log::data_dir;
 
 /// Makes this process draw in real screen pixels (the pictures are enlarged by whole numbers
 /// here, never smoothed by Windows). Once, before any window.
@@ -38,11 +38,11 @@ pub fn main_screen() -> (RECT, u32) {
 }
 
 /// The look and size Bevel95 is set to (settings.txt in Bevel95's folder; the defaults without
-/// one), with the look's fonts. An error says which font could not be used.
-pub fn load() -> Result<(Era, Look), String> {
+/// one), with the look's letters.
+pub fn load() -> (Era, Look) {
     let settings = settings();
     let scale = settings.scale_at(main_screen().1);
-    for_look(settings.era, settings.colors, scale).map(|look| (settings.era, look))
+    (settings.era, for_look(settings.era, settings.colors, scale))
 }
 
 fn settings() -> config::Config {
@@ -56,27 +56,17 @@ pub fn colors() -> Depth {
     settings().colors
 }
 
-/// The same GDI fonts and theme as a caller that supplies its own era and logical scale (in
-/// the colors Bevel95 is set to).
-pub fn for_era(era: Era, scale: Scale) -> Result<Look, String> {
+/// The same letters and theme for a caller that supplies its own era and logical scale (in the
+/// colors Bevel95 is set to).
+pub fn for_era(era: Era, scale: Scale) -> Look {
     for_look(era, colors(), scale)
 }
 
-/// The GDI fonts and theme of `era` in `depth` colors at `scale`.
-/// An error says, in Bevel95's own words, which font could not be made and why (the call that
-/// failed and Windows' error number, or the face GDI gave instead), with the system's code page
-/// and DPI and the main screen's (issue 6: the log said nothing of why).
-pub fn for_look(era: Era, depth: Depth, scale: Scale) -> Result<Look, String> {
+/// The stored letters and theme of `era` in `depth` colors at `scale`. Nothing here asks Windows:
+/// since 0.1.5 (brief 89) the letters are stored in the program, so a look can always be made.
+pub fn for_look(era: Era, depth: Depth, scale: Scale) -> Look {
     let theme = theme::theme_in(era, depth);
-    let why = |weight: &str, e: String| {
-        format!("the {} look's {weight} font ({} {} px) could not be made: {e} ({}; the main screen's {} DPI)", era.setting(), theme.font_face, theme.font_px, font::system_facts(), main_screen().1)
-    };
-    let regular = font::render(theme.font_face, theme.font_px, false).map_err(|e| why("regular", e))?.with_period_glyphs();
-    let bold = font::render(theme.font_face, theme.font_px, true).map_err(|e| why("bold", e))?.with_period_glyphs();
-    Ok(Look { theme, regular, bold, scale })
-}
-
-/// `load`, with a failure written to the log.
-pub fn load_or_log() -> Option<(Era, Look)> {
-    load().map_err(|e| log(&format!("cannot use the look's font: {e}"))).ok()
+    let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
+    let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
+    Look { theme, regular, bold, scale }
 }

@@ -1187,7 +1187,7 @@ fn place_known(h: &mut FolderHost, era: Era, title: &str) {
 }
 
 /// The web view panel's fonts for `era` (98: Verdana; 2000: the look's Tahoma and its 13pt bold),
-/// rendered once per look; `None` in 95 or when a font is missing (the web view then stays off).
+/// taken from the stored letters once per look; `None` in 95 (no web view there).
 fn web_fonts(era: Era) -> Option<Arc<WebFonts>> {
     if era == Era::Win95 {
         return None;
@@ -1197,20 +1197,12 @@ fn web_fonts(era: Era) -> Option<Arc<WebFonts>> {
     }
     let (_, look) = the_look()?;
     let made = match era {
-        Era::Win98 => (|| Ok::<_, String>(WebFonts { body: font::render("Verdana", 11, false)?, bold: font::render("Verdana", 11, true)?, title: font::render("Verdana", 21, true)? }))(),
-        _ => font::render("Tahoma", 17, true).map(|title| WebFonts { body: look.regular.clone(), bold: look.bold.clone(), title }),
+        Era::Win98 => WebFonts { body: font::letters("Verdana", 11, false), bold: font::letters("Verdana", 11, true), title: font::letters("Verdana", 21, true) },
+        _ => WebFonts { body: look.regular.clone(), bold: look.bold.clone(), title: font::letters("Tahoma", 17, true) },
     };
-    match made {
-        Ok(f) => {
-            let f = Arc::new(f);
-            WEB_FONTS.with(|w| *w.borrow_mut() = Some((era, f.clone())));
-            Some(f)
-        }
-        Err(e) => {
-            log(&format!("folders: the web view's fonts could not be made ({e}); the web view stays off"));
-            None
-        }
-    }
+    let f = Arc::new(made);
+    WEB_FONTS.with(|w| *w.borrow_mut() = Some((era, f.clone())));
+    Some(f)
 }
 
 /// The system folders whose web view warned before showing their files: the Windows folder and
@@ -3106,7 +3098,7 @@ impl Hosted for FolderHost {
     /// The bar's look or size changed: the windows follow it (another look's frame, menus,
     /// toolbar and pictures; Windows 95's windows have no history, so Back starts afresh there).
     fn look_changed() {
-        let Some((era, look)) = look::load_or_log() else { return };
+        let (era, look) = look::load();
         ERA_LOOK.with(|l| *l.borrow_mut() = Some((era, look.clone())));
         for hwnd in kit::windows::<FolderHost>() {
             kit::scope::<FolderHost, _>(hwnd, || {
@@ -4737,7 +4729,7 @@ fn main() {
     // safety review of 2026-11-18, C5: two programs each saved their own picture of it).
     let holder = take_hub_place();
     HUB_HOLDER.store(holder, Ordering::SeqCst);
-    let Some((era, look)) = look::load_or_log() else { return };
+    let (era, look) = look::load();
     bevel_winkit::com::init();
     // Windows' drag and drop for files between the windows and other programs.
     bevel_winkit::dragdrop::init();

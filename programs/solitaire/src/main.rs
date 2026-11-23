@@ -122,7 +122,7 @@ impl Hosted for Game {
     }
 
     fn look_changed() {
-        let Some((era, paints)) = look::load_or_log() else { return };
+        let (era, paints) = look::load();
         dialogs::close();
         let maximized = kit::hwnd::<Game>().and_then(|hwnd| {
             let mut r = RECT::default();
@@ -303,7 +303,7 @@ fn main() {
     // A panic on a worker thread closes the windows: none is left looking alive (decisions.md).
     bevel_winkit::panic::install(bevel_winkit::panic::close_windows_after);
     look::dpi_aware();
-    let Some((era, paints)) = look::load_or_log() else { return };
+    let (era, paints) = look::load();
     if instance::existing(era) {
         return;
     }

@@ -362,7 +362,8 @@ it, but write nothing).
     asks for the face in that code page, and asks the way a bitmap font is sized: by its whole
     cell, the 13 of the 1252 font, bitmap fonts first (`OUT_RASTER_PRECIS`). Loaded only after
     a failed ask, as first built, the next ask in the same process got other letters under the
-    same name (in the bar a TrueType font 14 px tall; `tests/first_atlas.rs` guards it). Where
+    same name (in the bar a TrueType font 14 px tall; `tests/first_atlas.rs` guarded it until
+    0.1.5, when the letters became stored and a program's first atlas no longer came from GDI). Where
     a PC has no such file, Windows' substitute is taken, drawn without smoothing at the same
     size and cut to the cell, and the log says once which face came instead; where nothing can
     be drawn, the letters stay "?". A limit (the review before 0.1.1, not tried): on a Windows
@@ -392,6 +393,71 @@ it, but write nothing).
   - **Cost**: the two fonts of a look take about 6.5 ms (MS Sans Serif) and 8 ms (Tahoma) in a
     release build instead of 2.5 and 3.2 (the first in a process about 14 ms with the files'
     loading); a few milliseconds per program start.
+  - **Since 0.1.5 these letters are stored** (next entry): everything above about asking GDI,
+    loading the code pages' files and what a PC without them gets describes how the stored
+    letters are made and checked on the owner's PC (`winkit::font::gdi`, test code only), no
+    longer what a program does at its start. The two limits above (another language's
+    registered MS Sans Serif; `ms_sans_serif` keeping the 1252 fixture) are gone with it.
+- **The drawn letters stored in the program** (2026-11-24, brief 89, the last task of 0.1.5;
+  the owner: "let's ship just those "block letters""). Until 0.1.4 every program asked Windows
+  at its start to draw each letter of its fonts once (`winkit::font::render`, GDI), and that
+  step is where a user's PC failed (GitHub issue 6, in "Bevel95 Setup"). Now no program asks
+  Windows for a font to draw its own text: the letters are stored as pixels in `art/` and the
+  programs take them from there, always.
+  - **The list: every font a program draws its own text with** (looked up in the code, not
+    assumed; each at 96 DPI, without smoothing, one em = the pixel size):
+
+    | Face, size, weight | Used by | Until 0.1.4 | Since 0.1.5 |
+    |---|---|---|---|
+    | MS Sans Serif 8pt (11 px), regular and bold | the 95 and 98 looks: every window, menu, the bar and its clock; regular also whatever the look: classic dialog templates and Help's controls (`core::text::ms_sans_serif`: in 2000 among others the Calculator, the Display pages, the games' dialogs, Folder Options), the bar's volume control | drawn by Windows at each start (the 1252 font, the other alphabets from the code pages' files) | stored: `letters/ms-sans-serif-11px(-bold)` |
+    | Tahoma 8pt (11 px), regular and bold | the 2000 look: every window, menu, the bar and its clock; 2000's web view text | drawn by Windows at each start | stored: `letters/tahoma-11px(-bold)` |
+    | Verdana 8pt (11 px), regular and bold; Verdana 16pt bold (21 px) | 98's web view panel in folder windows (text, bold, title) | drawn by Windows when a folder window first showed it | stored: `letters/verdana-11px(-bold)`, `letters/verdana-21px-bold` |
+    | Tahoma 13pt bold (17 px) | 2000's web view title | drawn by Windows when first shown | stored: `letters/tahoma-17px-bold` |
+    | Verdana 11 regular, bold, bold italic; Verdana 13 and 14 bold; Arial 11 | the HTML Help viewer (98, 2000) | already stored (`html-help/font-*`) | unchanged |
+    | The System font | Solitaire's status line | already stored (`solitaire/font-system`) | unchanged |
+    | 95's Calculator captions, Minesweeper's counters | their windows | already pictures | unchanged |
+
+    Each stored atlas holds code page 1252 and the other alphabets' letters (1250, 1251, 1253,
+    1254, 1257: 468 characters, the same `charset` the programs drew). Still drawn by Windows:
+    Help's printing (`programs/help/src/print.rs`: the printer's own fonts at the printer's
+    resolution, paper not screen) and Windows' own message boxes (Setup's plain questions,
+    which are Windows' windows by design).
+  - **Stored compactly** (`core::text::Font::to_stored` / `from_stored`): the cell's height, the
+    baseline and the overhang, then per letter its character, advance, ink start and width and
+    its ink as bits; 76 KB for the eight files (`art/assets/fonts/*.glyphs`), read when the font
+    is first wanted (`core::text::stored`). The way in is `winkit::font::letters(face, px,
+    bold)`, which cannot fail: a face that were not stored (a mistake in the program, ruled
+    out by a test) would get MS Sans Serif 8pt of the same weight. `look::for_look`, `load` and
+    `for_era` therefore no longer return errors; the log lines "cannot use the look's font",
+    "cannot use the ... letters", "cannot switch to ...", "the web view's fonts could not be
+    made", Setup's "cannot use the look's font" and its message "cannot draw its windows on this
+    PC" are gone, and so is Setup's reason `Unshown::Look`: Setup's own window can now fail only
+    as a window (`CreateWindowExW`, logged), and then asks plainly as before.
+  - **Made again by a test, not by hand**: `cargo regen-letters` (an ignored test in
+    `winkit::font::gdi`) draws each stored face with the code that drew them for every program
+    until 0.1.4 (moved unchanged to `platform/winkit/src/font/gdi.rs`, compiled for the tests
+    only, with `font/fon.rs`) and writes the files. **What Windows draws stays the check**:
+    `the_stored_letters_are_what_windows_draws` compares every stored letter of every face with
+    what GDI draws on the PC today (and that every font the programs use is stored);
+    `the_fixtures_are_the_stored_letters` that the headless tests' fixtures are their 1252 part;
+    `the_font_file_gives_gdis_pixels` that MS Sans Serif is SSERIFE.FON's own letters; and
+    `every_look_is_made_without_windows_fonts` makes every look in every color depth, and the
+    web view's fonts, with GDI made to "give another face" and SSERIFE.FON made "unreadable",
+    and paints each look's message window (words in six alphabets) pixel for pixel as with
+    Windows' letters. On another PC whose Windows draws differently these tests would fail:
+    they are the owner's PC's check, as the font fixtures' test always was.
+  - **A letter that is not stored** (Chinese, Arabic, Hebrew and the rest) is shown as before:
+    Windows 95's best fit to 1252 where it has a near character, the round dots as the bullet,
+    the invisible marks as nothing, else "?" (`Font::glyph`). Unchanged.
+  - **Nothing a person sees changed**: the stored letters equal what the programs drew here, so
+    the font fixtures, the golden pictures and the full comparison are the same. On a PC whose
+    Windows drew other letters (another language's MS Sans Serif, a substitute where a code
+    page's file was missing, or 0.1.4's fallback), Bevel95 now draws the owner's PC's, the
+    original 96-DPI letters, everywhere.
+  - **Cost**: a look's regular and bold now take about 0.12 ms at a start instead of 6.5 ms (MS
+    Sans Serif) and 7.9 ms (Tahoma) drawn by Windows (release build, median of 10:
+    `font::gdi::tests::atlas_timing`); the programs grew by the stored letters and shrank by
+    the GDI code (sizes in `private/todo.md`'s entry for brief 89).
 - ApplicationFrameHost.exe windows (Settings, Calculator, ...) are grouped by
   title instead of lumped together; AppUserModelID grouping is still v2.
 - Icons: WM_GETICON (small2, small, big; 50 ms SendMessageTimeout) → class
@@ -1466,8 +1532,8 @@ it, but write nothing).
   the installed copy, as before, with no message. The installed copy started a second time (the
   desktop shortcut) never reaches Setup (`here_installed`) and stays silent; `--setup` skips the
   comparison as before; `--restore`, `--after`, `--uninstall` and the other switches never reach
-  this code. Windows' own message box only if the look's font cannot be had. PROVISIONAL: the
-  words.
+  this code. (Until 0.1.5 Windows' own message box came if the look's font could not be had;
+  since the letters are stored, the look can always be made.) PROVISIONAL: the words.
 - **"Bevel95 Setup could not be shown" (GitHub issue 6, 2026-11-23, brief 85)**: on a user's PC
   (Windows 11 26200, two graphics adapters) the released 0.1.4 said so at every start and its
   log said only "setup: the window could not be shown". `ask` can fail in two ways: the look's
@@ -1507,13 +1573,18 @@ it, but write nothing).
     file's folder instead?"; a newer copy over an installed one: "Update?"; anything else:
     nothing). Every question is Yes or No with No the button Enter presses, and a No or a closed
     box does nothing (the review before 0.1.5, B1: the first version's No unpacked a portable
-    copy and started it). If the look itself cannot be
-    made, the bar could not draw either: nothing is offered, the message says so with the log's
-    place. A copy as built still runs as a bar from where it is, as before; the one file never
-    does.
+    copy and started it). (Until brief 89 a look that could not be made offered nothing and
+    said so; the look can no longer fail.) A copy as built still runs as a bar from where it
+    is, as before; the one file never does.
   - Nothing else changed where everything works: the font fixtures, the golden pictures and the
     full comparison are the same. Not built: installing without a window from the command line
     (the reporter's question, `private/todo.md`).
+  - **Superseded for the fonts by brief 89** (0.1.5, "The drawn letters stored in the program"
+    in Milestone 2 decisions): no program asks Windows for its letters any more, so the fonts'
+    two ways above, their fallbacks and their log lines (`font::system_facts`, "GDI did not give
+    ...") are no longer in the programs; they live on in `winkit::font::gdi` as the code that
+    makes the stored letters again and checks them. What stays in Setup: its plain questions
+    when its own window cannot be created, and the logging of that reason.
 - **The portable zip, a release's second file** (2026-11-23, brief 86; the owner: "Yes, add the
   zip"): `tools\release.ps1` writes `Bevel95-<version>-portable.zip` beside the one file in
   `private\dist\<commit>\`. Unzipped it is exactly the folder Setup's Portable choice makes:
@@ -5773,10 +5844,11 @@ exact, the default left to us (even, the mock-ups' B1).
   which is laid out in dialog units of the font's letter size). It was never uniform: 95 and 98
   had only a few fixed sizes of MS Sans Serif (98's 200% looks like its 175%), 2000's Tahoma grew
   smoothly, and each had odd things of its own beyond 125%. Only 125% is clean in all three.
-  Bevel95 does not have it yet. It is the planned exact way to sizes between whole numbers: the
-  look at 125% enlarged by a whole number, so 1.25, 2.5 and 3.75 (the 120-dpi letters and layout
-  doubled at 2.5) with every edge a whole-pixel line, and something real to measure for each
-  look; the quarter sizes above stay the simple way to any size.
+  It was planned as the exact way to sizes between whole numbers (the look at 125% enlarged by a
+  whole number, so 1.25, 2.5 and 3.75, with every edge a whole-pixel line). **Decided against**
+  (the owner, 2026-11-24, with brief 89: "I would think we would leave it out"): the quarter
+  sizes above stay the way to any size; an idea kept in the to-do list is Bevel95's own letter
+  designs for the sizes between.
 - **Not done or not tried**: the bar's own windows (menus, tooltips, dialogs, the desktop) were
   not tried live at a quarter size: a second bar cannot run, and the owner's bar was switched only
   once, by its own message, for its Start corner. Shut Down's dimmed screen takes its 1x checker

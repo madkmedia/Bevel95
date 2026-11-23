@@ -139,12 +139,8 @@ impl Hosted for SetupHost {
                 else {
                     return;
                 };
-                match bevel_winkit::look::for_look(era, DEPTH.with(Cell::get), old.scale) {
-                    Ok(look) => kit::retheme_with::<SetupHost>(look, |w, h, now| {
-                        ((now.left + now.right - w) / 2, (now.top + now.bottom - h) / 2)
-                    }),
-                    Err(e) => log(&format!("setup: cannot use the look's font ({e})")),
-                }
+                let look = bevel_winkit::look::for_look(era, DEPTH.with(Cell::get), old.scale);
+                kit::retheme_with::<SetupHost>(look, |w, h, now| ((now.left + now.right - w) / 2, (now.top + now.bottom - h) / 2));
             }
             _ => kit::close::<SetupHost>(),
         }
@@ -232,19 +228,16 @@ pub fn setup(forced: bool) -> bool {
     };
     let answer = match ask(kind, settings.era, settings.colors) {
         Ok(answer) => answer,
-        Err(why) => {
-            // One line per fact: the look's reason here (`CreateWindowExW`'s own failure is
-            // logged where it failed); what was then done, below.
-            if let Unshown::Look(e) = &why {
-                log(&format!("setup: the window could not be shown: {e}"));
-            }
+        Err(Unshown) => {
+            // One line per fact: `CreateWindowExW`'s own failure is logged where it failed; what
+            // was then done, below.
             // A copy as built runs from where it is, as before (`not_started_here`); only the one
             // file asks plainly, and never runs as a bar from where it is.
             if !bundle.packed {
                 log("setup: this copy runs from where it is without Setup");
                 return true;
             }
-            match ask_plainly(kind, &why, message) {
+            match ask_plainly(kind, message) {
                 Some(chosen) => Some(chosen),
                 None => {
                     log("setup: the one file does not run as a bar from where it is");
@@ -344,28 +337,24 @@ fn is_newer(bundle: &Bundle, exe: &Path, installed_bytes: &[u8], installed: &Pat
     }
 }
 
-/// Why Bevel95 Setup's own window could not be shown (issue 6).
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Unshown {
-    /// The look and its fonts could not be made (the reason, as `look::for_look` says it): the
-    /// bar could not draw either.
-    Look(String),
-    /// The window could not be created (`CreateWindowExW`'s error is in the log).
-    Window,
-}
+/// Bevel95 Setup's own window could not be shown (issue 6): the window could not be created
+/// (`CreateWindowExW`'s error is in the log). Its look can always be made: the letters are
+/// stored in the program (brief 89).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Unshown;
 
-/// Shows Bevel95 Setup and waits for it. `Err`: it could not be shown (why); `Ok(None)`: cancelled.
+/// Shows Bevel95 Setup and waits for it. `Err`: it could not be shown; `Ok(None)`: cancelled.
 fn ask(kind: SetupKind, era: Era, depth: Depth) -> Result<Option<(SetupChoice, Answers)>, Unshown> {
     bevel_winkit::look::dpi_aware();
     let (screen, dpi) = bevel_winkit::look::main_screen();
-    let look = bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi))).map_err(Unshown::Look)?;
+    let look = bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi)));
     DEPTH.with(|d| d.set(depth));
     let form = SetupWindow::new(Setup::in_look(kind, era), &look.regular);
     ANSWER.with(|a| a.set(None));
     kit::open_with(SetupHost { form }, look.theme, look.regular, look.bold, look.scale, |w, h| {
         (screen.left + (screen.right - screen.left - w) / 2, screen.top + (screen.bottom - screen.top - h) / 2)
     })
-    .ok_or(Unshown::Window)?;
+    .ok_or(Unshown)?;
     kit::run_until_closed::<SetupHost>();
     Ok(ANSWER.with(Cell::take))
 }
@@ -376,55 +365,41 @@ fn log_place() -> String {
     bevel_winkit::log::data_dir().join("bevel95.log").display().to_string()
 }
 
-/// Setup's own window could not be shown (`why`): the reason goes into the log, always. If the
-/// look itself could not be made, Bevel95's bar could not draw on this PC either: installing it
-/// would help nobody, so the message says so plainly, with the log's place, and nothing is done.
-/// If only the window could not be made, Setup asks through Windows' own message windows instead
-/// (a first run: "Install?" with the second page's defaults; only after its No, "a portable copy
-/// here instead?"; another copy over an installed one: "Update?"). Every question is Yes or No with
-/// No as the default, and a No or a closed box does nothing. `None`: nothing was chosen (or could
-/// be offered); else the choice with the defaults.
-fn ask_plainly(kind: SetupKind, why: &Unshown, ask: impl Fn(&str, MESSAGEBOX_STYLE) -> i32) -> Option<(SetupChoice, Answers)> {
+/// Setup's own window could not be shown: the reason is in the log, always (where the window
+/// failed). Setup asks through Windows' own message windows instead (a first run: "Install?" with
+/// the second page's defaults; only after its No, "a portable copy here instead?"; another copy
+/// over an installed one: "Update?"). Every question is Yes or No with No as the default, and a No
+/// or a closed box does nothing. `None`: nothing was chosen (or could be offered); else the choice
+/// with the defaults.
+fn ask_plainly(kind: SetupKind, ask: impl Fn(&str, MESSAGEBOX_STYLE) -> i32) -> Option<(SetupChoice, Answers)> {
     // No is the button Enter presses in every question here, and closing a box is a No: only a
     // Yes ever does something (the review before 0.1.5, B1).
     use windows_sys::Win32::UI::WindowsAndMessaging::{MB_DEFBUTTON2, MB_ICONQUESTION};
-    match why {
-        Unshown::Look(_) => {
-            log("setup: without the look neither Setup nor the bar can draw here; nothing was offered");
-            ask(
-                &format!("{NAME} cannot draw its windows on this PC: its font could not be made.\n\nNothing was changed. The reason is in the log:\n{}", log_place()),
-                MB_OK | MB_ICONWARNING,
+    log("setup: asked through Windows' own message windows instead of its own");
+    let place = log_place();
+    match kind {
+        SetupKind::FirstRun => {
+            let install = ask(
+                &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nInstall {NAME} for you on this PC?\n\nYes: install it into your user folder and start it (the classic desktop on, the Windows key opens Quick Search, not started with Windows: Bevel95 Settings changes these later).\nNo: nothing is installed."),
+                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
             );
-            None
-        }
-        Unshown::Window => {
-            log("setup: asked through Windows' own message windows instead of its own");
-            let place = log_place();
-            match kind {
-                SetupKind::FirstRun => {
-                    let install = ask(
-                        &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nInstall {NAME} for you on this PC?\n\nYes: install it into your user folder and start it (the classic desktop on, the Windows key opens Quick Search, not started with Windows: Bevel95 Settings changes these later).\nNo: nothing is installed."),
-                        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
-                    );
-                    if install == IDYES {
-                        return Some((SetupChoice::Install, Answers::default()));
-                    }
-                    let portable = ask(
-                        &format!("Nothing was installed.\n\nUnpack a portable copy of {NAME} into this file's folder instead?\n\nYes: unpack it there and start it (its settings and log stay in that folder).\nNo: nothing is done."),
-                        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
-                    );
-                    (portable == IDYES).then(|| (SetupChoice::Portable, Answers::default()))
-                }
-                SetupKind::OtherCopy { newer: true, .. } => (ask(
-                    &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nUpdate the installed {NAME} with this copy?\n\nYes: update it and start it (its settings are kept).\nNo: nothing is changed."),
-                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
-                ) == IDYES)
-                    .then(|| (SetupChoice::Update, Answers::default())),
-                _ => {
-                    ask(&format!("{NAME} Setup could not be shown.\n\nNothing was changed. The reason is in the log:\n{place}"), MB_OK | MB_ICONWARNING);
-                    None
-                }
+            if install == IDYES {
+                return Some((SetupChoice::Install, Answers::default()));
             }
+            let portable = ask(
+                &format!("Nothing was installed.\n\nUnpack a portable copy of {NAME} into this file's folder instead?\n\nYes: unpack it there and start it (its settings and log stay in that folder).\nNo: nothing is done."),
+                MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+            );
+            (portable == IDYES).then(|| (SetupChoice::Portable, Answers::default()))
+        }
+        SetupKind::OtherCopy { newer: true, .. } => (ask(
+            &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nUpdate the installed {NAME} with this copy?\n\nYes: update it and start it (its settings are kept).\nNo: nothing is changed."),
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+        ) == IDYES)
+            .then(|| (SetupChoice::Update, Answers::default())),
+        _ => {
+            ask(&format!("{NAME} Setup could not be shown.\n\nNothing was changed. The reason is in the log:\n{place}"), MB_OK | MB_ICONWARNING);
+            None
         }
     }
 }
@@ -1270,21 +1245,13 @@ fn running_bar_is(installed: &Path) -> bool {
 }
 
 /// Shows the look's own message box (`confirm::show_message`: the look's frame, text and OK) in
-/// the middle of the main screen and waits until it is gone. Falls back to Windows' message box
-/// when the look's font cannot be had.
+/// the middle of the main screen and waits until it is gone.
 #[cfg(not(test))]
 fn say_in_look(era: Era, depth: Depth, text: &str) {
     use bevel_winkit::confirm::{self, MessageHost, Place};
     bevel_winkit::look::dpi_aware();
     let (screen, dpi) = bevel_winkit::look::main_screen();
-    let look = match bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi))) {
-        Ok(look) => look,
-        Err(e) => {
-            log(&format!("setup: cannot use the look's font ({e}); Windows' message box instead"));
-            message(text, MB_OK | MB_ICONINFORMATION);
-            return;
-        }
-    };
+    let look = bevel_winkit::look::for_look(era, depth, bevel_core::scale::Scale::whole(scale_for_dpi(dpi)));
     confirm::show_message(Place { look, era, kind: kit::Kind::Tool, work: screen }, NAME, text);
     kit::run_until_closed::<MessageHost>();
 }
@@ -1429,24 +1396,23 @@ mod tests {
                 ids.get(a.len() - 1).copied().unwrap_or(IDNO)
             }
         };
-        let run = |kind: SetupKind, why: &Unshown, ids: &'static [i32]| {
+        let run = |kind: SetupKind, ids: &'static [i32]| {
             asked.borrow_mut().clear();
-            let chosen = ask_plainly(kind, why, answering(ids));
+            let chosen = ask_plainly(kind, answering(ids));
             (chosen.map(|c| c.0), asked.borrow().len())
         };
-        let window = Unshown::Window;
         let first = SetupKind::FirstRun;
-        assert_eq!(run(first, &window, &[IDYES]), (Some(SetupChoice::Install), 1), "Yes to Install: installed, nothing more asked");
-        assert_eq!(run(first, &window, &[IDNO, IDYES]), (Some(SetupChoice::Portable), 2), "No, then Yes to the portable copy");
-        assert_eq!(run(first, &window, &[IDNO, IDNO]), (None, 2), "No and No: nothing");
-        assert_eq!(run(first, &window, &[IDCANCEL, IDCANCEL]), (None, 2), "both boxes closed: nothing");
-        assert_eq!(run(first, &window, &[0, 0]), (None, 2), "the boxes failed: nothing");
-        assert_eq!(run(first, &window, &[IDNO, IDCANCEL]), (None, 2));
+        assert_eq!(run(first, &[IDYES]), (Some(SetupChoice::Install), 1), "Yes to Install: installed, nothing more asked");
+        assert_eq!(run(first, &[IDNO, IDYES]), (Some(SetupChoice::Portable), 2), "No, then Yes to the portable copy");
+        assert_eq!(run(first, &[IDNO, IDNO]), (None, 2), "No and No: nothing");
+        assert_eq!(run(first, &[IDCANCEL, IDCANCEL]), (None, 2), "both boxes closed: nothing");
+        assert_eq!(run(first, &[0, 0]), (None, 2), "the boxes failed: nothing");
+        assert_eq!(run(first, &[IDNO, IDCANCEL]), (None, 2));
         let newer = SetupKind::OtherCopy { newer: true, can_run: false };
-        assert_eq!(run(newer, &window, &[IDYES]), (Some(SetupChoice::Update), 1));
-        assert_eq!(run(newer, &window, &[IDNO]), (None, 1));
-        assert_eq!(run(newer, &window, &[IDCANCEL]), (None, 1));
-        assert_eq!(run(SetupKind::OtherCopy { newer: false, can_run: false }, &window, &[IDYES]), (None, 1), "an older copy: nothing offered");
+        assert_eq!(run(newer, &[IDYES]), (Some(SetupChoice::Update), 1));
+        assert_eq!(run(newer, &[IDNO]), (None, 1));
+        assert_eq!(run(newer, &[IDCANCEL]), (None, 1));
+        assert_eq!(run(SetupKind::OtherCopy { newer: false, can_run: false }, &[IDYES]), (None, 1), "an older copy: nothing offered");
         // Every question: Yes or No only, No pressed by Enter; the words say what each does.
         let check = || {
             for (text, style) in asked.borrow().iter() {
@@ -1455,14 +1421,10 @@ mod tests {
                 assert!(text.contains("Yes:") && text.contains("No: nothing"), "{text}");
             }
         };
-        run(first, &window, &[IDNO, IDNO]);
+        run(first, &[IDNO, IDNO]);
         check();
-        run(newer, &window, &[IDNO]);
+        run(newer, &[IDNO]);
         check();
-        let look = Unshown::Look("the font could not be made".into());
-        assert_eq!(run(first, &look, &[IDYES]), (None, 1), "no font: installing would help nobody");
-        let told = asked.borrow();
-        assert!(told[0].0.contains("cannot draw its windows") && told[0].0.contains("bevel95.log"), "{}", told[0].0);
     }
 
     /// The one file started again while that very build runs tells so (the owner, 2026-11-18):

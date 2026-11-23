@@ -95,9 +95,7 @@ impl Hosted for Calc {
     }
     /// The bar changed its look or size: the Calculator follows (the number shown stays).
     fn look_changed() {
-        let Some((era, look)) = look::load_or_log() else {
-            return;
-        };
+        let (era, look) = look::load();
         kit::close::<AboutBox>();
         kit::close::<StatsBox>();
         let changed = kit::with::<Calc, _>(|calc| {
@@ -444,9 +442,7 @@ fn main() {
     // A panic on a worker thread closes the windows: none is left looking alive (decisions.md).
     bevel_winkit::panic::install(bevel_winkit::panic::close_windows_after);
     look::dpi_aware();
-    let Some((era, paints)) = look::load_or_log() else {
-        return;
-    };
+    let (era, paints) = look::load();
     let settings = Settings::parse(&state_file::load(&settings_path()).text().unwrap_or_default());
     let mut form = CalculatorWindow::new(era);
     form.set_grouping(settings.grouping);

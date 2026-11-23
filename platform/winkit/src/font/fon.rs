@@ -1,10 +1,11 @@
 //! The second way to MS Sans Serif's letters (issue 6, "Bevel95 Setup could not be shown"): read
 //! straight from Windows' own bitmap font file SSERIFE.FON, when GDI does not hand the font out
-//! as asked. The file is only read (never loaded as code): a 16-bit executable whose FONT
+//! as asked. Since 0.1.5 (brief 89) the programs use stored letters; this is test code, part of
+//! the check that the stored MS Sans Serif is the file's own. The file is only read (never loaded as code): a 16-bit executable whose FONT
 //! resources are Windows 3 font files (`.FNT`, versions 2 and 3); the 8pt one at 96 DPI is the
 //! 13-pixel cell the looks use. Its bold is the one GDI makes up (MS Sans Serif has none of its
 //! own): every row drawn again one pixel to the right, the letter a pixel wider (`tmOverhang` 1).
-//! `font::tests::the_font_file_gives_gdis_pixels` proves both against GDI, letter for letter.
+//! `font::gdi::tests::the_font_file_gives_gdis_pixels` proves both against GDI, letter for letter.
 
 use bevel_core::text::Glyph;
 

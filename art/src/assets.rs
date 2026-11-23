@@ -16,6 +16,20 @@ macro_rules! file {
 
 #[rustfmt::skip]
 pub(crate) const ENTRIES: &[Entry] = &[
+    // The letters every program draws with (`core::text::stored`, brief 89): each face, size and
+    // weight in use, with every alphabet Bevel95 has letters for, as Windows 11's own fonts draw
+    // them at 96 DPI without smoothing (the same pixels the programs drew from Windows before;
+    // made again and checked by bevel-winkit's `font::gdi` tests). MS Sans Serif 8pt and its bold
+    // (95, 98), Tahoma 8pt and its bold (2000), the folder windows' web view: Verdana 8pt, its
+    // bold and 16pt bold (98), Tahoma 13pt bold (2000).
+    file!("letters/ms-sans-serif-11px", EVERY_LOOK, TrueColor, "fonts/ms-sans-serif-11px.glyphs"),
+    file!("letters/ms-sans-serif-11px-bold", EVERY_LOOK, TrueColor, "fonts/ms-sans-serif-11px-bold.glyphs"),
+    file!("letters/tahoma-11px", EVERY_LOOK, TrueColor, "fonts/tahoma-11px.glyphs"),
+    file!("letters/tahoma-11px-bold", EVERY_LOOK, TrueColor, "fonts/tahoma-11px-bold.glyphs"),
+    file!("letters/tahoma-17px-bold", EVERY_LOOK, TrueColor, "fonts/tahoma-17px-bold.glyphs"),
+    file!("letters/verdana-11px", EVERY_LOOK, TrueColor, "fonts/verdana-11px.glyphs"),
+    file!("letters/verdana-11px-bold", EVERY_LOOK, TrueColor, "fonts/verdana-11px-bold.glyphs"),
+    file!("letters/verdana-21px-bold", EVERY_LOOK, TrueColor, "fonts/verdana-21px-bold.glyphs"),
     // Calculator: CALC.EXE's 16- and 32-pixel icon (the same bytes in all three).
     file!("calculator/icons", EVERY_LOOK, TrueColor, "calculator/icons.rgba"),
     // HTML Help (98, 2000): the viewer's fonts as Windows drew them, its pages' pictures.

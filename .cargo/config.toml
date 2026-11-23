@@ -5,7 +5,9 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # The only two commands that rewrite test reference files. Plain `cargo test` never does.
 [alias]
 # Re-dump the font fixtures (core/tests/fixtures) from this PC's fonts via GDI.
-regen-fonts = "test -p bevel-winkit --lib -- --ignored --exact font::tests::regenerate_font_fixtures --nocapture"
+regen-fonts = "test -p bevel-winkit --lib -- --ignored --exact font::gdi::tests::regenerate_font_fixtures --nocapture"
+# Re-draw the stored letters (art/assets/fonts) from this PC's fonts via GDI.
+regen-letters = "test -p bevel-winkit --lib -- --ignored --exact font::gdi::tests::regenerate_stored_letters --nocapture"
 # Start the real bar and check the Windows taskbar always comes back (hides it for a few seconds).
 selftest = "test -p bevel95 --test selftest -- --ignored --nocapture"
 # Re-draw the golden images (core/tests/golden) from the current code, and docs/preview.html.

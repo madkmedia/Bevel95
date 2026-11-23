@@ -438,7 +438,7 @@ fn show(caller: Caller, look: &Look, book: &Catalog, target: Target) -> Option<H
 }
 
 fn run(caller: Caller, book: Catalog, target: Target) -> Result<(), String> {
-    let look = look::for_era(caller.era, caller.scale)?;
+    let look = look::for_era(caller.era, caller.scale);
     show(caller, &look, &book, target).ok_or("the requested Help window could not open")?;
 
     // Keep the GUI thread free for Win32, including the native printer dialog. The channel

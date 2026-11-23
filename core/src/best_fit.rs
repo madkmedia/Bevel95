@@ -1,8 +1,8 @@
 //! Windows' "best fit" from Unicode to code page 1252, the characters the glyph atlases first
-//! held (`bevel-winkit`'s `font::charset_1252`). Windows 95 read window titles through this
+//! held (`bevel-winkit`'s `font::gdi::charset_1252`). Windows 95 read window titles through this
 //! conversion, so a character it could not show became a near one where Windows had one (U+0141
 //! as "L", U+0107 as "c", a non-breaking hyphen as "-"), and "?" otherwise. Since the atlases
-//! hold the letters of other European code pages too (`font::OTHER_CODE_PAGES`), a letter they
+//! hold the letters of other European code pages too (`font::gdi::OTHER_CODE_PAGES`), a letter they
 //! have is drawn as itself and this table serves only what they lack. Generated from Windows
 //! itself by `tools/dev/bestfit.ps1` (WideCharToMultiByte(1252, 0, ...) for U+0100..U+FFFF):
 //! do not edit by hand. Each pair is (character, the character of code page 1252 it becomes),
