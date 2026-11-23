@@ -12,7 +12,7 @@ pub mod topics;
 
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::help::{Catalog, EntryIcon, Style};
-use crate::kit::{Effect, Form, Key, Mods, Press};
+use crate::kit::{self, Effect, Form, Key, Mods, Press};
 use crate::paint::{self, Menu, MenuEntry, MenuLayout, MenuStyle};
 use crate::text::Fonts;
 use crate::theme::{Era, Theme, theme};
@@ -124,6 +124,10 @@ pub struct HtmlHelp {
     query: String,
     caret: usize,
     anchor: Option<usize>,
+    /// The query field: Windows' edit box (`edit::Edit`, brief 99: keys, words, Cut, Copy, Paste,
+    /// Undo, its menu); `query`, `caret` and `anchor` (bytes) are its copy for drawing (`push`).
+    edit: crate::edit::Edit,
+    copied: Option<String>,
     query_positions: Vec<(usize, i32)>,
     blink: bool,
     results: Vec<usize>,
@@ -196,6 +200,8 @@ impl HtmlHelp {
             query: String::new(),
             caret: 0,
             anchor: None,
+            edit: crate::edit::Edit::default().with_rule(Some(crate::edit::HELP_QUERY_LIMIT), crate::edit::Allow::Any),
+            copied: None,
             query_positions: Vec::new(),
             blink: true,
             results: Vec::new(),
@@ -345,6 +351,30 @@ impl HtmlHelp {
             self.query_selection().and_then(|r| self.query.get(r)).unwrap_or("").into()
         } else {
             self.selection.clone().and_then(|r| self.article.text().get(r)).unwrap_or("").into()
+        }
+    }
+
+    /// The query field takes in the query and the selection as they are now (brief 99).
+    fn pull(&mut self) {
+        if self.edit.text != self.query {
+            self.edit.set(&self.query);
+        }
+        let chars = |b: usize| self.query[..b.min(self.query.len())].chars().count();
+        self.edit.caret = chars(self.caret);
+        self.edit.anchor = chars(self.anchor.unwrap_or(self.caret));
+    }
+
+    /// What the query field holds is shown; a changed query finds afresh (`edit_complete`).
+    fn push(&mut self) {
+        let changed = self.query != self.edit.text;
+        self.query = self.edit.text.clone();
+        let bytes = |c: usize| self.query.char_indices().nth(c).map_or(self.query.len(), |(i, _)| i);
+        self.caret = bytes(self.edit.caret);
+        let anchor = bytes(self.edit.anchor);
+        self.anchor = (anchor != self.caret).then_some(anchor);
+        self.blink = true;
+        if changed {
+            self.edit_complete();
         }
     }
 
@@ -1199,6 +1229,18 @@ impl Form for HtmlHelp {
             }
             return Some(Vec::new());
         }
+        // The query field: Windows' edit box (caret keys, words, Backspace, Delete, Cut, Copy,
+        // Paste, Undo, Ctrl+A, Shift+F10; brief 99). Up and Down still move the list; Ctrl+Tab,
+        // Ctrl+F and Ctrl+P stay the window's.
+        if self.has_caret()
+            && !matches!(key, Key::Up | Key::Down | Key::Tab | Key::PageUp | Key::PageDown)
+            && !(mods.ctrl && matches!(key, Key::Other(0x46) | Key::Other(0x50)))
+        {
+            self.pull();
+            let done = kit::field_key(&mut self.edit, key, mods, &mut self.copied)?;
+            self.push();
+            return Some(done.effects);
+        }
         if mods.ctrl {
             match key {
                 Key::Tab => {
@@ -1308,28 +1350,45 @@ impl Form for HtmlHelp {
                 return self.invoke(Part::MenuItem(i));
             }
         } else if self.has_caret() {
-            if c == '\u{8}' {
-                if !self.remove_selected_query() && self.caret > 0 {
-                    self.move_caret(true);
-                    self.query.remove(self.caret);
-                }
-            } else if !c.is_control() {
-                self.remove_selected_query();
-                self.query.insert(self.caret, c);
-                self.caret += c.len_utf8();
+            // Backspace comes as its key (`key`); its character is left out here.
+            self.pull();
+            if self.edit.type_char(c) {
+                self.push();
             }
-            self.edit_complete();
         }
         Vec::new()
     }
+    /// Text from the clipboard: its first line, cut to the field's limit (brief 99; before, every
+    /// line was run together).
     fn paste(&mut self, s: &str) {
         if self.has_caret() {
-            self.remove_selected_query();
-            let clean: String = s.chars().filter(|c| !c.is_control()).collect();
-            self.query.insert_str(self.caret, &clean);
-            self.caret += clean.len();
-            self.edit_complete();
+            self.pull();
+            if self.edit.paste(s) {
+                self.push();
+            }
         }
+    }
+    fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
+    }
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        if !self.has_caret() {
+            return None;
+        }
+        let mut edit = self.edit.clone();
+        if edit.text != self.query {
+            edit.set(&self.query);
+        }
+        let chars = |b: usize| self.query[..b.min(self.query.len())].chars().count();
+        edit.caret = chars(self.caret);
+        edit.anchor = chars(self.anchor.unwrap_or(self.caret));
+        Some(edit.menu(clipboard_has_text))
+    }
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        self.pull();
+        let done = kit::field_menu_chosen(&mut self.edit, index, &mut self.copied);
+        self.push();
+        done.effects
     }
 
     fn hover(&mut self, x: i32, y: i32) -> bool {
@@ -1476,6 +1535,14 @@ impl Form for HtmlHelp {
     }
     fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
         match self.hit(x, y) {
+            // In the query field: a word selected (brief 99).
+            Some(Part::Control(Hit::Query)) if self.has_caret() => {
+                self.pull();
+                let at = self.query[..self.query_point(x)].chars().count();
+                self.edit.double_click(at);
+                self.push();
+                Some(Vec::new())
+            }
             Some(Part::Control(Hit::Article)) => {
                 self.select_word(x, y);
                 Some(Vec::new())
@@ -1496,8 +1563,19 @@ impl Form for HtmlHelp {
             _ => None,
         }
     }
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        crate::edit::middle(self.layout_now().query)
+    }
     fn button(&mut self, button: crate::kit::Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
         self.keyboard_input = false;
+        // The query field's right button: its edit menu (by the window's own popup menus,
+        // `winkit::menu`, as every field's) as it comes up (brief 99).
+        if button == crate::kit::Button::Right && self.hit(x, y) == Some(Part::Control(Hit::Query)) {
+            if !self.has_caret() {
+                self.tab_focus(Part::Control(Hit::Query));
+            }
+            return if down { Vec::new() } else { vec![Effect::FieldMenu] };
+        }
         if button == crate::kit::Button::Right && !down && self.layout_now().article.contains(x, y) {
             let command = |label: &str, action| (MenuEntry::item(label, None), Some(action));
             let disabled = |label: &str| {

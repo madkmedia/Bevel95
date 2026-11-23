@@ -22,6 +22,8 @@ pub const RUN_LIMIT: usize = 259;
 pub const QUICK_SEARCH_LIMIT: usize = 259;
 pub const ADDRESS_LIMIT: usize = 2047;
 pub const RENAME_LIMIT: usize = 255;
+/// Help's search fields (WinHelp's query had 255 before, brief 99).
+pub const HELP_QUERY_LIMIT: usize = 255;
 
 /// What a field lets in (control characters never).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

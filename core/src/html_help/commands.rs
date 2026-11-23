@@ -78,9 +78,41 @@ pub struct CommandDialog {
     blink: bool,
     active: bool,
     help: bool,
+    /// The query field: Windows' edit box (`edit::Edit`, brief 99: keys, words, Cut, Copy, Paste,
+    /// Undo, its menu). `query`, `caret` and `anchor` (bytes) are its copy for drawing (`push`);
+    /// a selection set from outside (`select_query`) is taken in (`pull`).
+    edit: crate::edit::Edit,
+    copied: Option<String>,
+}
+
+/// The byte offset of character `chars` in `text`.
+fn byte_of(text: &str, chars: usize) -> usize {
+    text.char_indices().nth(chars).map_or(text.len(), |(i, _)| i)
+}
+
+/// The character index of byte offset `bytes` in `text`.
+fn char_of(text: &str, bytes: usize) -> usize {
+    text[..bytes.min(text.len())].chars().count()
 }
 
 impl CommandDialog {
+    /// The field takes in the query and the selection as they are now.
+    fn pull(&mut self) {
+        if self.edit.text != self.query {
+            self.edit.set(&self.query);
+        }
+        self.edit.caret = char_of(&self.query, self.caret);
+        self.edit.anchor = char_of(&self.query, self.anchor);
+    }
+
+    /// What the field holds is shown.
+    fn push(&mut self) {
+        self.query = self.edit.text.clone();
+        self.caret = byte_of(&self.query, self.edit.caret);
+        self.anchor = byte_of(&self.query, self.edit.anchor);
+        self.blink = true;
+    }
+
     pub fn find(era: Era) -> Self {
         Self::new(era, Kind::Find)
     }
@@ -108,6 +140,8 @@ impl CommandDialog {
             blink: true,
             active: true,
             help: false,
+            edit: crate::edit::Edit::default().with_rule(Some(crate::edit::HELP_QUERY_LIMIT), crate::edit::Allow::Any),
+            copied: None,
         }
     }
 
@@ -148,22 +182,6 @@ impl CommandDialog {
 
     fn selection(&self) -> std::ops::Range<usize> {
         self.caret.min(self.anchor)..self.caret.max(self.anchor)
-    }
-
-    fn replace_selection(&mut self, text: &str) {
-        let range = self.selection();
-        self.caret = range.start + text.len();
-        self.anchor = self.caret;
-        self.query.replace_range(range, text);
-        self.blink = true;
-    }
-
-    fn previous(&self) -> usize {
-        self.query[..self.caret].char_indices().next_back().map_or(0, |(i, _)| i)
-    }
-
-    fn next(&self) -> usize {
-        self.caret + self.query[self.caret..].chars().next().map_or(0, char::len_utf8)
     }
 
     fn click_position(&self, screen_x: i32) -> usize {
@@ -579,45 +597,20 @@ impl Form for CommandDialog {
         if self.focus != Part::Query {
             return None;
         }
-        let selection = self.selection();
-        match key {
-            Key::Left if !mods.shift && !selection.is_empty() => self.caret = selection.start,
-            Key::Right if !mods.shift && !selection.is_empty() => self.caret = selection.end,
-            Key::Left => self.caret = self.previous(),
-            Key::Right => self.caret = self.next(),
-            Key::Home => self.caret = 0,
-            Key::End => self.caret = self.query.len(),
-            Key::Delete => {
-                if selection.is_empty() {
-                    self.anchor = self.next();
-                }
-                self.replace_selection("");
-                return Some(Vec::new());
-            }
-            Key::Other(0x41) if mods.ctrl => {
-                self.set_focus(Part::Query);
-                return Some(Vec::new());
-            }
-            Key::Other(0x56) if mods.ctrl => return Some(vec![Effect::Paste]),
-            _ => return None,
-        }
-        if !mods.shift {
-            self.anchor = self.caret;
-        }
-        self.blink = true;
-        Some(Vec::new())
+        // Windows' edit box: caret keys, words, Backspace, Delete, Cut, Copy, Paste, Undo, Ctrl+A,
+        // Shift+F10 (brief 99).
+        self.pull();
+        let done = kit::field_key(&mut self.edit, key, mods, &mut self.copied)?;
+        self.push();
+        Some(done.effects)
     }
 
+    /// Backspace comes as its key (`key`); its character is left out here.
     fn typed(&mut self, ch: char) -> Vec<Effect<Part>> {
         if self.focus == Part::Query {
-            if ch == '\u{8}' {
-                if self.caret == self.anchor {
-                    self.anchor = self.previous();
-                }
-                self.replace_selection("");
-            } else if !ch.is_control() {
-                let mut bytes = [0; 4];
-                self.replace_selection(ch.encode_utf8(&mut bytes));
+            self.pull();
+            if self.edit.type_char(ch) {
+                self.push();
             }
         } else if ch.is_alphabetic() {
             return self.access(ch);
@@ -625,11 +618,53 @@ impl Form for CommandDialog {
         Vec::new()
     }
 
+    /// Text from the clipboard: its first line, cut to the field's limit.
     fn paste(&mut self, text: &str) {
         if self.focus == Part::Query {
-            let line = text.split(['\r', '\n']).next().unwrap_or("");
-            self.replace_selection(&line.chars().filter(|c| !c.is_control()).collect::<String>());
+            self.pull();
+            if self.edit.paste(text) {
+                self.push();
+            }
         }
+    }
+
+    fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
+    }
+
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        if self.focus != Part::Query {
+            return None;
+        }
+        let mut edit = self.edit.clone();
+        if edit.text != self.query {
+            edit.set(&self.query);
+        }
+        edit.caret = char_of(&self.query, self.caret);
+        edit.anchor = char_of(&self.query, self.anchor);
+        Some(edit.menu(clipboard_has_text))
+    }
+
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        crate::edit::middle(self.rect(Part::Query)?)
+    }
+
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        self.pull();
+        let done = kit::field_menu_chosen(&mut self.edit, index, &mut self.copied);
+        self.push();
+        done.effects
+    }
+
+    fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
+        if self.focus != Part::Query || self.hit(x, y) != Some(Part::Query) {
+            return None;
+        }
+        self.pull();
+        let at = char_of(&self.query, self.click_position(x));
+        self.edit.double_click(at);
+        self.push();
+        Some(Vec::new())
     }
 
     fn access(&mut self, ch: char) -> Vec<Effect<Part>> {
@@ -664,9 +699,10 @@ impl Form for CommandDialog {
             }
             Some(Part::Query) => {
                 self.focus = Part::Query;
-                self.caret = self.click_position(x);
-                self.anchor = self.caret;
-                self.blink = true;
+                self.pull();
+                let at = char_of(&self.query, self.click_position(x));
+                self.edit.press(at, false);
+                self.push();
                 Press::Grab(Part::Query, 0)
             }
             Some(p) if self.enabled(p) => {
@@ -685,11 +721,20 @@ impl Form for CommandDialog {
         }
         let caret = self.click_position(x);
         let changed = self.caret != caret;
-        self.caret = caret;
+        self.pull();
+        self.edit.drag(char_of(&self.query, caret));
+        self.push();
         changed
     }
 
     fn button(&mut self, button: Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        // The query field's right button: its edit menu as it comes up (brief 99).
+        if self.is_find() && button == Button::Right && self.hit(x, y) == Some(Part::Query) {
+            if self.focus != Part::Query {
+                self.select_query();
+            }
+            return if down { Vec::new() } else { vec![Effect::FieldMenu] };
+        }
         // The HTML Find document binds right-click on its controls to their WinHelp topics.
         if self.is_find()
             && button == Button::Right
@@ -711,6 +756,32 @@ const IE_DOCUMENT: ClassicIcon = ClassicIcon::art("html-help/ie-document", Look:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Brief 99: the Find dialog's query is the one edit box: Cut gives its text for the clipboard,
+    /// Undo brings it back, a paste takes the first line, the right button opens its menu.
+    #[test]
+    fn find_query_is_the_edit_box() {
+        let mut d = CommandDialog::find(Era::Win98);
+        for ch in "café au lait".chars() {
+            d.typed(ch);
+        }
+        let shift = Mods { shift: true, ctrl: false };
+        let ctrl = Mods { shift: false, ctrl: true };
+        d.key(Key::Home, shift);
+        assert_eq!(d.key(Key::Other(u16::from(b'X')), ctrl), Some(vec![Effect::Copy]));
+        assert_eq!(d.take_copy().as_deref(), Some("café au lait"));
+        assert_eq!(d.query(), "");
+        d.key(Key::Other(u16::from(b'Z')), ctrl);
+        assert_eq!(d.query(), "café au lait", "Undo");
+        assert!(!d.field_menu(true).unwrap().entries[0].disabled, "Undo again is there");
+        d.key(Key::Other(u16::from(b'A')), ctrl);
+        d.paste("tea\r\nsecond line");
+        assert_eq!(d.query(), "tea");
+        // Backspace is its key; its character does nothing more.
+        d.key(Key::Other(0x08), Mods::default());
+        d.typed('\u{8}');
+        assert_eq!(d.query(), "te");
+    }
 
     #[test]
     fn find_edits_a_selection_and_returns_the_chosen_options() {

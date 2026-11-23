@@ -5,7 +5,7 @@ use crate::dialog::{self, TitleButtons};
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::help::Catalog;
 use crate::help::EntryIcon;
-use crate::kit::{Effect, Form, Key, Mods, Press};
+use crate::kit::{self, Effect, Form, Key, Mods, Press};
 use crate::properties;
 use crate::text::Fonts;
 use crate::theme::{Era, Theme, rgb};
@@ -73,6 +73,11 @@ pub struct HelpTopics {
     selected: Option<usize>,
     query: String,
     caret: usize,
+    /// The selection's other end (bytes; equal to `caret`: nothing selected), and the query field
+    /// itself: Windows' edit box (`edit::Edit`, brief 99), `query`/`caret`/`anchor` its copy.
+    anchor: usize,
+    edit: crate::edit::Edit,
+    copied: Option<String>,
     blink: bool,
     article: Option<usize>,
     history: Vec<usize>,
@@ -139,6 +144,9 @@ impl HelpTopics {
             selected: None,
             query: String::new(),
             caret: 0,
+            anchor: 0,
+            edit: crate::edit::Edit::default().with_rule(Some(crate::edit::HELP_QUERY_LIMIT), crate::edit::Allow::Any),
+            copied: None,
             blink: true,
             article: None,
             history: Vec::new(),
@@ -176,10 +184,39 @@ impl HelpTopics {
         Some(help)
     }
 
+    /// The query field takes in the query and the selection as they are now (brief 99).
+    fn pull(&mut self) {
+        if self.edit.text != self.query {
+            self.edit.set(&self.query);
+        }
+        let chars = |b: usize| self.query[..b.min(self.query.len())].chars().count();
+        self.edit.caret = chars(self.caret);
+        self.edit.anchor = chars(self.anchor);
+    }
+
+    /// What the query field holds is shown; a changed query finds afresh.
+    fn push(&mut self) {
+        let changed = self.query != self.edit.text;
+        self.query = self.edit.text.clone();
+        let bytes = |c: usize| self.query.char_indices().nth(c).map_or(self.query.len(), |(i, _)| i);
+        self.caret = bytes(self.edit.caret);
+        self.anchor = bytes(self.edit.anchor);
+        self.blink = true;
+        if changed {
+            self.edited();
+        }
+    }
+
+    /// The byte offset of the query nearest `x` (the window's pixels).
+    fn query_at(&self, x: i32) -> usize {
+        self.query_positions.iter().min_by_key(|(_, at)| (x - *at).abs()).map_or(self.caret, |&(i, _)| i)
+    }
+
     fn choose_tab(&mut self, tab: HelpTab) {
         self.tab = tab;
         self.query.clear();
         self.caret = 0;
+        self.anchor = 0;
         self.rows = self.results();
         self.selected = if tab == HelpTab::Index { None } else { self.rows.first().copied() };
         self.first_row = 0;
@@ -549,6 +586,14 @@ impl HelpTopics {
             let caret = f.measure(&self.query[..self.caret]);
             let x = 0.min(edit.width - 2 - caret);
             f.draw(&mut edit, x, 1, &self.query, c.text);
+            // The selection, as Windows' edit box draws it (brief 99).
+            let (s, e) = (self.caret.min(self.anchor).min(self.query.len()), self.caret.max(self.anchor).min(self.query.len()));
+            if self.focus == Part::Query && s != e {
+                let sx = x + f.measure(&self.query[..s]);
+                let part = &self.query[s..e];
+                edit.fill(Rect::new(sx, 1, f.measure(part), f.height), c.menu_highlight);
+                f.draw(&mut edit, sx, 1, part, c.menu_highlight_text);
+            }
             if self.focus == Part::Query && self.blink {
                 edit.vline(x + caret, 1, f.height, c.text);
             }
@@ -905,9 +950,16 @@ impl Form for HelpTopics {
             };
             self.scroll = y.clamp(0, self.max_scroll);
         } else {
+            // The query field: Windows' edit box (caret keys, words, Backspace, Delete, Cut, Copy,
+            // Paste, Undo, Ctrl+A, Shift+F10; brief 99). Up and Down still move the list.
+            if self.focus == Part::Query && !matches!(k, Key::Up | Key::Down | Key::Tab | Key::PageUp | Key::PageDown) {
+                self.pull();
+                let done = kit::field_key(&mut self.edit, k, mods, &mut self.copied)?;
+                self.push();
+                return Some(done.effects);
+            }
             match (k, self.focus) {
                 (Key::Tab, _) if mods.ctrl => self.choose_tab(self.tab.step(if mods.shift { -1 } else { 1 })),
-                (Key::Other(0x56), Part::Query) if mods.ctrl => return Some(vec![Effect::Paste]),
                 (Key::Left | Key::Right, Part::Tab(_)) => {
                     self.choose_tab(self.tab.step(if k == Key::Left { -1 } else { 1 }));
                     self.focus = Part::Tab(self.tab);
@@ -915,18 +967,6 @@ impl Form for HelpTopics {
                 (Key::Up | Key::Down, Part::List | Part::Query) => self.step_row(if k == Key::Up { -1 } else { 1 }),
                 (Key::PageUp | Key::PageDown, Part::List) => {
                     self.step_row(self.visible_rows() as i32 * if k == Key::PageUp { -1 } else { 1 })
-                }
-                (Key::Home, Part::Query) => self.caret = 0,
-                (Key::End, Part::Query) => self.caret = self.query.len(),
-                (Key::Left, Part::Query) => {
-                    self.caret = self.query[..self.caret].char_indices().next_back().map_or(0, |(i, _)| i)
-                }
-                (Key::Right, Part::Query) => {
-                    self.caret += self.query[self.caret..].chars().next().map_or(0, char::len_utf8)
-                }
-                (Key::Delete, Part::Query) if self.caret < self.query.len() => {
-                    self.query.remove(self.caret);
-                    self.edited();
                 }
                 _ => return None,
             }
@@ -959,11 +999,12 @@ impl Form for HelpTopics {
                 Press::Done
             }
             Part::Query => {
-                if let Some(&(i, _)) = self.query_positions.iter().min_by_key(|(_, at)| (x - *at).abs()) {
-                    self.caret = i;
-                }
+                // The caret there; held, a drag selects (brief 99).
+                let at = self.query_at(x);
+                self.caret = at;
+                self.anchor = at;
                 self.blink = true;
-                Press::Done
+                Press::Grab(Part::Query, 0)
             }
             Part::ScrollUp | Part::ScrollDown => {
                 let step = if self.is_article() { 13 } else { 1 };
@@ -980,13 +1021,29 @@ impl Form for HelpTopics {
         }
     }
     fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
+        // In the query field: a word selected (brief 99).
+        if !self.is_article() && self.hit(x, y) == Some(Part::Query) {
+            self.focus = Part::Query;
+            self.pull();
+            let at = self.query[..self.query_at(x)].chars().count();
+            self.edit.double_click(at);
+            self.push();
+            return Some(Vec::new());
+        }
         if self.is_article() && (4..22).contains(&y) && self.hit(x, y).is_none() {
             return Some(vec![Effect::Activate(Part::Maximize)]);
         }
         self.selected = Some(self.click_row(x, y)?);
         Some(vec![Effect::Activate(Part::Display)])
     }
-    fn drag(&mut self, p: Part, grab_y: i32, value: i32, _x: i32, y: i32) -> bool {
+    fn drag(&mut self, p: Part, grab_y: i32, value: i32, x: i32, y: i32) -> bool {
+        if p == Part::Query {
+            let at = self.query_at(x);
+            let changed = at != self.caret;
+            self.caret = at;
+            self.blink = true;
+            return changed;
+        }
         let max = self.scroll_metrics().1;
         if p != Part::Thumb || max == 0 {
             return false;
@@ -997,17 +1054,13 @@ impl Form for HelpTopics {
         );
         true
     }
+    /// Backspace comes as its key (`key`); its character is left out here.
     fn typed(&mut self, ch: char) -> Vec<Effect<Part>> {
         if self.focus == Part::Query {
-            if ch == '\u{8}' && self.caret != 0 {
-                let from = self.query[..self.caret].char_indices().next_back().unwrap().0;
-                self.query.drain(from..self.caret);
-                self.caret = from;
-            } else if !ch.is_control() && self.query.len() < 255 {
-                self.query.insert(self.caret, ch);
-                self.caret += ch.len_utf8();
+            self.pull();
+            if self.edit.type_char(ch) {
+                self.push();
             }
-            self.edited();
         }
         Vec::new()
     }
@@ -1039,17 +1092,47 @@ impl Form for HelpTopics {
             vec![Effect::Activate(self.focus)]
         }
     }
+    /// Text from the clipboard: its first line, cut to the field's limit (brief 99; before, every
+    /// line was run together).
     fn paste(&mut self, text: &str) {
         if self.focus == Part::Query {
-            for ch in text.chars().filter(|ch| !ch.is_control()) {
-                if self.query.len() >= 255 {
-                    break;
-                }
-                self.query.insert(self.caret, ch);
-                self.caret += ch.len_utf8();
+            self.pull();
+            if self.edit.paste(text) {
+                self.push();
             }
-            self.edited();
         }
+    }
+    fn take_copy(&mut self) -> Option<String> {
+        self.copied.take()
+    }
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        if self.focus != Part::Query || self.is_article() {
+            return None;
+        }
+        let mut edit = self.edit.clone();
+        if edit.text != self.query {
+            edit.set(&self.query);
+        }
+        edit.caret = self.query[..self.caret.min(self.query.len())].chars().count();
+        edit.anchor = self.query[..self.anchor.min(self.query.len())].chars().count();
+        Some(edit.menu(clipboard_has_text))
+    }
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        crate::edit::middle(EDIT)
+    }
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        self.pull();
+        let done = kit::field_menu_chosen(&mut self.edit, index, &mut self.copied);
+        self.push();
+        done.effects
+    }
+    /// The query field's right button: its edit menu as it comes up (brief 99).
+    fn button(&mut self, button: kit::Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        if button == kit::Button::Right && !self.is_article() && self.hit(x, y) == Some(Part::Query) {
+            self.focus = Part::Query;
+            return if down { Vec::new() } else { vec![Effect::FieldMenu] };
+        }
+        Vec::new()
     }
     fn wheel(&mut self, notches: i32) {
         if self.is_article() {
