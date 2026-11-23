@@ -380,11 +380,14 @@ fn log_place() -> String {
 /// look itself could not be made, Bevel95's bar could not draw on this PC either: installing it
 /// would help nobody, so the message says so plainly, with the log's place, and nothing is done.
 /// If only the window could not be made, Setup asks through Windows' own message windows instead
-/// (a first run: install for this user with the second page's defaults, or a portable copy here,
-/// or nothing; another copy over an installed one: update it, or nothing). `None`: nothing was
-/// chosen (or could be offered); else the choice with the defaults.
+/// (a first run: "Install?" with the second page's defaults; only after its No, "a portable copy
+/// here instead?"; another copy over an installed one: "Update?"). Every question is Yes or No with
+/// No as the default, and a No or a closed box does nothing. `None`: nothing was chosen (or could
+/// be offered); else the choice with the defaults.
 fn ask_plainly(kind: SetupKind, why: &Unshown, ask: impl Fn(&str, MESSAGEBOX_STYLE) -> i32) -> Option<(SetupChoice, Answers)> {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{IDNO, MB_ICONQUESTION, MB_YESNOCANCEL};
+    // No is the button Enter presses in every question here, and closing a box is a No: only a
+    // Yes ever does something (the review before 0.1.5, B1).
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_DEFBUTTON2, MB_ICONQUESTION};
     match why {
         Unshown::Look(_) => {
             log("setup: without the look neither Setup nor the bar can draw here; nothing was offered");
@@ -399,19 +402,22 @@ fn ask_plainly(kind: SetupKind, why: &Unshown, ask: impl Fn(&str, MESSAGEBOX_STY
             let place = log_place();
             match kind {
                 SetupKind::FirstRun => {
-                    let answer = ask(
-                        &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nInstall {NAME} for you on this PC?\n\nYes: install it (the classic desktop on, the Windows key opens Quick Search, not started with Windows: Bevel95 Settings changes these later).\nNo: unpack a portable copy into this file's folder.\nCancel: nothing."),
-                        MB_YESNOCANCEL | MB_ICONQUESTION,
+                    let install = ask(
+                        &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nInstall {NAME} for you on this PC?\n\nYes: install it into your user folder and start it (the classic desktop on, the Windows key opens Quick Search, not started with Windows: Bevel95 Settings changes these later).\nNo: nothing is installed."),
+                        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
                     );
-                    match answer {
-                        a if a == IDYES => Some((SetupChoice::Install, Answers::default())),
-                        a if a == IDNO => Some((SetupChoice::Portable, Answers::default())),
-                        _ => None,
+                    if install == IDYES {
+                        return Some((SetupChoice::Install, Answers::default()));
                     }
+                    let portable = ask(
+                        &format!("Nothing was installed.\n\nUnpack a portable copy of {NAME} into this file's folder instead?\n\nYes: unpack it there and start it (its settings and log stay in that folder).\nNo: nothing is done."),
+                        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+                    );
+                    (portable == IDYES).then(|| (SetupChoice::Portable, Answers::default()))
                 }
                 SetupKind::OtherCopy { newer: true, .. } => (ask(
-                    &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nUpdate the installed {NAME} with this copy?"),
-                    MB_YESNO | MB_ICONQUESTION,
+                    &format!("{NAME} Setup's own window could not be shown (the reason is in the log:\n{place}).\n\nUpdate the installed {NAME} with this copy?\n\nYes: update it and start it (its settings are kept).\nNo: nothing is changed."),
+                    MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
                 ) == IDYES)
                     .then(|| (SetupChoice::Update, Answers::default())),
                 _ => {
@@ -1404,35 +1410,59 @@ fn save_shortcut(link: &Path, target: &Path, arguments: &str, description: &str,
 mod tests {
     use super::*;
 
-    /// Issue 6: when Setup's own window cannot be shown, a first run is asked through Windows'
-    /// own message windows (Yes: install with the defaults; No: a portable copy; Cancel:
-    /// nothing), an update is offered for a newer copy, and a look that could not be made offers
+    /// Issue 6 and the review before 0.1.5 (B1): when Setup's own window cannot be shown, a first
+    /// run is asked "Install?" (Yes installs with the defaults); only after its No, "a portable
+    /// copy here instead?" (Yes unpacks one); every other answer, and a closed box (IDCANCEL, or 0
+    /// when the box itself fails), does nothing. Every question is Yes/No with No the default
+    /// button. An update is offered for a newer copy only; a look that could not be made offers
     /// nothing (the bar could not draw either) but says where the log is.
     #[test]
     fn a_setup_that_cannot_be_shown_asks_plainly() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{IDCANCEL, IDNO};
-        let said = std::cell::RefCell::new(Vec::new());
-        let answering = |id: i32| {
-            let said = &said;
-            move |text: &str, _: MESSAGEBOX_STYLE| {
-                said.borrow_mut().push(text.to_string());
-                id
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IDCANCEL, IDNO, MB_DEFBUTTON2};
+        let asked = std::cell::RefCell::new(Vec::<(String, MESSAGEBOX_STYLE)>::new());
+        // Answers the questions in turn with `ids` (and with No after them).
+        let answering = |ids: &'static [i32]| {
+            let asked = &asked;
+            move |text: &str, style: MESSAGEBOX_STYLE| {
+                let mut a = asked.borrow_mut();
+                a.push((text.to_string(), style));
+                ids.get(a.len() - 1).copied().unwrap_or(IDNO)
             }
         };
+        let run = |kind: SetupKind, why: &Unshown, ids: &'static [i32]| {
+            asked.borrow_mut().clear();
+            let chosen = ask_plainly(kind, why, answering(ids));
+            (chosen.map(|c| c.0), asked.borrow().len())
+        };
         let window = Unshown::Window;
-        assert_eq!(ask_plainly(SetupKind::FirstRun, &window, answering(IDYES)), Some((SetupChoice::Install, Answers::default())));
-        assert_eq!(ask_plainly(SetupKind::FirstRun, &window, answering(IDNO)), Some((SetupChoice::Portable, Answers::default())));
-        assert_eq!(ask_plainly(SetupKind::FirstRun, &window, answering(IDCANCEL)), None);
+        let first = SetupKind::FirstRun;
+        assert_eq!(run(first, &window, &[IDYES]), (Some(SetupChoice::Install), 1), "Yes to Install: installed, nothing more asked");
+        assert_eq!(run(first, &window, &[IDNO, IDYES]), (Some(SetupChoice::Portable), 2), "No, then Yes to the portable copy");
+        assert_eq!(run(first, &window, &[IDNO, IDNO]), (None, 2), "No and No: nothing");
+        assert_eq!(run(first, &window, &[IDCANCEL, IDCANCEL]), (None, 2), "both boxes closed: nothing");
+        assert_eq!(run(first, &window, &[0, 0]), (None, 2), "the boxes failed: nothing");
+        assert_eq!(run(first, &window, &[IDNO, IDCANCEL]), (None, 2));
         let newer = SetupKind::OtherCopy { newer: true, can_run: false };
-        assert_eq!(ask_plainly(newer, &window, answering(IDYES)), Some((SetupChoice::Update, Answers::default())));
-        assert_eq!(ask_plainly(newer, &window, answering(IDNO)), None);
-        assert_eq!(ask_plainly(SetupKind::OtherCopy { newer: false, can_run: false }, &window, answering(IDYES)), None, "an older copy: nothing offered");
-        said.borrow_mut().clear();
+        assert_eq!(run(newer, &window, &[IDYES]), (Some(SetupChoice::Update), 1));
+        assert_eq!(run(newer, &window, &[IDNO]), (None, 1));
+        assert_eq!(run(newer, &window, &[IDCANCEL]), (None, 1));
+        assert_eq!(run(SetupKind::OtherCopy { newer: false, can_run: false }, &window, &[IDYES]), (None, 1), "an older copy: nothing offered");
+        // Every question: Yes or No only, No pressed by Enter; the words say what each does.
+        let check = || {
+            for (text, style) in asked.borrow().iter() {
+                // The button set is the style's lowest four bits (MB_TYPEMASK).
+                assert!(style & 0xF == MB_YESNO && style & 0xF00 == MB_DEFBUTTON2, "{text}");
+                assert!(text.contains("Yes:") && text.contains("No: nothing"), "{text}");
+            }
+        };
+        run(first, &window, &[IDNO, IDNO]);
+        check();
+        run(newer, &window, &[IDNO]);
+        check();
         let look = Unshown::Look("the font could not be made".into());
-        assert_eq!(ask_plainly(SetupKind::FirstRun, &look, answering(IDYES)), None, "no font: installing would help nobody");
-        let told = said.borrow();
-        assert_eq!(told.len(), 1);
-        assert!(told[0].contains("cannot draw its windows") && told[0].contains("bevel95.log"), "{}", told[0]);
+        assert_eq!(run(first, &look, &[IDYES]), (None, 1), "no font: installing would help nobody");
+        let told = asked.borrow();
+        assert!(told[0].0.contains("cannot draw its windows") && told[0].0.contains("bevel95.log"), "{}", told[0].0);
     }
 
     /// The one file started again while that very build runs tells so (the owner, 2026-11-18):

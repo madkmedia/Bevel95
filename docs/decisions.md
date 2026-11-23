@@ -1502,9 +1502,12 @@ it, but write nothing).
     gave no error number" otherwise); the letters from the file are taken only with the cell's
     own baseline (11).
   - **Setup can always be answered**: if its own window still cannot be created, the one file
-    asks through Windows' own message windows (a first run: Yes installs with the second page's
-    defaults, No unpacks a portable copy beside the file, Cancel does nothing; a newer copy over
-    an installed one: update or nothing; anything else: nothing). If the look itself cannot be
+    asks through Windows' own message windows (a first run: "Install?", Yes installing with the
+    second page's defaults; only after its No a second question, "a portable copy into this
+    file's folder instead?"; a newer copy over an installed one: "Update?"; anything else:
+    nothing). Every question is Yes or No with No the button Enter presses, and a No or a closed
+    box does nothing (the review before 0.1.5, B1: the first version's No unpacked a portable
+    copy and started it). If the look itself cannot be
     made, the bar could not draw either: nothing is offered, the message says so with the log's
     place. A copy as built still runs as a bar from where it is, as before; the one file never
     does.
@@ -6345,8 +6348,10 @@ sharable").
   words as the owner wrote them, the 600 x 450 animation. The art guard allows `site/`.
   Since 2026-11-23 (brief 86) a small second line under the download link, "or the portable
   zip", which the same script points at the newest release's `Bevel95-<version>-portable.zip`
-  (the same checks as for the one file: text only, the address must begin with the releases'
-  download address) and shows only then; without the zip, or without scripts, it stays hidden
+  (the same checks as for the one file: shown as text only; the address taken apart as an
+  address, not compared as text, and used only if it is https on github.com, without user or
+  port, and its path, with `..` and `%2e` resolved, lies under this project's releases'
+  downloads: the review before 0.1.5, C5) and shows only then; without the zip, or without scripts, it stays hidden
   (the plain link leads to the release's page, which lists both files). Checked in a browser at
   390 wide against a made-up answer with the zip and one like today's without: no sideways
   scrolling, the picture's size unchanged (`private/probes/portable-zip/site`).

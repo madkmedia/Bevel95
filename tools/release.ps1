@@ -55,60 +55,74 @@ Write-Host "  SHA-256 $hash"
 # a plain program), programs\ with the five companions, and settings.txt with Bevel95's mark
 # (Bevel95's defaults, as Setup writes it: `pack --settings`). Made with .NET's own zip classes, the
 # entries in a fixed order and dated with the commit's time, so the same commit gives the same zip.
+# It is written under a temporary name and gets its real name only once its own checks below
+# passed; a zip that fails them, and the temporary settings file, are removed whatever happens
+# (the review before 0.1.5, C3).
 $zip = Join-Path $dist "Bevel95-$version-portable.zip"
 if (Test-Path -LiteralPath $zip) { throw "$zip exists already; move it away first (the one file was made)." }
+$partial = "$zip.partial"
 $settings = Join-Path $dist "settings.txt.portable"
-& $cargo run --quiet --release --manifest-path $manifest -p bevel-core --example pack -- --settings $settings
-if ($LASTEXITCODE -ne 0) { throw "The portable settings.txt could not be made." }
-$time = [long](& git -C $root log -1 --format=%ct HEAD)
-$when = [DateTimeOffset]::FromUnixTimeSeconds($time)
-$entries = @(, @("bevel95.exe", (Join-Path $release "bevel95.exe")))
-foreach ($c in $companions) { $entries += , @("programs/$c", (Join-Path $release $c)) }
-$entries += , @("settings.txt", $settings)
-Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$stream = [IO.File]::Open($zip, [IO.FileMode]::CreateNew)
+Remove-Item -LiteralPath $partial, $settings -ErrorAction SilentlyContinue
 try {
-    $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create)
-    foreach ($e in $entries) {
-        $entry = $archive.CreateEntry($e[0], [IO.Compression.CompressionLevel]::Optimal)
-        $entry.LastWriteTime = $when
-        $w = $entry.Open()
-        $bytes = [IO.File]::ReadAllBytes($e[1])
-        $w.Write($bytes, 0, $bytes.Length)
-        $w.Dispose()
-    }
-    $archive.Dispose()
-} finally { $stream.Dispose() }
-Remove-Item -LiteralPath $settings
-
-# The zip checks its own work: each program equals the one file's part of the same name (by the
-# fingerprints `pack --check` prints), the bar's stamp says this version and commit, settings.txt
-# holds Bevel95's mark, and nothing else is in it.
-$parts = @{}
-$stampVersion = ''; $stampBuild = ''
-foreach ($line in (& $cargo run --quiet --release --manifest-path $manifest -p bevel-core --example pack -- --check $out)) {
-    if ($line -match '^\s+(\S+)\s+\d+ bytes\s+sha256 ([0-9a-f]{64})') { $parts[$Matches[1]] = $Matches[2] }
-    if ($line -match 'build stamp: version (\S+) build (\S+)') { $stampVersion = $Matches[1]; $stampBuild = $Matches[2] }
-}
-if ($stampVersion -ne $version -or $stampBuild -ne $build) { throw "The bar's stamp says '$stampVersion $stampBuild', not '$version $build'." }
-$check = [IO.Compression.ZipFile]::OpenRead($zip)
-try {
-    $names = @($check.Entries | ForEach-Object FullName)
-    $want = @($entries | ForEach-Object { $_[0] })
-    if (($names -join '|') -ne ($want -join '|')) { throw "The zip holds $($names -join ', ') instead of $($want -join ', ')." }
-    $sha = [Security.Cryptography.SHA256]::Create()
-    foreach ($entry in $check.Entries) {
-        $s = $entry.Open(); $ms = New-Object IO.MemoryStream; $s.CopyTo($ms); $s.Dispose()
-        $bytes = $ms.ToArray()
-        if ($entry.FullName -eq 'settings.txt') {
-            if (-not [Text.Encoding]::UTF8.GetString($bytes).StartsWith('# Bevel95 settings')) { throw "The zip's settings.txt has no mark." }
-            continue
+    & $cargo run --quiet --release --manifest-path $manifest -p bevel-core --example pack -- --settings $settings
+    if ($LASTEXITCODE -ne 0) { throw "The portable settings.txt could not be made." }
+    $time = [long](& git -C $root log -1 --format=%ct HEAD)
+    # A zip cannot hold a date before 1980: without the commit's time, nothing is made.
+    if ($LASTEXITCODE -ne 0 -or $time -lt 315532800) { throw "The commit's time could not be read; no zip was made." }
+    $when = [DateTimeOffset]::FromUnixTimeSeconds($time)
+    $entries = @(, @("bevel95.exe", (Join-Path $release "bevel95.exe")))
+    foreach ($c in $companions) { $entries += , @("programs/$c", (Join-Path $release $c)) }
+    $entries += , @("settings.txt", $settings)
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $stream = [IO.File]::Open($partial, [IO.FileMode]::CreateNew)
+    try {
+        $archive = New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Create)
+        foreach ($e in $entries) {
+            $entry = $archive.CreateEntry($e[0], [IO.Compression.CompressionLevel]::Optimal)
+            $entry.LastWriteTime = $when
+            $w = $entry.Open()
+            $bytes = [IO.File]::ReadAllBytes($e[1])
+            $w.Write($bytes, 0, $bytes.Length)
+            $w.Dispose()
         }
-        $digest = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
-        if ($parts[$entry.FullName] -ne $digest) { throw "The zip's $($entry.FullName) is not the one file's part." }
+        $archive.Dispose()
+    } finally { $stream.Dispose() }
+
+    # The zip checks its own work: each program equals the one file's part of the same name (by
+    # the fingerprints `pack --check` prints), the bar's stamp says this version and commit,
+    # settings.txt holds Bevel95's mark, and nothing else is in it.
+    $parts = @{}
+    $stampVersion = ''; $stampBuild = ''
+    foreach ($line in (& $cargo run --quiet --release --manifest-path $manifest -p bevel-core --example pack -- --check $out)) {
+        if ($line -match '^\s+(\S+)\s+\d+ bytes\s+sha256 ([0-9a-f]{64})') { $parts[$Matches[1]] = $Matches[2] }
+        if ($line -match 'build stamp: version (\S+) build (\S+)') { $stampVersion = $Matches[1]; $stampBuild = $Matches[2] }
     }
-} finally { $check.Dispose() }
+    if ($stampVersion -ne $version -or $stampBuild -ne $build) { throw "The bar's stamp says '$stampVersion $stampBuild', not '$version $build'." }
+    $check = [IO.Compression.ZipFile]::OpenRead($partial)
+    try {
+        $names = @($check.Entries | ForEach-Object FullName)
+        $want = @($entries | ForEach-Object { $_[0] })
+        if (($names -join '|') -ne ($want -join '|')) { throw "The zip holds $($names -join ', ') instead of $($want -join ', ')." }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        foreach ($entry in $check.Entries) {
+            $s = $entry.Open(); $ms = New-Object IO.MemoryStream; $s.CopyTo($ms); $s.Dispose()
+            $bytes = $ms.ToArray()
+            if ($entry.FullName -eq 'settings.txt') {
+                if (-not [Text.Encoding]::UTF8.GetString($bytes).StartsWith('# Bevel95 settings')) { throw "The zip's settings.txt has no mark." }
+                continue
+            }
+            $digest = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
+            if ($parts[$entry.FullName] -ne $digest) { throw "The zip's $($entry.FullName) is not the one file's part." }
+        }
+    } finally { $check.Dispose() }
+    Move-Item -LiteralPath $partial -Destination $zip
+} catch {
+    Remove-Item -LiteralPath $partial -ErrorAction SilentlyContinue
+    throw "No portable zip was made: $_"
+} finally {
+    Remove-Item -LiteralPath $settings -ErrorAction SilentlyContinue
+}
 $zipItem = Get-Item -LiteralPath $zip
 Write-Host ""
 Write-Host "Made $($zipItem.FullName)"

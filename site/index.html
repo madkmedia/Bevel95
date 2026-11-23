@@ -102,7 +102,19 @@ Not affiliated with or endorsed by Microsoft.
   var FILES = "https://github.com/madkmedia/Bevel95/releases/download/";
   var MONTHS = ["January", "February", "March", "April", "May", "June", "July",
     "August", "September", "October", "November", "December"];
-  if (!window.fetch) return;
+  if (!window.fetch || !window.URL) return;
+  // An address from GitHub's answer, taken apart as an address (not compared as text): used only
+  // if it is https on github.com itself (no user, no port) and its path, with "..", "%2e" and the
+  // like resolved, lies under this project's releases' downloads. Else null.
+  function download(text) {
+    if (typeof text !== "string") return null;
+    var u;
+    try { u = new URL(text); } catch (e) { return null; }
+    var base = new URL(FILES);
+    if (u.protocol !== "https:" || u.hostname !== base.hostname || u.port !== "" || u.username !== "" || u.password !== "") return null;
+    if (u.pathname.indexOf(base.pathname) !== 0 || u.pathname.length <= base.pathname.length) return null;
+    return u.href;
+  }
   var link = document.getElementById("download");
   var facts = document.getElementById("facts");
   var stop = window.AbortController ? new AbortController() : null;
@@ -118,8 +130,8 @@ Not affiliated with or endorsed by Microsoft.
     var shown = false, zipShown = false;
     for (var i = 0; i < release.assets.length; i++) {
       var a = release.assets[i];
-      var url = a.browser_download_url;
-      if (typeof a.name !== "string" || typeof url !== "string" || url.indexOf(FILES) !== 0) continue;
+      var url = download(a.browser_download_url);
+      if (typeof a.name !== "string" || !url) continue;
       var z = !zipShown && /^Bevel95-(\d+\.\d+\.\d+)-portable\.zip$/.exec(a.name);
       if (z) {
         zipShown = true;

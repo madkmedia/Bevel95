@@ -1832,6 +1832,12 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
         // The folder left keeps its view for the next time.
         remember_view(h);
         let mode_before = h.form.view_mode();
+        // The id left behind has no reader any more: its entry goes (the review before 0.1.5, C2).
+        if let Ok(mut g) = GENERATIONS.lock()
+            && let Some(g) = g.as_mut()
+        {
+            g.forget(h.id);
+        }
         h.id = id;
         h.shows = shows.clone();
         h.select = None;
