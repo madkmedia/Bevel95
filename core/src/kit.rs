@@ -48,6 +48,77 @@ pub struct Mods {
     pub ctrl: bool,
 }
 
+impl Key {
+    /// Windows' virtual key for it (the host translated it from one).
+    pub fn vk(self) -> u16 {
+        match self {
+            Key::Tab => 0x09,
+            Key::Enter => 0x0D,
+            Key::Escape => 0x1B,
+            Key::Space => 0x20,
+            Key::PageUp => 0x21,
+            Key::PageDown => 0x22,
+            Key::End => 0x23,
+            Key::Home => 0x24,
+            Key::Left => 0x25,
+            Key::Up => 0x26,
+            Key::Right => 0x27,
+            Key::Down => 0x28,
+            Key::Delete => 0x2E,
+            Key::F4 => 0x73,
+            Key::Modifier => 0x10,
+            Key::Other(vk) => vk,
+        }
+    }
+}
+
+/// What a one-line field (`edit::Edit`) in a form did with a key or a menu entry: the effects for
+/// the host (Copy, Paste, the field's menu) and whether its text changed.
+pub struct FieldDone<P> {
+    pub effects: Vec<Effect<P>>,
+    pub changed: bool,
+}
+
+fn field_done<P>(changed: bool, done: crate::edit::Done, copy: &mut Option<String>) -> FieldDone<P> {
+    use crate::edit::Done;
+    let effects = match done {
+        Done::Copy(text) => {
+            *copy = Some(text);
+            vec![Effect::Copy]
+        }
+        Done::Paste => vec![Effect::Paste],
+        Done::Changed | Done::Moved | Done::Nothing => Vec::new(),
+    };
+    FieldDone { effects, changed }
+}
+
+/// A key for a one-line field inside a form (brief 95): the field's own keys as Windows' edit box
+/// has them (`edit::op_for_key`: caret keys, Shift selecting, Ctrl by words, Backspace, Delete,
+/// Ctrl+A, X, C, V, Z and the old pairs), and Shift+F10 or the menu key opening its menu. `copy`
+/// takes the text of a Cut or Copy (for `Form::take_copy`). `None`: not the field's key (Enter,
+/// Esc, Tab... belong to the form). `changed`: the text is not what it was (a Cut, not a Copy).
+pub fn field_key<P>(edit: &mut crate::edit::Edit, key: Key, mods: Mods, copy: &mut Option<String>) -> Option<FieldDone<P>> {
+    let vk = key.vk();
+    if (vk == 0x79 && mods.shift && !mods.ctrl) || vk == 0x5D {
+        return Some(FieldDone { effects: vec![Effect::FieldMenu], changed: false });
+    }
+    let before = edit.text.clone();
+    let done = edit.key(vk, mods.shift, mods.ctrl)?;
+    Some(field_done(edit.text != before, done, copy))
+}
+
+/// Entry `index` of a field's right-click menu (`edit::Edit::menu`) chosen.
+pub fn field_menu_chosen<P>(edit: &mut crate::edit::Edit, index: usize, copy: &mut Option<String>) -> FieldDone<P> {
+    match crate::edit::menu_op(index) {
+        Some(op) => {
+            let before = edit.text.clone();
+            let done = edit.apply(op, false);
+            field_done(edit.text != before, done, copy)
+        }
+        None => FieldDone { effects: Vec::new(), changed: false },
+    }
+}
+
 /// The rows of the title bar that move the window when dragged (below its top edge, above the
 /// window's contents): the same in every window measured.
 pub const TITLE_ROWS: std::ops::Range<i32> = 3..21;
@@ -137,6 +208,11 @@ pub enum Effect<P> {
     Close,
     /// Paste the clipboard's text into the focused field (Ctrl+V): `Form::paste`.
     Paste,
+    /// Put the focused field's cut or copied text on the clipboard (`Form::take_copy`, brief 95).
+    Copy,
+    /// Open the focused field's right-click menu at the pointer (`Form::field_menu`; Shift+F10
+    /// opens it at the caret's field: `Form::field_menu_at`).
+    FieldMenu,
 }
 
 /// A core-drawn window with controls, as the controller and the host see it.
@@ -255,6 +331,24 @@ pub trait Form {
     fn wheel(&mut self, _notches: i32) {}
     /// Text from the clipboard for the focused field.
     fn paste(&mut self, _text: &str) {}
+    /// The text a Cut or Copy of the focused field left for the clipboard (after `Effect::Copy`).
+    fn take_copy(&mut self) -> Option<String> {
+        None
+    }
+    /// The focused field's right-click menu (`edit::Edit::menu`), Paste grey unless the clipboard
+    /// holds text (`clipboard_has_text`); `None`: no field has the focus.
+    fn field_menu(&self, _clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        None
+    }
+    /// Where that menu opens when opened from the keyboard (Shift+F10), in 1× pixels of the form:
+    /// below the field's caret. `None`: at the pointer.
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        None
+    }
+    /// Entry `index` of the field's menu was chosen.
+    fn field_menu_chosen(&mut self, _index: usize) -> Vec<Effect<Self::Part>> {
+        Vec::new()
+    }
     /// The window is waiting for the user to point at a control for What's This? help.
     fn context_help(&self) -> bool {
         false

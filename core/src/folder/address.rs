@@ -83,12 +83,11 @@ fn join_relative(dir: &str, rel: &str) -> String {
     format!("{root}\\{}", parts.join("\\"))
 }
 
-/// The text field: what it holds, the caret and the selection's other end (in characters).
+/// The text field: one line of editable text (`edit::Edit`, brief 95: the text, the caret, the
+/// selection, the scroll, Undo; reached through `Deref`), and what the address bar adds to it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Field {
-    pub text: String,
-    pub caret: usize,
-    pub anchor: usize,
+    pub edit: crate::edit::Edit,
     /// The field has the keyboard.
     pub focused: bool,
     /// Something was typed since the place was shown (Esc gives the place's address back).
@@ -96,10 +95,21 @@ pub struct Field {
     pub caret_on: bool,
     /// The address of the place shown (Esc gives it back).
     pub place_text: String,
-    /// How many pixels the text is moved left so the caret stays in the box (`fit`); kept from
-    /// paint to paint, so the text moves only when the caret leaves the box, as in Windows' edit
-    /// boxes (a typed path longer than the box went on out of sight: found with real keys).
-    pub scroll: std::cell::Cell<i32>,
+    /// The text of the last Cut or Copy, for the clipboard (`take_copy`).
+    pub copied: Option<String>,
+}
+
+impl std::ops::Deref for Field {
+    type Target = crate::edit::Edit;
+    fn deref(&self) -> &crate::edit::Edit {
+        &self.edit
+    }
+}
+
+impl std::ops::DerefMut for Field {
+    fn deref_mut(&mut self) -> &mut crate::edit::Edit {
+        &mut self.edit
+    }
 }
 
 /// The keys the field acts on.
@@ -116,23 +126,15 @@ pub enum EditKey {
 }
 
 impl Field {
-    fn len(&self) -> usize {
-        self.text.chars().count()
-    }
-
-    /// The place shown changed: its address, nothing typed.
+    /// The place shown changed: its address, nothing typed (no Undo back to what was typed).
     pub fn show(&mut self, text: &str) {
-        self.text = text.to_string();
+        self.edit.set(text);
         self.place_text = text.to_string();
         self.edited = false;
-        self.scroll.set(0);
-        let n = self.len();
         if self.focused {
-            self.caret = n;
-            self.anchor = 0;
+            self.edit.select_all();
         } else {
-            self.caret = 0;
-            self.anchor = 0;
+            self.edit.place(0);
         }
     }
 
@@ -152,95 +154,65 @@ impl Field {
     /// The field takes the keyboard: everything selected (98's `address-clicked`).
     pub fn focus(&mut self) {
         self.focused = true;
-        self.anchor = 0;
-        self.caret = self.len();
+        self.edit.select_all();
         self.caret_on = true;
     }
 
     pub fn blur(&mut self) {
         self.focused = false;
-        self.anchor = self.caret;
-    }
-
-    /// The selected characters (start, end).
-    pub fn selection(&self) -> (usize, usize) {
-        (self.anchor.min(self.caret), self.anchor.max(self.caret))
-    }
-
-    fn byte(&self, chars: usize) -> usize {
-        self.text.char_indices().nth(chars).map_or(self.text.len(), |(b, _)| b)
-    }
-
-    fn delete_selection(&mut self) -> bool {
-        let (s, e) = self.selection();
-        if s == e {
-            return false;
-        }
-        let (bs, be) = (self.byte(s), self.byte(e));
-        self.text.replace_range(bs..be, "");
-        self.caret = s;
-        self.anchor = s;
-        true
+        let c = self.edit.caret;
+        self.edit.place(c);
     }
 
     /// A key (`shift`: the selection grows with the caret keys).
     pub fn key(&mut self, key: EditKey, shift: bool) {
+        use crate::edit::Op;
         self.caret_on = true;
-        let n = self.len();
-        let moved = |f: &mut Field, to: usize| {
-            f.caret = to.min(n);
-            if !shift {
-                f.anchor = f.caret;
-            }
-        };
-        match key {
+        let op = match key {
             EditKey::Char(ch) => {
-                self.delete_selection();
-                let b = self.byte(self.caret);
-                self.text.insert(b, ch);
-                self.caret += 1;
-                self.anchor = self.caret;
-                self.edited = true;
-            }
-            EditKey::Backspace => {
-                if !self.delete_selection() && self.caret > 0 {
-                    let (bs, be) = (self.byte(self.caret - 1), self.byte(self.caret));
-                    self.text.replace_range(bs..be, "");
-                    self.caret -= 1;
-                    self.anchor = self.caret;
+                if self.edit.type_char(ch) {
+                    self.edited = true;
                 }
-                self.edited = true;
+                return;
             }
-            EditKey::Delete => {
-                if !self.delete_selection() && self.caret < n {
-                    let (bs, be) = (self.byte(self.caret), self.byte(self.caret + 1));
-                    self.text.replace_range(bs..be, "");
-                }
-                self.edited = true;
-            }
-            EditKey::Left => {
-                let (s, e) = self.selection();
-                let to = if !shift && s != e { s } else { self.caret.saturating_sub(1) };
-                moved(self, to);
-            }
-            EditKey::Right => {
-                let (s, e) = self.selection();
-                let to = if !shift && s != e { e } else { self.caret + 1 };
-                moved(self, to);
-            }
-            EditKey::Home => moved(self, 0),
-            EditKey::End => moved(self, n),
-            EditKey::SelectAll => {
-                self.anchor = 0;
-                self.caret = n;
-            }
+            EditKey::Backspace => Op::Backspace,
+            EditKey::Delete => Op::Delete,
+            EditKey::Left => Op::Left,
+            EditKey::Right => Op::Right,
+            EditKey::Home => Op::Home,
+            EditKey::End => Op::End,
+            EditKey::SelectAll => Op::SelectAll,
+        };
+        if self.edit.apply(op, shift) == crate::edit::Done::Changed {
+            self.edited = true;
         }
     }
 
-    /// Text pasted in (Ctrl+V): the first line only.
+    /// A key of Windows' edit box (`kit::field_key`: caret keys, words, Cut, Copy, Paste, Undo,
+    /// Ctrl+A, Shift+F10). `None`: not the field's.
+    pub fn edit_key<P>(&mut self, key: crate::kit::Key, mods: crate::kit::Mods) -> Option<Vec<crate::kit::Effect<P>>> {
+        self.caret_on = true;
+        let done = crate::kit::field_key(&mut self.edit, key, mods, &mut self.copied)?;
+        if done.changed {
+            self.edited = true;
+        }
+        Some(done.effects)
+    }
+
+    /// Entry `index` of the field's right-click menu chosen.
+    pub fn menu_chosen<P>(&mut self, index: usize) -> Vec<crate::kit::Effect<P>> {
+        self.caret_on = true;
+        let done = crate::kit::field_menu_chosen(&mut self.edit, index, &mut self.copied);
+        if done.changed {
+            self.edited = true;
+        }
+        done.effects
+    }
+
+    /// Text pasted in (Ctrl+V): the first line only (`edit::Edit::paste`).
     pub fn paste(&mut self, text: &str) {
-        for ch in text.lines().next().unwrap_or("").chars() {
-            self.key(EditKey::Char(ch), false);
+        if self.edit.paste(text) {
+            self.edited = true;
         }
     }
 
@@ -248,41 +220,22 @@ impl Field {
     /// the field has no keyboard: the start of the address shows).
     pub fn fit(&self, font: &crate::text::Font, width: i32) -> i32 {
         if !self.focused {
-            self.scroll.set(0);
+            self.edit.scroll.set(0);
             return 0;
         }
-        let room = (width - 1).max(1);
-        let at = font.measure(&self.text.chars().take(self.caret).collect::<String>());
-        let total = font.measure(&self.text);
-        let mut s = self.scroll.get();
-        if at - s > room {
-            s = at - room;
-        }
-        if at < s {
-            s = at;
-        }
-        let s = s.min((total - room).max(0)).max(0);
-        self.scroll.set(s);
-        s
+        self.edit.fit(&|s| font.measure(s), width)
     }
 
-    /// The caret goes to the character nearest `x` pixels into the text (as shown: `x` counts from
-    /// the text's first pixel in the box, the scroll is added here).
-    pub fn click(&mut self, font: &crate::text::Font, x: i32) {
-        let x = x + self.scroll.get();
-        let n = self.len();
-        let mut best = 0;
-        let mut best_d = i32::MAX;
-        for k in 0..=n {
-            let w = font.measure(&self.text.chars().take(k).collect::<String>());
-            let d = (w - x).abs();
-            if d < best_d {
-                best_d = d;
-                best = k;
-            }
-        }
-        self.caret = best;
-        self.anchor = best;
+    /// The character nearest `x` pixels into the text (as shown: `x` counts from the text's first
+    /// pixel in the box, the scroll is added here).
+    pub fn index_at(&self, font: &crate::text::Font, x: i32) -> usize {
+        self.edit.index_at(&|s| font.measure(s), x)
+    }
+
+    /// The caret goes to the character nearest `x` (Shift: the selection grows to there).
+    pub fn click(&mut self, font: &crate::text::Font, x: i32, shift: bool) {
+        let at = self.index_at(font, x);
+        self.edit.press(at, shift);
         self.caret_on = true;
     }
 }
@@ -438,7 +391,7 @@ mod tests {
         // A click counts from what shows.
         f.key(EditKey::End, false);
         f.fit(&font, 60);
-        f.click(&font, 59);
+        f.click(&font, 59, false);
         assert_eq!(f.caret, f.text.chars().count());
         f.show("My Computer");
         assert_eq!(f.scroll.get(), 0);

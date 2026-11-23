@@ -50,7 +50,7 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, VK_A, VK_APPS, VK_BACK, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
+    GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, VK_A, VK_APPS, VK_C, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END,
     VK_ESCAPE, VK_F2, VK_F10, VK_HOME, VK_LEFT, VK_SHIFT, VK_V, VK_X, VK_Z,
     VK_RETURN, VK_RIGHT, VK_UP,
 };
@@ -1526,6 +1526,86 @@ fn desktop_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_w
     Some(effect)
 }
 
+thread_local! {
+    /// The left button went down in the rename box: moving selects until it comes up.
+    static RENAME_DRAG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The right button went down on the rename box: its menu when it comes up.
+    static RENAME_RIGHT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The last left press in the rename box (tick count, window x, y), for a double click.
+    static RENAME_PRESS: std::cell::Cell<Option<(u32, i32, i32)>> = const { std::cell::Cell::new(None) };
+}
+
+/// What the desktop's own menus (`winkit::menu`) paint with, in the look and size given (kept
+/// while they stay the same).
+fn menu_look(era: bevel_core::theme::Era, scale: bevel_core::scale::Scale) -> Option<bevel_winkit::kit::Look> {
+    MENU_LOOK.with(|m| {
+        let mut m = m.borrow_mut();
+        let depth = bevel_winkit::look::colors();
+        if !m.as_ref().is_some_and(|(e, d, s, _)| *e == era && *d == depth && *s == scale) {
+            *m = Some((era, depth, scale, bevel_winkit::look::for_look(era, depth, scale)));
+        }
+        m.as_ref().map(|(_, _, _, l)| l.clone())
+    })
+}
+
+/// The rename box's right-click menu (brief 95): Windows' edit-box menu, by the look's own popup
+/// menu (`winkit::menu`, as the desktop's drop menu), at the pointer or (`keyboard`, Shift+F10)
+/// below the box; the chosen entry is carried out on the box, Cut and Copy putting their text on
+/// the clipboard, Paste taking the clipboard's text.
+fn rename_menu(hwnd: HWND, keyboard: bool) {
+    let has_text = bevel_winkit::clipboard::has_text();
+    let Some((menu, era, scale, below)) = with_state_value(hwnd, |st, font| {
+        let below = st.view.rename_caret_point(font);
+        (st.view.rename_menu(has_text).map(|m| (m, st.view.era, st.look.scale, below)), Vec::new())
+    })
+    .flatten() else {
+        return;
+    };
+    let Some(look) = menu_look(era, scale) else { return };
+    let mut p = POINT::default();
+    let at = match below.filter(|_| keyboard) {
+        Some((x, y)) => {
+            let mut r = RECT::default();
+            // SAFETY: our own window; a valid out-pointer.
+            unsafe { GetWindowRect(hwnd, &mut r) };
+            (r.left + scale.len(x), r.top + scale.len(y))
+        }
+        None => {
+            // SAFETY: a valid out-pointer.
+            unsafe { GetCursorPos(&mut p) };
+            (p.x, p.y)
+        }
+    };
+    let request = bevel_winkit::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above: None, titles: &[] };
+    if let bevel_winkit::menu::Outcome::Chosen(i) = bevel_winkit::menu::track(&look, request).outcome {
+        let effects = with_state_value(hwnd, |st, font| st.view.update(font, |v| v.rename_menu_chosen::<()>(i))).unwrap_or_default();
+        rename_effects(hwnd, &effects);
+    }
+}
+
+/// Carries out what a key or a menu entry of the rename box left to do: Cut and Copy put their
+/// text on the clipboard (the person asked for it; the text is never logged), Paste takes the
+/// clipboard's text, Shift+F10 opens the box's menu.
+fn rename_effects(hwnd: HWND, effects: &[bevel_core::kit::Effect<()>]) {
+    use bevel_core::kit::Effect;
+    for effect in effects {
+        match effect {
+            Effect::Copy => {
+                if let Some(text) = with_state_value(hwnd, |st, font| st.view.update(font, |v| v.rename_take_copy())).flatten() {
+                    bevel_winkit::clipboard::set_text(hwnd, &text);
+                }
+            }
+            Effect::Paste => {
+                if let Some(text) = bevel_winkit::clipboard::text() {
+                    with_state(hwnd, |st, font| st.view.update(font, |v| v.rename_paste(&text)).1);
+                }
+            }
+            Effect::FieldMenu => rename_menu(hwnd, true),
+            _ => {}
+        }
+    }
+}
+
 /// The right-button drag's menu at the pointer: what is chosen, or `None` for Cancel.
 fn right_drop_menu(
     hwnd: HWND,
@@ -1534,14 +1614,7 @@ fn right_drop_menu(
     default: bevel_core::drag::Effect,
     offered: &[bevel_core::drag::Effect],
 ) -> Option<bevel_core::drag::Effect> {
-    let look = MENU_LOOK.with(|m| {
-        let mut m = m.borrow_mut();
-        let depth = bevel_winkit::look::colors();
-        if !m.as_ref().is_some_and(|(e, d, s, _)| *e == era && *d == depth && *s == scale) {
-            *m = Some((era, depth, scale, bevel_winkit::look::for_look(era, depth, scale)));
-        }
-        m.as_ref().map(|(_, _, _, l)| l.clone())
-    })?;
+    let look = menu_look(era, scale)?;
     let (menu, does) = bevel_core::drag::drop_menu(era, default, offered);
     let mut p = POINT::default();
     // SAFETY: a valid out-pointer.
@@ -1783,21 +1856,24 @@ fn rename_key(hwnd: HWND, msg: u32, wparam: WPARAM) -> bool {
     let key = match (msg, wparam as u16) {
         (WM_KEYDOWN, VK_RETURN) => Some(EditKey::Enter),
         (WM_KEYDOWN, VK_ESCAPE) => Some(EditKey::Escape),
-        (WM_KEYDOWN, VK_BACK) => Some(EditKey::Backspace),
-        (WM_KEYDOWN, VK_DELETE) => Some(EditKey::Delete),
-        (WM_KEYDOWN, VK_LEFT) => Some(EditKey::Left),
-        (WM_KEYDOWN, VK_RIGHT) => Some(EditKey::Right),
-        (WM_KEYDOWN, VK_HOME) => Some(EditKey::Home),
-        (WM_KEYDOWN, VK_END) => Some(EditKey::End),
-        (WM_KEYDOWN, VK_A) if ctrl => Some(EditKey::SelectAll),
-        (WM_KEYDOWN, VK_V) if ctrl => {
-            if let Some(text) = bevel_winkit::kit::clipboard_text() {
-                with_state(hwnd, |st, font| st.view.update(font, |v| v.rename_paste(&text)).1);
-            }
+        // Shift+F10 (a system key) and the menu key: the box's menu (brief 95).
+        (WM_SYSKEYDOWN, 0x79) if shift => {
+            rename_menu(hwnd, true);
+            return true;
+        }
+        (WM_SYSKEYDOWN, _) => return false,
+        // Windows' edit box: caret keys, words, Cut, Copy, Paste, Undo, Ctrl+A (brief 95).
+        (WM_KEYDOWN, vk) => {
+            let mods = bevel_core::kit::Mods { shift, ctrl };
+            let effects = with_state_value(hwnd, |st, font| {
+                st.view.update(font, |v| v.rename_edit_key::<()>(bevel_core::kit::Key::Other(vk), mods).unwrap_or_default())
+            })
+            .unwrap_or_default();
+            rename_effects(hwnd, &effects);
             return true;
         }
         (WM_CHAR, c) if c >= 0x20 && c != 0x7F && !ctrl => char::from_u32(u32::from(c)).map(EditKey::Char),
-        (WM_KEYDOWN | WM_CHAR, _) => return true,
+        (WM_CHAR, _) => return true,
         _ => return false,
     };
     match key {
@@ -1903,13 +1979,38 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             // While a label is renamed: a left click in its box moves the caret; any other
             // click takes the name typed and goes on as usual (Windows did the same).
             if STATE.with(|c| c.borrow().as_ref().is_some_and(|st| st.view.renaming().is_some())) {
-                let inside = msg == WM_LBUTTONDOWN
-                    && with_state_value(hwnd, |st, font| {
-                        let (x, y) = point_1x(st, lparam);
-                        st.view.update(font, |v| v.rename_click(font, x, y))
-                    })
-                    .unwrap_or(false);
+                // In the box (brief 95): a press sets the caret (Shift: the selection grows), a
+                // drag selects, a double click selects a word, the right button keeps the
+                // rename and opens the box's menu when it comes up.
+                let (wx, wy) = crate::util::point(lparam);
+                let shift = wparam & MK_SHIFT != 0;
+                // SAFETY: plain queries.
+                let (now, dbl) = unsafe { (windows_sys::Win32::System::SystemInformation::GetTickCount(), GetDoubleClickTime()) };
+                let inside = with_state_value(hwnd, |st, font| {
+                    let (x, y) = point_1x(st, lparam);
+                    let on_box = st.view.rename_box(font).is_some_and(|(b, _)| b.contains(x, y));
+                    if !on_box || msg != WM_LBUTTONDOWN {
+                        return (on_box, Vec::new());
+                    }
+                    let last = RENAME_PRESS.get();
+                    let double = last.is_some_and(|(t, lx, ly)| now.wrapping_sub(t) <= dbl && (lx - wx).abs() <= 4 && (ly - wy).abs() <= 4);
+                    RENAME_PRESS.set(if double { None } else { Some((now, wx, wy)) });
+                    let dirty = if double {
+                        st.view.update(font, |v| v.rename_double_click(font, x, y)).1
+                    } else {
+                        st.view.update(font, |v| v.rename_press(font, x, y, shift)).1
+                    };
+                    (true, dirty)
+                })
+                .unwrap_or(false);
                 if inside {
+                    if msg == WM_LBUTTONDOWN {
+                        RENAME_DRAG.set(true);
+                        // SAFETY: our own window, while its button is down.
+                        unsafe { SetCapture(hwnd) };
+                    } else {
+                        RENAME_RIGHT.set(true);
+                    }
                     return 0;
                 }
                 finish_rename(hwnd, true, false);
@@ -1944,6 +2045,23 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
                 });
                 open_item(id);
             }
+            return 0;
+        }
+        // A drag in the rename box selects (brief 95).
+        WM_MOUSEMOVE if RENAME_DRAG.get() => {
+            with_state(hwnd, |st, font| {
+                let (x, y) = point_1x(st, lparam);
+                st.view.update(font, |v| v.rename_drag(font, x, y)).1
+            });
+            return 0;
+        }
+        WM_LBUTTONUP if RENAME_DRAG.replace(false) => {
+            // SAFETY: the capture this window took at the press in the box.
+            unsafe { ReleaseCapture() };
+            return 0;
+        }
+        WM_RBUTTONUP if RENAME_RIGHT.replace(false) => {
+            rename_menu(hwnd, false);
             return 0;
         }
         WM_MOUSEMOVE => {
@@ -2005,6 +2123,8 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
         }
         // Menus come from WM_RBUTTONUP and the keys below, not from Windows' own WM_CONTEXTMENU.
         WM_CONTEXTMENU => return 0,
+        // Shift+F10 on the rename box (brief 95).
+        WM_SYSKEYDOWN if rename_key(hwnd, msg, wparam) => return 0,
         WM_SYSKEYDOWN => {
             // SAFETY: a plain query of the keyboard's state for this message.
             let shift = unsafe { GetKeyState(i32::from(VK_SHIFT)) } < 0;

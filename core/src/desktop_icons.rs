@@ -415,10 +415,16 @@ pub use views::{Columns, DIVIDER_LEFT, DIVIDER_RIGHT, HEADER_H, HeaderPart, ROW_
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Rename {
     id: String,
+    /// The text being edited: Windows' edit box (`edit::Edit`, brief 95: keys, selection, words,
+    /// Cut, Copy, Paste, Undo). `text`, `caret` and `anchor` are its copy for drawing the
+    /// wrapped lines (`sync` after every change).
+    edit: crate::edit::Edit,
     text: Vec<char>,
     /// Where the caret is, and the other end of the selection (the same: nothing selected).
     caret: usize,
     anchor: usize,
+    /// The text of the last Cut or Copy, for the clipboard.
+    copied: Option<String>,
     caret_on: bool,
     /// The extension warning is open (`rename_warning`): the box shows the name typed without
     /// selection or caret (its edit control lost the keyboard) and takes no keys.
@@ -452,6 +458,24 @@ pub enum RenameEnd {
     Rename { id: String, name: String },
     /// Nothing to do (Esc, the old name, an empty one).
     Unchanged,
+}
+
+impl Rename {
+    fn new(id: String, name: &str) -> Rename {
+        let mut edit = crate::edit::Edit::new(name);
+        edit.select_all();
+        let mut r = Rename { id, edit, text: Vec::new(), caret: 0, anchor: 0, copied: None, caret_on: true, asking: false, declined: false };
+        r.sync();
+        r
+    }
+
+    /// The drawing copy follows the edit box.
+    fn sync(&mut self) {
+        self.text = self.edit.text.chars().collect();
+        self.caret = self.edit.caret;
+        self.anchor = self.edit.anchor;
+        self.caret_on = true;
+    }
 }
 
 /// A number for an item's id (FNV-1a), for `update` to see another item at the same index.
@@ -635,9 +659,8 @@ impl Desktop {
     /// selected. False if it cannot be renamed.
     pub fn begin_rename(&mut self, i: usize) -> bool {
         let Some(item) = self.items.get(i).filter(|item| item.system_kind().is_none()) else { return false };
-        let text: Vec<char> = item.name.chars().collect();
         self.gesture = None;
-        self.rename = Some(Rename { id: item.id.clone(), caret: text.len(), anchor: 0, text, caret_on: true, asking: false, declined: false });
+        self.rename = Some(Rename::new(item.id.clone(), &item.name));
         true
     }
 
@@ -672,13 +695,12 @@ impl Desktop {
         let old = self.renaming().map(|i| self.items[i].name.clone());
         let Some(r) = self.rename.as_mut() else { return };
         if let Some(old) = old.filter(|_| !keep_typed) {
-            r.text = old.chars().collect();
+            r.edit.set(&old);
         }
         r.asking = false;
         r.declined = true;
-        r.anchor = 0;
-        r.caret = r.text.len();
-        r.caret_on = true;
+        r.edit.select_all();
+        r.sync();
     }
 
     /// The icon whose label is being renamed.
@@ -709,62 +731,95 @@ impl Desktop {
             EditKey::Escape => return self.rename.take().map(|_| RenameEnd::Unchanged),
             _ => {}
         }
+        use crate::edit::Op;
         let r = self.rename.as_mut()?;
-        r.caret_on = true;
-        let (lo, hi) = (r.caret.min(r.anchor), r.caret.max(r.anchor));
-        let n = r.text.len();
-        let caret = r.caret;
-        let move_to = |r: &mut Rename, to: usize| {
-            r.caret = to.min(r.text.len());
-            if !shift {
-                r.anchor = r.caret;
-            }
-        };
-        match key {
-            EditKey::Enter | EditKey::Escape => {}
+        let op = match key {
+            EditKey::Enter | EditKey::Escape => return None,
             EditKey::Char(c) => {
-                if c.is_control() {
-                    return None;
-                }
-                r.text.splice(lo..hi, [c]);
-                r.caret = lo + 1;
-                r.anchor = r.caret;
+                r.edit.type_char(c);
+                r.sync();
+                return None;
             }
-            EditKey::Backspace | EditKey::Delete if lo != hi => {
-                r.text.drain(lo..hi);
-                r.caret = lo;
-                r.anchor = lo;
-            }
-            EditKey::Backspace if lo > 0 => {
-                r.text.remove(lo - 1);
-                r.caret = lo - 1;
-                r.anchor = r.caret;
-            }
-            EditKey::Delete if lo < n => {
-                r.text.remove(lo);
-            }
-            EditKey::Backspace | EditKey::Delete => {}
-            EditKey::Left if !shift && lo != hi => move_to(r, lo),
-            EditKey::Right if !shift && lo != hi => move_to(r, hi),
-            EditKey::Left => move_to(r, caret.saturating_sub(1)),
-            EditKey::Right => move_to(r, caret + 1),
-            EditKey::Home => move_to(r, 0),
-            EditKey::End => move_to(r, n),
-            EditKey::SelectAll => {
-                r.anchor = 0;
-                r.caret = n;
-            }
-        }
+            EditKey::Backspace => Op::Backspace,
+            EditKey::Delete => Op::Delete,
+            EditKey::Left => Op::Left,
+            EditKey::Right => Op::Right,
+            EditKey::Home => Op::Home,
+            EditKey::End => Op::End,
+            EditKey::SelectAll => Op::SelectAll,
+        };
+        r.edit.apply(op, shift);
+        r.sync();
         None
     }
 
-    /// Text from the clipboard, typed in place of the selection (its first line only: a name
-    /// has one).
-    pub fn rename_paste(&mut self, text: &str) {
-        let line = text.lines().next().unwrap_or("");
-        for c in line.chars() {
-            self.rename_key(EditKey::Char(c), false);
+    /// A key of Windows' edit box while renaming (`kit::field_key`: the caret keys, words, Cut,
+    /// Copy, Paste, Undo, Ctrl+A, Shift+F10; brief 95). `None`: not the box's key (Enter and Esc
+    /// go through `rename_key`). Nothing while the extension warning is open.
+    pub fn rename_edit_key<P>(&mut self, key: crate::kit::Key, mods: crate::kit::Mods) -> Option<Vec<crate::kit::Effect<P>>> {
+        if self.is_asking() {
+            return Some(Vec::new());
         }
+        let r = self.rename.as_mut()?;
+        let done = crate::kit::field_key(&mut r.edit, key, mods, &mut r.copied)?;
+        r.sync();
+        Some(done.effects)
+    }
+
+    /// The text of the last Cut or Copy in the rename box, for the clipboard.
+    pub fn rename_take_copy(&mut self) -> Option<String> {
+        self.rename.as_mut().and_then(|r| r.copied.take())
+    }
+
+    /// The rename box's right-click menu (`edit::Edit::menu`), if a label is being renamed.
+    pub fn rename_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        self.rename.as_ref().filter(|r| !r.asking).map(|r| r.edit.menu(clipboard_has_text))
+    }
+
+    /// Entry `index` of the rename box's menu chosen.
+    pub fn rename_menu_chosen<P>(&mut self, index: usize) -> Vec<crate::kit::Effect<P>> {
+        let Some(r) = self.rename.as_mut() else { return Vec::new() };
+        let done = crate::kit::field_menu_chosen(&mut r.edit, index, &mut r.copied);
+        r.sync();
+        done.effects
+    }
+
+    /// Where the rename box's menu opens from the keyboard: below the box (desktop pixels at 1×).
+    pub fn rename_caret_point(&self, font: &Font) -> Option<(i32, i32)> {
+        let (b, starts) = self.rename_box(font)?;
+        Some((starts.first().map_or(b.x, |s| s.0), b.bottom()))
+    }
+
+    /// Text from the clipboard in place of the selection (its first line only: a name has one).
+    /// The characters a name cannot hold are not refused here, as they are not when typed: the
+    /// name is checked when it is taken (`rename_warning::bad_name`).
+    pub fn rename_paste(&mut self, text: &str) {
+        if self.is_asking() {
+            return;
+        }
+        if let Some(r) = self.rename.as_mut() {
+            r.edit.paste(text);
+            r.sync();
+        }
+    }
+
+    /// The mouse dragged to (x, y) while renaming: the selection runs from where it was pressed.
+    pub fn rename_drag(&mut self, font: &Font, x: i32, y: i32) -> bool {
+        let Some(at) = self.rename_index_at(font, x, y) else { return false };
+        let Some(r) = self.rename.as_mut() else { return false };
+        let before = (r.caret, r.anchor);
+        r.edit.drag(at);
+        r.sync();
+        before != (r.caret, r.anchor)
+    }
+
+    /// A double click in the rename box: the word there selected.
+    pub fn rename_double_click(&mut self, font: &Font, x: i32, y: i32) -> bool {
+        let Some(at) = self.rename_index_at(font, x, y) else { return false };
+        let Some(r) = self.rename.as_mut() else { return false };
+        r.edit.double_click(at);
+        r.sync();
+        true
     }
 
     /// Renaming ends with the name typed (Enter, or a click elsewhere, as in Windows).
@@ -842,13 +897,28 @@ impl Desktop {
     /// A click at (x, y) while renaming: in the box it moves the caret there and `true`;
     /// elsewhere `false` (the platform then ends renaming, as a click elsewhere did).
     pub fn rename_click(&mut self, font: &Font, x: i32, y: i32) -> bool {
-        let Some((b, starts)) = self.rename_box(font) else { return false };
+        self.rename_press(font, x, y, false)
+    }
+
+    /// A press at (x, y) while renaming: in the box it moves the caret there (`extend`, Shift: the
+    /// selection grows to there) and `true`; elsewhere `false`.
+    pub fn rename_press(&mut self, font: &Font, x: i32, y: i32, extend: bool) -> bool {
+        let Some((b, _)) = self.rename_box(font) else { return false };
         if !b.contains(x, y) {
             return false;
         }
-        let text = self.rename.as_ref().map(|r| r.text.clone()).unwrap_or_default();
-        let lines = self.edit_lines(font, &text);
+        let Some(at) = self.rename_index_at(font, x, y) else { return false };
         let Some(r) = self.rename.as_mut() else { return false };
+        r.edit.press(at, extend);
+        r.sync();
+        true
+    }
+
+    /// The character of the rename box nearest (x, y) (the wrapped lines as drawn).
+    fn rename_index_at(&self, font: &Font, x: i32, y: i32) -> Option<usize> {
+        let (_, starts) = self.rename_box(font)?;
+        let r = self.rename.as_ref()?;
+        let lines = self.edit_lines(font, &r.text);
         let k = (starts.iter().rposition(|&(_, ty)| y >= ty)).unwrap_or(0).min(lines.len() - 1);
         let (a, end) = lines[k];
         let lx = starts[k].0;
@@ -863,10 +933,7 @@ impl Desktop {
         if k + 1 < lines.len() && best == end {
             best = end - 1;
         }
-        r.caret = best;
-        r.anchor = best;
-        r.caret_on = true;
-        true
+        Some(best)
     }
 
     /// Changes the look: its own icons and their order (the owner's items stay).

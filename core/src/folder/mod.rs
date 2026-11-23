@@ -67,6 +67,9 @@ const VK_F2: u16 = 0x71;
 const VK_F5: u16 = 0x74;
 const VK_F10: u16 = 0x79;
 const VK_F6: u16 = 0x75;
+const VK_L: u16 = 0x4C;
+/// The value a press in the rename box grabs the list with: its drag selects text (brief 95).
+const RENAME_DRAG: i32 = i32::MIN;
 const VK_ADD: u16 = 0x6B;
 const VK_SUBTRACT: u16 = 0x6D;
 const VK_MULTIPLY: u16 = 0x6A;
@@ -1003,6 +1006,12 @@ impl FolderWindow {
             Some(id) => self.tree.find(id).map(|i| &self.tree.nodes[i]),
             None => self.tree.nodes.get(self.tree.sel),
         }
+    }
+
+    /// Whether (x, y) is on the rename box of a label being renamed.
+    fn rename_hit(&self, x: i32, y: i32) -> bool {
+        self.view.renaming().is_some()
+            && self.font().and_then(|font| self.view.rename_box(&font)).is_some_and(|(b, _)| b.contains(x, y))
     }
 
     /// Tab and F6: the keyboard goes from the tree to the icons, (98 and 2000) to the address bar,
@@ -2011,31 +2020,24 @@ impl Form for FolderWindow {
 
     fn key(&mut self, key: Key, mods: Mods) -> Option<Vec<Effect<Part>>> {
         if self.view.renaming().is_some() {
-            let edit = match key {
+            match key {
                 Key::Enter => return Some(vec![Effect::Activate(Part::RenameEnd(true))]),
-                Key::Escape => Some(EditKey::Escape),
-                Key::Left => Some(EditKey::Left),
-                Key::Right => Some(EditKey::Right),
-                Key::Home => Some(EditKey::Home),
-                Key::End => Some(EditKey::End),
-                Key::Delete => Some(EditKey::Delete),
-                Key::Other(VK_BACK) => Some(EditKey::Backspace),
-                Key::Other(0x41) if mods.ctrl => Some(EditKey::SelectAll),
-                Key::Other(0x56) if mods.ctrl => return Some(vec![Effect::Paste]),
-                _ => None,
-            };
-            if let Some(edit) = edit {
-                self.view.rename_key(edit, mods.shift);
+                Key::Escape => {
+                    self.view.rename_key(EditKey::Escape, false);
+                    return Some(Vec::new());
+                }
+                _ => {}
             }
-            return Some(Vec::new());
+            // Windows' edit box: caret keys, words, Cut, Copy, Paste, Undo, Ctrl+A, Shift+F10
+            // (brief 95); every other key is swallowed while renaming, as before.
+            return Some(self.view.rename_edit_key(key, mods).unwrap_or_default());
         }
         let command = |c: Command| Some(vec![Effect::Activate(Part::Command(c))]);
         if let Some(effects) = self.list_key(key) {
             return Some(effects);
         }
         if self.field.focused {
-            use address::EditKey as A;
-            let edit = match key {
+            match key {
                 Key::Enter => return Some(vec![Effect::Activate(Part::Go)]),
                 Key::Escape => {
                     // Windows gave the place's address back and kept the field.
@@ -2050,19 +2052,23 @@ impl Form for FolderWindow {
                 }
                 Key::F4 => return Some(vec![Effect::Activate(Part::AddressButton)]),
                 Key::Down | Key::Up => return Some(vec![Effect::Activate(Part::AddressButton)]),
-                Key::Left => Some(A::Left),
-                Key::Right => Some(A::Right),
-                Key::Home => Some(A::Home),
-                Key::End => Some(A::End),
-                Key::Delete => Some(A::Delete),
-                Key::Other(VK_BACK) => Some(A::Backspace),
-                Key::Other(0x41) if mods.ctrl => Some(A::SelectAll),
-                Key::Other(0x56) if mods.ctrl => return Some(vec![Effect::Paste]),
-                _ => None,
-            };
-            if let Some(e) = edit {
-                self.field.key(e, mods.shift);
+                // Ctrl+L: the field selected whole (the owner's addition, brief 95).
+                Key::Other(VK_L) if mods.ctrl && !mods.shift => {
+                    self.field.focus();
+                    return Some(Vec::new());
+                }
+                _ => {}
             }
+            // Windows' edit box: the caret keys, words, Cut, Copy, Paste, Undo, Ctrl+A,
+            // Shift+F10 (brief 95).
+            return Some(self.field.edit_key(key, mods).unwrap_or_default());
+        }
+        // Ctrl+L selects the address field whole from anywhere in the window (98 and 2000 looks;
+        // the old Windows had nothing on it: the owner's addition, brief 95).
+        if self.explorer() && key == Key::Other(VK_L) && mods.ctrl && !mods.shift && self.view.renaming().is_none() {
+            self.tree_focus = false;
+            self.list = None;
+            self.field.focus();
             return Some(Vec::new());
         }
         if (self.explorer() || self.tree_shown) && matches!(key, Key::Tab | Key::Other(VK_F6)) {
@@ -2200,12 +2206,15 @@ impl Form for FolderWindow {
                 let Some(font) = self.font() else { return Press::Done };
                 self.list = None;
                 if self.field.focused {
+                    // A click sets the caret (Shift: the selection grows); held, a drag selects.
                     let (tx, _) = self.chrome.address_text_at();
-                    self.field.click(&font, x - tx);
+                    self.field.click(&font, x - tx, self.mods.shift);
+                    Press::Grab(Part::Address, 0)
                 } else {
+                    // The first click from elsewhere selects the whole text (survey part 3).
                     self.field.focus();
+                    Press::Done
                 }
-                Press::Done
             }
             Some(Part::VThumb) => {
                 self.grab_at = (x, y);
@@ -2287,8 +2296,8 @@ impl Form for FolderWindow {
                 let Some(font) = self.font() else { return Press::Done };
                 let mods = IconMods { ctrl: self.mods.ctrl, shift: self.mods.shift };
                 if self.view.renaming().is_some() {
-                    if self.view.rename_click(&font, x, y) {
-                        return Press::Done;
+                    if self.view.rename_press(&font, x, y, self.mods.shift) {
+                        return Press::Grab(Part::List, RENAME_DRAG);
                     }
                     // The rename ends, and the press then goes on as a click there
                     // (`click_after_rename`, once the platform has taken the name).
@@ -2319,6 +2328,16 @@ impl Form for FolderWindow {
     fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
         let font = self.font()?;
         match self.hit(x, y) {
+            // A word selected; an address without spaces is one word (survey part 3).
+            Some(Part::Address) if self.field.focused => {
+                let (tx, _) = self.chrome.address_text_at();
+                let at = self.field.index_at(&font, x - tx);
+                self.field.edit.double_click(at);
+                self.field.caret_on = true;
+                Some(Vec::new())
+            }
+            // In the rename box: a word selected (brief 95).
+            Some(Part::List) if self.view.renaming().is_some() && self.view.rename_double_click(&font, x, y) => Some(Vec::new()),
             // Windows makes a double-click of two presses close in time and place, whatever
             // they land on; Explorer opened only when both landed on the same item (a second
             // item clicked soon after the first is only selected: the Reference PCs). A
@@ -2365,6 +2384,15 @@ impl Form for FolderWindow {
 
     fn drag(&mut self, part: Part, _grab_y: i32, value: i32, x: i32, y: i32) -> bool {
         match part {
+            // Dragging over the address selects (survey part 3).
+            Part::Address => {
+                let Some(font) = self.font() else { return false };
+                let (tx, _) = self.chrome.address_text_at();
+                let before = (self.field.caret, self.field.anchor);
+                let at = self.field.index_at(&font, x - tx);
+                self.field.edit.drag(at);
+                before != (self.field.caret, self.field.anchor)
+            }
             Part::Divider(_) => {
                 let before = self.divider_drag;
                 let columns = self.view.columns.clone();
@@ -2409,6 +2437,11 @@ impl Form for FolderWindow {
                 self.fit_tree();
                 self.tree.scroll_x != before
             }
+            // Dragging in the rename box selects (brief 95).
+            Part::List if value == RENAME_DRAG => match self.font() {
+                Some(font) if self.view.renaming().is_some() => self.view.rename_drag(&font, x, y),
+                _ => false,
+            },
             Part::List => {
                 // Moved off the press: a drag, not a slow click.
                 if self.slow_rename.as_ref().is_some_and(|&(_, px, py)| (px - x).abs() > 2 || (py - y).abs() > 2) {
@@ -2480,7 +2513,9 @@ impl Form for FolderWindow {
             }
             return Vec::new();
         }
+        // A drag in the rename box was only a selection.
         if part == Part::List
+            && self.view.renaming().is_none()
             && let Some(font) = self.font()
         {
             self.view.release(&font, x, y);
@@ -2498,6 +2533,11 @@ impl Form for FolderWindow {
             return Vec::new();
         }
         let part = self.hit(x, y);
+        // On the rename box the right button is the box's own: it keeps the rename and its
+        // selection, and opens its menu when it comes up (brief 95).
+        if part == Some(Part::List) && self.rename_hit(x, y) {
+            return if down { Vec::new() } else { vec![Effect::FieldMenu] };
+        }
         if !down {
             // No right-button drag came of the press.
             self.view.cancel();
@@ -2520,11 +2560,18 @@ impl Form for FolderWindow {
                     self.list = None;
                     self.tree_focus = true;
                 }
+                // The address field takes the keyboard; a selection it has stays (brief 95).
+                Some(Part::Address) if !self.field.focused => {
+                    self.list = None;
+                    self.tree_focus = false;
+                    self.field.focus();
+                }
                 _ => {}
             }
             return Vec::new();
         }
         match part {
+            Some(Part::Address) if self.field.focused => vec![Effect::FieldMenu],
             Some(Part::List) => {
                 self.menu_at = (x, y);
                 vec![Effect::Activate(if self.right_hit { Part::ItemMenu } else { Part::BackgroundMenu })]
@@ -2580,6 +2627,34 @@ impl Form for FolderWindow {
         } else {
             self.view.rename_paste(text);
         }
+    }
+
+    fn take_copy(&mut self) -> Option<String> {
+        self.field.copied.take().or_else(|| self.view.rename_take_copy())
+    }
+
+    fn field_menu(&self, clipboard_has_text: bool) -> Option<crate::paint::Menu> {
+        if self.field.focused {
+            Some(self.field.menu(clipboard_has_text))
+        } else {
+            self.view.rename_menu(clipboard_has_text)
+        }
+    }
+
+    fn field_menu_at(&self) -> Option<(i32, i32)> {
+        let font = self.font()?;
+        if self.field.focused {
+            // Below the caret in the address box (Shift+F10, as Windows' edit box opens it).
+            let (tx, ty) = self.chrome.address_text_at();
+            let caret = font.measure(&self.field.text.chars().take(self.field.caret).collect::<String>()) - self.field.scroll.get();
+            Some((tx + caret, ty + font.height))
+        } else {
+            self.view.rename_caret_point(&font)
+        }
+    }
+
+    fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
+        if self.field.focused { self.field.menu_chosen(index) } else { self.view.rename_menu_chosen(index) }
     }
 
     fn has_caret(&self) -> bool {

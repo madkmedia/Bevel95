@@ -33,10 +33,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     BeginPaint, CombineRgn, CreateBitmap, CreateRectRgn, DeleteObject, EndPaint, GetMonitorInfoW, InvalidateRect,
     MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, RGN_OR, SetWindowRgn,
 };
-use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
-use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     EnableWindow, GetKeyState, ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F4,
@@ -346,6 +343,8 @@ impl<H: Hosted> Host<H> {
                 }
                 (Some(0), Vec::new(), notches != 0)
             }
+            // The menu key opens the focused text field's menu (brief 95).
+            WM_KEYDOWN if wparam == 0x5D && form.field_menu(false).is_some() => (Some(0), vec![Effect::FieldMenu], true),
             WM_KEYDOWN => (Some(0), self.ctl.key(form, key_of(wparam as u16), mods()), true),
             WM_CHAR => {
                 let effects = char::from_u32(wparam as u32).map(|ch| form.typed(ch)).unwrap_or_default();
@@ -355,6 +354,10 @@ impl<H: Hosted> Host<H> {
             WM_SYSCHAR => {
                 let effects = char::from_u32(wparam as u32).map(|ch| self.ctl.access(form, ch)).unwrap_or_default();
                 (Some(0), effects, true)
+            }
+            // Shift+F10 (a system key) opens the focused text field's menu (brief 95).
+            WM_SYSKEYDOWN if wparam == 0x79 && mods().shift && form.field_menu(false).is_some() => {
+                (Some(0), vec![Effect::FieldMenu], true)
             }
             WM_SYSKEYDOWN => {
                 let (handled, effects) = self.ctl.alt_key_with_mods(form, key_of(wparam as u16), mods());
@@ -1023,29 +1026,9 @@ fn mods() -> Mods {
     unsafe { Mods { shift: GetKeyState(i32::from(VK_SHIFT)) < 0, ctrl: GetKeyState(i32::from(VK_CONTROL)) < 0 } }
 }
 
-/// The clipboard's text, if it has any.
+/// The clipboard's text, if it has any (`crate::clipboard::text`: a few tries, never in tests).
 pub fn clipboard_text() -> Option<String> {
-    // SAFETY: the clipboard is opened and closed here; the locked memory is read as the
-    // null-terminated UTF-16 text Windows documents for CF_UNICODETEXT.
-    unsafe {
-        if OpenClipboard(null_mut()) == 0 {
-            return None;
-        }
-        let handle = GetClipboardData(u32::from(CF_UNICODETEXT));
-        let text = if handle.is_null() {
-            None
-        } else {
-            let p = GlobalLock(handle) as *const u16;
-            let text = (!p.is_null()).then(|| {
-                let len = (0..).take_while(|&i| *p.add(i) != 0).count();
-                String::from_utf16_lossy(std::slice::from_raw_parts(p, len))
-            });
-            GlobalUnlock(handle);
-            text
-        };
-        CloseClipboard();
-        text
-    }
+    crate::clipboard::text()
 }
 
 thread_local! {
@@ -1107,9 +1090,54 @@ fn carry_out<H: Hosted>(hwnd: HWND, later: Todo<H>) {
                     update::<H>(|h| h.form_mut().paste(&text));
                 }
             }
+            // Cut or Copy: the person asked for it (brief 95); the text is never logged.
+            Later::Effect(Effect::Copy) => {
+                if let Some(text) = with::<H, _>(|h| h.form_mut().take_copy()).flatten() {
+                    crate::clipboard::set_text(hwnd, &text);
+                }
+            }
+            Later::Effect(Effect::FieldMenu) => field_menu::<H>(hwnd),
             Later::Effect(Effect::Activate(part)) => H::activate(part),
             Later::Effect(Effect::Close) => H::request_close(),
         }
+    }
+}
+
+/// Opens the focused text field's right-click menu (brief 95): Windows' edit-box menu drawn by the
+/// look's own popup menu (`menu::track`), at the pointer, or below the field when opened from the
+/// keyboard (`Form::field_menu_at`); the chosen entry goes back to the form, and what it leaves
+/// to do (Copy, Paste) is carried out here.
+fn field_menu<H: Hosted>(hwnd: HWND) {
+    let has_text = crate::clipboard::has_text();
+    let Some((menu, at, look, origin)) =
+        lift::<H, _>(|host| Some((host.hosted.form().field_menu(has_text)?, host.hosted.form().field_menu_at(), host.look.clone(), host.origin)))
+            .flatten()
+    else {
+        return;
+    };
+    let mut p = windows_sys::Win32::Foundation::POINT::default();
+    let at = match at {
+        Some((x, y)) => {
+            let mut r = RECT::default();
+            // SAFETY: our own window.
+            unsafe { GetWindowRect(hwnd, &mut r) };
+            (r.left + look.scale.len(origin.0 + x), r.top + look.scale.len(origin.1 + y))
+        }
+        None => {
+            // SAFETY: a plain query.
+            unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p) };
+            (p.x, p.y)
+        }
+    };
+    let request = crate::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above: None, titles: &[] };
+    let ended = crate::menu::track(&look, request);
+    if let crate::menu::Outcome::Chosen(index) = ended.outcome {
+        let effects = with::<H, _>(|h| h.form_mut().field_menu_chosen(index)).unwrap_or_default();
+        update::<H>(|_| {});
+        carry_out::<H>(hwnd, effects.into_iter().map(Later::Effect).collect());
+    }
+    if let Some(msg) = ended.pending {
+        crate::menu::dispatch(&msg);
     }
 }
 

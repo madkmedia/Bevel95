@@ -18,6 +18,7 @@ pub mod config;
 pub mod datetime;
 pub mod delete_confirm;
 pub mod desktop;
+pub mod edit;
 pub mod desktop_art;
 pub mod desktop_icons;
 pub mod dialog;
