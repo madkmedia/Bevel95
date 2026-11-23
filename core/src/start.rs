@@ -378,9 +378,86 @@ pub fn layout_root(
     layout
 }
 
+/// The room a menu opened from the bar has: the screen from its top down to `top` (the top edge of
+/// the Start button, the "»" or a task button: the bar's top), never over the bar (brief 94; the bar
+/// is always at the screen's bottom).
+pub fn room_above(screen: crate::fb::Rect, top: i32) -> crate::fb::Rect {
+    crate::fb::Rect::new(screen.x, screen.y, screen.w, (top - screen.y).clamp(0, screen.h))
+}
+
+/// The Start menu laid out and placed as the bar opens it from the Start button `button` (screen
+/// pixels at `scale`, on `screen`): laid out for the room above the button (`room_above`), so a
+/// menu taller than that goes on in the look's way (98 scrolls under its fixed banner) and ends on
+/// top of the bar, the button showing, as the Reference PC showed it; then placed by
+/// `layout::place_start_menu`. One piece of code for the bar, its test menu and the golden pictures
+/// (brief 94). Returns the layout (1×) and the menu's left and top on the screen.
+#[allow(clippy::too_many_arguments)]
+pub fn place_start(
+    theme: &crate::theme::Theme,
+    fonts: &crate::text::Fonts,
+    era: Era,
+    menu: &Menu,
+    style: crate::paint::MenuStyle,
+    long: crate::paint::Long,
+    offset: i32,
+    scale: crate::scale::Scale,
+    screen: crate::fb::Rect,
+    button: crate::fb::Rect,
+) -> (crate::paint::MenuLayout, i32, i32) {
+    let room = room_above(screen, button.y);
+    let layout = layout_root(theme, fonts, era, menu, style, long, offset, scale, room);
+    let (x, y) = crate::layout::place_start_menu(button, scale.len(layout.width), scale.len(layout.height), room);
+    (layout, x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The case that started brief 91: Windows 98's Start menu on a 768-row screen at Size 2 (384
+    /// rows in the look's pixels). It does not fit above the Start button, so it scrolls, and it
+    /// ends on top of the bar: the button shows (brief 94).
+    #[test]
+    fn a_tall_start_menu_keeps_to_the_room_above_the_bar() {
+        use crate::fb::Rect;
+        use crate::paint::MenuStyle;
+        use crate::scale::Scale;
+        use crate::theme::WIN98;
+        let r = crate::text::Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).unwrap();
+        let b = crate::text::Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap();
+        let f = crate::text::Fonts { regular: &r, bold: &b };
+        let menu = menu(Era::Win98, crate::config::StartOptions::default(), "Admin", |_| None);
+        let screen = Rect::new(0, 0, 683, 384);
+        let on_bar = crate::layout::start_button(&WIN98, &f);
+        let button = Rect::new(on_bar.x, screen.h - WIN98.bar.height + on_bar.y, on_bar.w, on_bar.h);
+        let long = long_rule(Era::Win98, LongKind::Other, false);
+        // On the whole screen it would fit (it did, and was pushed over the button).
+        let whole = layout_root(&WIN98, &f, Era::Win98, &menu, MenuStyle::Start, long, 0, Scale::whole(1), screen);
+        assert!(whole.scroll.is_none(), "the menu fits the whole screen");
+        assert!(whole.height > button.y, "but it is taller than the room above the button");
+        let (layout, x, y) = place_start(&WIN98, &f, Era::Win98, &menu, MenuStyle::Start, long, 0, Scale::whole(1), screen, button);
+        assert!(layout.scroll.is_some(), "it scrolls");
+        assert_eq!(y + layout.height, button.y, "it ends on top of the button");
+        assert!(y >= 0);
+        assert_eq!(x, button.x);
+        // A Start menu that fits is laid out and placed as before.
+        let big = Rect::new(0, 0, 800, 600);
+        let b = Rect::new(on_bar.x, 600 - WIN98.bar.height + on_bar.y, on_bar.w, on_bar.h);
+        let (l, _, y) = place_start(&WIN98, &f, Era::Win98, &menu, MenuStyle::Start, long, 0, Scale::whole(1), big, b);
+        let before = crate::paint::layout_menu(&WIN98, &f, &menu, MenuStyle::Start, 600);
+        assert!(l.scroll.is_none() && l.columns.len() == 1);
+        assert_eq!((l.width, l.height, &l.rects), (before.width, before.height, &before.rects));
+        assert_eq!(y + l.height, b.y);
+    }
+
+    #[test]
+    fn the_room_above_is_never_below_the_screen() {
+        use crate::fb::Rect;
+        let s = Rect::new(0, 100, 640, 480);
+        assert_eq!(room_above(s, 552), Rect::new(0, 100, 640, 452));
+        assert_eq!(room_above(s, 50), Rect::new(0, 100, 640, 0));
+        assert_eq!(room_above(s, 900), s);
+    }
 
     /// Each look's own way with a menu longer than the screen (survey part 1).
     #[test]

@@ -393,7 +393,7 @@ Measured on the Reference PCs (`private/probes/start-long/survey.md`, part 1; ca
 | Pace | | first step 150 ms (measured 100..200), then one entry every 300 ms | 20 px every 60 ms, the last a part step |
 | Scrolled rows | | rows are not moved by the top strip: it covers the part of a row under it | the same |
 | Where entries end (brief 92) | | at the inner bottom, the frame's 3 rows under it | one row lower: entries reach the row just above the 2 px bottom border (the flat strip's last row; found by the cases at the end, which were 1 row off) |
-| The Start menu itself too tall (brief 92) | PROVISIONAL: scrolls as 98's does (no PC measured) | scrolls; the **banner stays fixed** and only the entries' part moves; the strips span the entries' part only (capture `win98-truecolor-startdrag-800x600-startmenu-with-dropped-msdosprompt-on-top-scrolls.png`: menu at (2, 229), 168×347; banner x 5..25; bottom strip x 26..166, y 561..572; arrow x 93..97, rows 567..569) | PROVISIONAL: as 98's |
+| The Start menu itself too tall (brief 92) | PROVISIONAL: scrolls as 98's does (no PC measured) | scrolls within the room above the Start button and ends on top of it, the button showing (brief 94); the **banner stays fixed** and only the entries' part moves; the strips span the entries' part only (capture `win98-truecolor-startdrag-800x600-startmenu-with-dropped-msdosprompt-on-top-scrolls.png`: menu at (2, 229), 168×347; banner x 5..25; bottom strip x 26..166, y 561..572; arrow x 93..97, rows 567..569) | PROVISIONAL: as 98's |
 
 Compared exactly: Windows 98's 37 entries at 800x600 scrolled to the top, Windows 95's 50 entries
 at 800x600 in two columns (`own-win98-long-programs-37`, `own-win95-long-programs-50`; the

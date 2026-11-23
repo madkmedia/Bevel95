@@ -164,6 +164,9 @@ enum At {
     Point(i32, i32),
     /// The speaker's menu, for a click at a point: where that look's Windows opens it.
     Speaker(Era, i32, i32),
+    /// A task button's list of windows, from the button's top-left corner (screen pixels): as
+    /// `Point`, within the room above the bar (brief 94).
+    TaskButton(i32, i32),
     /// The Start menu, on top of the Start button (screen pixels).
     StartButton(Rect),
     /// Upward from a point (Bevel95's icon on Windows' taskbar: `tray_icon::place_menu`).
@@ -253,7 +256,7 @@ pub fn open_window_list(bar: HWND, index: usize) {
     .flatten() else {
         return;
     };
-    open_root(bar, Kind::Windows(windows), menu, MenuStyle::Cascade, At::Point(x, y));
+    open_root(bar, Kind::Windows(windows), menu, MenuStyle::Cascade, At::TaskButton(x, y));
 }
 
 /// Opens the right-click menu of task button `index` at screen point (x, y): its window's
@@ -378,15 +381,21 @@ pub fn open_start(bar: HWND, by_keyboard: bool) {
         places.retain(|key, _| place_still_there(app, key));
         app.menu_scroll = places;
     });
+    let (style, mut menu) = start_menu_shown(era, opts, small);
+    menu.show_keys = era.always_shows_keys() || by_keyboard;
+    open_root(bar, Kind::Start, menu, style, At::StartButton(button));
+}
+
+/// The Start menu as the bar shows it: the person's user name in Log Off, each entry's picture;
+/// "Show small icons in Start menu": 16×16 icons and no banner. Shared by `open_start` and the live
+/// test's menu, so that the test menu stands where the real Programs menu would (brief 94).
+fn start_menu_shown(era: Era, opts: bevel_core::config::StartOptions, small: bool) -> (MenuStyle, Menu) {
     let user = start_menu::user_name();
-    // "Show small icons in Start menu": 16×16 icons and no banner.
-    let (style, mut menu) = if small {
+    if small {
         (MenuStyle::StartSmall, start::menu(era, opts, &user, |e| icons::start_icon_small(era, e)))
     } else {
         (MenuStyle::Start, start::menu(era, opts, &user, |e| icons::start_icon(era, e)))
-    };
-    menu.show_keys = era.always_shows_keys() || by_keyboard;
-    open_root(bar, Kind::Start, menu, style, At::StartButton(button));
+    }
 }
 
 fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
@@ -395,22 +404,39 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
     let previous = unsafe { GetForegroundWindow() };
     let (long, offset) = long_of(&kind);
     // The look's rule for a long menu, columns wider than the whole screen scrolling instead
-    // (`start::layout_root`, the same code the tests draw with).
-    let Some((layout, scale, screen)) = with_app(|app| {
+    // (`start::layout_root`, the same code the tests draw with). The menus of the Start menu's
+    // family that open from the bar get the room above it, never the bar's rows (brief 94): the
+    // Start menu (`start::place_start`), a task button's list and 2000's Quick Launch list.
+    let Some((layout, scale, screen, room)) = with_app(|app| {
         let m = app.monitor;
         let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
-        let layout = start::layout_root(app.theme, &app.fonts(), app.era, &menu, style, long, offset, app.scale, screen);
-        (layout, app.scale, screen)
+        let room = match at {
+            At::StartButton(button) => start::room_above(screen, button.y),
+            At::TaskButton(_, y) => start::room_above(screen, y),
+            At::Chevron(chevron) => start::room_above(screen, chevron.y),
+            _ => screen,
+        };
+        let layout = match at {
+            At::StartButton(button) => {
+                start::place_start(app.theme, &app.fonts(), app.era, &menu, style, long, offset, app.scale, screen, button).0
+            }
+            _ => start::layout_root(app.theme, &app.fonts(), app.era, &menu, style, long, offset, app.scale, room),
+        };
+        (layout, app.scale, screen, room)
     }) else {
         return;
     };
+    if style != MenuStyle::Popup && layout.scroll.is_some() && !matches!(long, Long::Scroll { .. }) {
+        log(&format!("a menu of {} entries did not fit the screen in columns: it scrolls", menu.entries.len()));
+    }
     let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (left, top) = match at {
         At::Point(x, y) => place_popup(x, y, w, h, screen),
+        At::TaskButton(x, y) => place_popup(x, y, w, h, room),
         At::Speaker(era, x, y) => volume::place_menu(era, x, y, w, h, screen),
-        At::StartButton(button) => place_start_menu(button, w, h, screen),
+        At::StartButton(button) => place_start_menu(button, w, h, room),
         At::Above(x, y) => bevel_core::tray_icon::place_menu(x, y, w, h, screen),
-        At::Chevron(chevron) => bevel_core::quick_launch::place_list(chevron, w, h, screen),
+        At::Chevron(chevron) => bevel_core::quick_launch::place_list(chevron, w, h, room),
     };
     show_root(bar, kind, menu, style, layout, Rect::new(left, top, w, h), previous);
 }
@@ -441,24 +467,28 @@ pub fn open_test_long_menu(bar: HWND, n: usize) {
     close(false);
     // SAFETY: a plain query.
     let previous = unsafe { GetForegroundWindow() };
-    let Some((era, small, button)) = with_app(|app| Some((app.era, app.options.small_icons, app.start_button_on_screen()?))).flatten() else {
+    let Some((era, small, button, opts)) =
+        with_app(|app| Some((app.era, app.options.small_icons, app.start_button_on_screen()?, app.start_options))).flatten()
+    else {
         return;
     };
     let menu = test_menu(era, &[], n);
-    let long = start::long_rule(era, LongKind::Programs, with_app(|app| app.start_options.scroll_programs).unwrap_or(false));
+    let long = start::long_rule(era, LongKind::Programs, opts.scroll_programs);
+    // The Start menu the bar would show (the person's name read, never logged), laid out and placed
+    // by the same code as `open_root`'s (brief 94); it is not shown.
+    let (style, start_menu) = start_menu_shown(era, opts, small);
+    let (start_long, start_offset) = long_of(&Kind::Start);
     let Some((layout, rect)) = with_app(|app| {
         let m = app.monitor;
         let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
         let s = app.scale;
-        // Where the Start menu would stand, and its Programs entry.
-        let style = if small { MenuStyle::StartSmall } else { MenuStyle::Start };
-        let start_menu = start::menu(era, app.start_options, "", |e| icons::start_icon(era, e));
-        let start_layout = paint::layout_menu(app.theme, &app.fonts(), &start_menu, style, s.old_fit(screen.h));
+        // Where the Start menu would stand, and its Programs entry where it shows.
+        let (start_layout, x, y) =
+            start::place_start(app.theme, &app.fonts(), era, &start_menu, style, start_long, start_offset, s, screen, button);
         let (w, h) = (s.len(start_layout.width), s.len(start_layout.height));
-        let (x, y) = place_start_menu(button, w, h, screen);
         let parent = Rect::new(x, y, w, h);
-        let programs = start::entries(era, app.start_options).iter().position(|e| *e == Some(StartEntry::Programs))?;
-        let r = s.rect(*start_layout.rects.get(programs)?);
+        let programs = start::entries(era, opts).iter().position(|e| *e == Some(StartEntry::Programs))?;
+        let r = s.rect(start_layout.shown_rect(programs)?);
         let entry = Rect::new(x + r.x, y + r.y, r.w, r.h);
         let (layout, left, top) = start::place_cascade(app.theme, &app.fonts(), era, &menu, MenuStyle::Cascade, long, 0, s, screen, parent, entry, false);
         let rect = Rect::new(left, top, s.len(layout.width), s.len(layout.height));
@@ -716,7 +746,9 @@ fn remember(app: &mut crate::bar::App, level: usize, offset: i32) {
     }
 }
 
-/// Whether the menu a scroll place's key names is still there (its folders read anew).
+/// Whether the menu a scroll place's key names is still there (its folders read anew), by the exact
+/// names the key was stored under (`scroll_key`), so a folder renamed only in case drops its place
+/// (brief 94).
 fn place_still_there(app: &crate::bar::App, key: &str) -> bool {
     let mut names = key.split(KEY_SEP);
     let root = match names.next() {
@@ -726,7 +758,7 @@ fn place_still_there(app: &crate::bar::App, key: &str) -> bool {
     };
     let mut folder = root;
     for name in names {
-        match folder.folders.iter().find(|f| bevel_core::text::same_name(&f.name, name)) {
+        match folder.folders.iter().find(|f| f.name == name) {
             Some(next) => folder = next,
             None => return false,
         }
@@ -866,9 +898,10 @@ fn choose(level: usize, index: usize) {
         open_child(level, index, false);
         return;
     }
-    // The live test's menu: its entries start nothing.
+    // The live test's menu: its entries start nothing, and the window that was in front gets the
+    // focus back, as after Esc (brief 94).
     if let Kind::Test(path) = &kind {
-        close(false);
+        close(true);
         log(&format!("test long menu: entry {index} of level {} chosen (it starts nothing)", path.len()));
         return;
     }

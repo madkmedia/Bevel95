@@ -691,8 +691,9 @@ pub fn list_choice<T: Clone>(list: &[T], row: usize, on_band: impl Fn(&T) -> boo
 /// pixels): its left edge at the chevron's, its bottom row just above the chevron's top, so it
 /// overlaps the bar's top rows (resize.md, 3). Not measured: a bar at the top of the screen (then
 /// it opens below the chevron) and a list that would run past the screen's right edge (then it
-/// moves left). A list taller than the room on either side starts at the screen's top (then it
-/// runs into further columns, as every long menu of the bar does).
+/// moves left). The bar lays the list out for the room above the "»" (`start::room_above`, brief
+/// 94) and passes that room as `screen`, so a long list goes on in the look's way and still ends
+/// above the "»"; given a whole screen, a list taller than the room on either side starts at its top.
 pub fn place_list(chevron: Rect, w: i32, h: i32, screen: Rect) -> (i32, i32) {
     let mut y = chevron.y - h;
     if y < screen.y {

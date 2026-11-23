@@ -998,9 +998,12 @@ fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Men
     paint_menu_with(fb, theme, fonts, &bare, style, &bare_layout);
     // The entries that show, where they show.
     let (top, bottom) = layout.view();
-    let showing: Vec<usize> = (0..layout.rects.len()).filter(|&i| layout.shown_rect(i).is_some()).collect();
+    // Only entries the menu really has: a layout longer than its menu (never made so, but a panic
+    // would end the bar) paints what there is (brief 94).
+    let showing: Vec<usize> =
+        (0..layout.rects.len().min(menu.entries.len())).filter(|&i| layout.shown_rect(i).is_some()).collect();
     let part = Menu {
-        entries: showing.iter().map(|&i| menu.entries[i].clone()).collect(),
+        entries: showing.iter().filter_map(|&i| menu.entries.get(i).cloned()).collect(),
         hover: menu.hover.and_then(|h| showing.iter().position(|&i| i == h)),
         show_keys: menu.show_keys,
         extra_bottom: menu.extra_bottom,
@@ -1010,7 +1013,7 @@ fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Men
         width_labels: Vec::new(),
     };
     let part_layout = MenuLayout {
-        rects: showing.iter().map(|&i| { let r = layout.rects[i]; Rect::new(r.x, r.y - scroll.offset, r.w, r.h) }).collect(),
+        rects: showing.iter().filter_map(|&i| layout.rects.get(i)).map(|r| Rect::new(r.x, r.y - scroll.offset, r.w, r.h)).collect(),
         scroll: None,
         ..layout.clone()
     };
@@ -1400,6 +1403,18 @@ mod long_menu_tests {
 
     /// A layout whose entries overflow the screen by the padding only: whatever it gives, nothing
     /// scrolls and no strip shows (the review of brief 91, 11).
+    #[test]
+    fn a_scrolling_layout_longer_than_its_menu_paints_without_a_panic() {
+        // Brief 94: a panic in the bar ends it, so a layout made for more entries than the menu
+        // has paints what there is.
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let l = layout_long_menu(&WIN98, &f, &long(0, 80), MenuStyle::Cascade, 300, Long::Scroll { flat: false }, 0);
+        assert!(l.scroll.is_some());
+        let mut fb = Framebuffer::new(l.width, l.height, 0);
+        paint_menu(&mut fb, &WIN98, &f, &long(0, 3), MenuStyle::Cascade, &l);
+    }
+
     #[test]
     fn overflowing_by_the_padding_only_shows_no_strip() {
         let (r, b) = fonts();

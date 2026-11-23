@@ -378,7 +378,8 @@ fn long_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, w: i32, h: i32, n: us
     let place = |menu: &Menu, long: Long, offset: i32, parent: Rect, entry: Rect, in_columns: bool| {
         let (l, x, y) = start::place_cascade(theme, fonts, era, menu, MenuStyle::Cascade, long, offset, Scale::whole(1), screen_rect, parent, entry, in_columns);
         (l, x, y, parent)
-    };    let long = start::long_rule(era, start::LongKind::Programs, scroll_programs);
+    };
+    let long = start::long_rule(era, start::LongKind::Programs, scroll_programs);
     let (mut pl, px, py, _) = place(&programs, long, 0, parent, entry, false);
     if let Some(mut s) = pl.scroll {
         match scene {
@@ -411,13 +412,17 @@ fn long_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, w: i32, h: i32, n: us
 }
 
 /// Windows 98's own Start menu on a screen too short for it (640x360, as a 1280x720 screen at Size
-/// 2): it scrolls, its banner standing still and whole, the strips over the entries' part only
-/// (brief 92; as the Reference PC's Start menu showed it when it had to scroll). At its top, or
-/// scrolled to the end with the pointer on the top strip. Laid out by `start::layout_root`, the
-/// code the bar runs.
+/// 2; or `h` rows): it scrolls, its banner standing still and whole, the strips over the entries'
+/// part only (brief 92; as the Reference PC's Start menu showed it when it had to scroll), within
+/// the room above the Start button, ending on top of the bar with the button showing (brief 94).
+/// At its top, or scrolled to the end with the pointer on the top strip. Laid out and placed by
+/// `start::place_start`, the code the bar runs.
 fn start_scrolls_scene(theme: &Theme, fonts: &Fonts, end: bool) -> Framebuffer {
+    start_scrolls_scene_sized(theme, fonts, 640, 360, end)
+}
+
+fn start_scrolls_scene_sized(theme: &Theme, fonts: &Fonts, w: i32, h: i32, end: bool) -> Framebuffer {
     let era = Era::Win98;
-    let (w, h) = (640, 360);
     let screen_rect = Rect::new(0, 0, w, h);
     let mut screen = Framebuffer::new(w, h, desktop(era));
     let mut bar = Framebuffer::new(w, theme.bar.height, 0);
@@ -428,7 +433,9 @@ fn start_scrolls_scene(theme: &Theme, fonts: &Fonts, end: bool) -> Framebuffer {
     menu.show_keys = true;
     menu.hover = Some(if end { menu.entries.len() - 1 } else { 0 });
     let long = start::long_rule(era, start::LongKind::Other, false);
-    let mut layout = start::layout_root(theme, fonts, era, &menu, MenuStyle::Start, long, 0, Scale::whole(1), screen_rect);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (mut layout, x, y) = start::place_start(theme, fonts, era, &menu, MenuStyle::Start, long, 0, Scale::whole(1), screen_rect, button);
     if end && let Some(mut s) = layout.scroll {
         s.set(s.end);
         s.hot = Some(Strip::Up);
@@ -436,9 +443,6 @@ fn start_scrolls_scene(theme: &Theme, fonts: &Fonts, end: bool) -> Framebuffer {
     }
     let mut fb = Framebuffer::new(layout.width, layout.height, 0);
     paint::paint_menu(&mut fb, theme, fonts, &menu, MenuStyle::Start, &layout);
-    let button = layout::start_button(theme, fonts);
-    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
-    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
     screen.blit(&fb, x, y);
     screen
 }
@@ -2003,6 +2007,7 @@ fn scenes() -> Vec<Scene> {
                 add("long-programs-800-middle", "800x600, 117 entries, scrolled to the middle: both strips", long_menu_scene(theme, era, &fonts, 800, 600, 117, LongScene::Middle));
                 add("start-scrolls", "The Start menu on a screen too short for it (640x360): it scrolls, the banner standing still, the bottom strip over the entries only", start_scrolls_scene(theme, &fonts, false));
                 add("start-scrolls-end", "The same scrolled to the end, the pointer on the top strip (sunken, no arrow), the last entry chosen", start_scrolls_scene(theme, &fonts, true));
+                add("start-scrolls-384", "The case that started it: a 768-row screen at Size 2 (683x384). The Start menu does not fit above the Start button, so it scrolls and ends on top of the bar, the button showing", start_scrolls_scene_sized(theme, &fonts, 683, 384, false));
                 add(
                     "long-programs-800-end",
                     "800x600, 117 entries, scrolled to the end with the pointer on the top strip: it is drawn sunken, without its arrow; the bottom strip is gone",
@@ -2705,8 +2710,9 @@ fn draw_long_menu_sheet() {
     const LABEL: i32 = 18;
     let bold = load_font(&WIN95, true);
     let width = GAP + 640 + GAP + 800 + GAP;
-    // Brief 92 adds a fourth row: 98's Start menu itself too tall (640x360), at the top and the end.
-    let height = GAP + 3 * (LABEL + 600 + GAP) + LABEL + 360 + GAP;
+    // Brief 92 adds 98's Start menu itself too tall; brief 94 keeps it above the bar and adds the
+    // 384-row case: a fourth row (640x360 at the top, 683x384) and a fifth (640x360 at the end).
+    let height = GAP + 3 * (LABEL + 600 + GAP) + LABEL + 384 + GAP + LABEL + 360 + GAP;
     let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
     for (row, era) in Era::ALL.into_iter().enumerate() {
         let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
@@ -2728,10 +2734,13 @@ fn draw_long_menu_sheet() {
     let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
     let fonts = Fonts { regular: &regular, bold: &boldf };
     let y = GAP + 3 * (LABEL + 600 + GAP);
-    bold.draw(&mut sheet, GAP, y, "Windows 98, the Start menu too tall (640x360): it scrolls, the banner stays", rgb(0x000000));
+    bold.draw(&mut sheet, GAP, y, "Windows 98, the Start menu too tall (640x360): it scrolls above the bar", rgb(0x000000));
     sheet.blit(&start_scrolls_scene(theme, &fonts, false), GAP, y + LABEL);
-    bold.draw(&mut sheet, GAP + 640 + GAP, y, "The same scrolled to the end", rgb(0x000000));
-    sheet.blit(&start_scrolls_scene(theme, &fonts, true), GAP + 640 + GAP, y + LABEL);
+    bold.draw(&mut sheet, GAP + 640 + GAP, y, "The same on a 768-row screen at Size 2 (683x384)", rgb(0x000000));
+    sheet.blit(&start_scrolls_scene_sized(theme, &fonts, 683, 384, false), GAP + 640 + GAP, y + LABEL);
+    let y = y + LABEL + 384 + GAP;
+    bold.draw(&mut sheet, GAP, y, "640x360 scrolled to the end", rgb(0x000000));
+    sheet.blit(&start_scrolls_scene(theme, &fonts, true), GAP, y + LABEL);
     write_png(Path::new(&path), &sheet);
     println!("wrote the sheet");
 }
