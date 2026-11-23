@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src https://api.github.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Bevel95: pixel perfect Windows 95/98/2000 on your Windows 10 or 11 desktop</title>
+<meta name="description" content="Transform your Windows 10 or 11 desktop into pixel perfect Windows 95/98/2000 without modifying any system files.">
+<link rel="canonical" href="https://madkmedia.github.io/Bevel95/">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Bevel95">
+<meta property="og:description" content="Transform your Windows 10 or 11 desktop into pixel perfect Windows 95/98/2000 without modifying any system files.">
+<meta property="og:url" content="https://madkmedia.github.io/Bevel95/">
+<meta property="og:image" content="https://madkmedia.github.io/Bevel95/preview.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="900">
+<meta property="og:image:alt" content="Bevel95's Windows 98 look on Windows 11">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+/* Look A: as plain as a page can be. */
+/* The scroll bar is always there, so the room for the picture does not change when it appears. */
+html { background: #fff; color: #000; overflow-y: scroll; }
+body {
+  margin: 0 auto;
+  padding: 24px 16px 32px;
+  max-width: 1282px;
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow-wrap: break-word;
+}
+h1 { font-size: 32px; margin: 0; }
+p { margin: 8px 0; max-width: 1024px; }
+a { color: #0000ee; }
+a:visited { color: #551a8b; }
+.get { margin-top: 20px; font-size: 18px; }
+.get a { font-weight: bold; }
+#facts { color: #444; font-size: 16px; }
+.note { color: #444; }
+.links { font-size: 14px; color: #444; margin-top: 12px; }
+/* The picture (the GIF, or the still one for those who ask for less motion): one picture
+   pixel always covers a whole number of real screen pixels, k of them, so it is never
+   smeared. Its width in CSS pixels is 600 x k / ratio, where "ratio" is the screen's scale
+   (1.5 on a screen set to 150%). The script at the end picks the largest k that fits;
+   without scripts, these rules pick k for the usual scales: --k on most windows, --k-wide
+   where the window has room for about 1200 CSS pixels. On a window too narrow for even
+   k = 1 the picture keeps its size and scrolls sideways in its own frame, and the page
+   itself never does. */
+:root { --ratio: 1; --k: 1; --k-wide: 2; }
+@media (resolution: 1.25dppx) { :root { --ratio: 1.25; --k: 1; --k-wide: 2; } }
+@media (resolution: 1.5dppx)  { :root { --ratio: 1.5;  --k: 1; --k-wide: 3; } }
+@media (resolution: 1.75dppx) { :root { --ratio: 1.75; --k: 1; --k-wide: 3; } }
+@media (resolution: 2dppx)    { :root { --ratio: 2;    --k: 2; --k-wide: 4; } }
+@media (resolution: 2.5dppx)  { :root { --ratio: 2.5;  --k: 2; --k-wide: 5; } }
+@media (resolution: 3dppx)    { :root { --ratio: 3;    --k: 3; --k-wide: 6; } }
+.shot { margin: 20px 0 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; }
+.shot img {
+  display: block;
+  width: calc(600px * var(--k) / var(--ratio));
+  height: calc(450px * var(--k) / var(--ratio));
+  max-width: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+@media (min-width: 1250px) {
+  .shot img {
+    width: calc(600px * var(--k-wide) / var(--ratio));
+    height: calc(450px * var(--k-wide) / var(--ratio));
+  }
+}
+</style>
+</head>
+<body>
+<h1>Bevel95</h1>
+<p>Transform your Windows 10 or 11 desktop into pixel perfect Windows 95/98/2000 without modifying any system files. <a href="https://github.com/madkmedia/Bevel95#readme">Read more here.</a></p>
+
+<p class="get"><a id="download" href="https://github.com/madkmedia/Bevel95/releases/latest">Download Bevel95</a> <span id="facts"></span></p>
+<p class="note">The file is not signed, so Windows may warn about it: click <b>More info</b>, then <b>Run anyway</b>.</p>
+
+<p class="links">
+<a href="https://github.com/madkmedia/Bevel95">Source and instructions on GitHub</a> ·
+<a href="https://github.com/madkmedia/Bevel95#supporting-bevel95">Support Bevel95</a> ·
+<a href="https://github.com/madkmedia/Bevel95/blob/main/LICENSE">GPL-3.0-or-later</a> ·
+Not affiliated with or endorsed by Microsoft.
+</p>
+
+<div class="shot"><picture>
+<source srcset="desktop-600.png" media="(prefers-reduced-motion: reduce)">
+<img src="bevel95.gif" width="600" height="450" alt="Windows 11 with its own taskbar, then the same desktop turned into the Windows 98 look by Bevel95: the Start menu opened out to Minesweeper, Minesweeper and the Calculator, then the same desktop in the Windows 2000 and Windows 95 looks">
+</picture></div>
+
+<script>
+// The link above always leads to the newest release. If GitHub says which file that is, link
+// to the file itself and show its version, size and date. Anything else leaves the link as it is.
+(function () {
+  var API = "https://api.github.com/repos/madkmedia/Bevel95/releases/latest";
+  var FILES = "https://github.com/madkmedia/Bevel95/releases/download/";
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December"];
+  if (!window.fetch) return;
+  var link = document.getElementById("download");
+  var facts = document.getElementById("facts");
+  var stop = window.AbortController ? new AbortController() : null;
+  if (stop) setTimeout(function () { stop.abort(); }, 8000);
+  fetch(API, {
+    headers: { "Accept": "application/vnd.github+json" },
+    credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
+    signal: stop ? stop.signal : undefined
+  }).then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (release) {
+    if (!release || !Array.isArray(release.assets)) return;
+    for (var i = 0; i < release.assets.length; i++) {
+      var a = release.assets[i];
+      var m = typeof a.name === "string" && /^Bevel95-(\d+\.\d+\.\d+)\.exe$/.exec(a.name);
+      var url = a.browser_download_url;
+      if (!m || typeof url !== "string" || url.indexOf(FILES) !== 0) continue;
+      var parts = [a.name];
+      if (typeof a.size === "number" && a.size > 0) {
+        parts.push((a.size / 1048576).toFixed(1) + " MB");
+      }
+      var when = new Date(release.published_at || a.updated_at || "");
+      if (!isNaN(when.getTime())) {
+        parts.push(when.getUTCDate() + " " + MONTHS[when.getUTCMonth()] + " " + when.getUTCFullYear());
+      }
+      link.href = url;
+      link.textContent = "Download Bevel95 " + m[1];
+      facts.textContent = "(" + parts.join(", ") + ")";
+      return;
+    }
+  }).catch(function () {});
+})();
+
+// The picture: the largest k (at least 1) for which 600 x k real screen pixels fit the room,
+// so one picture pixel covers k x k screen pixels. Two things keep every pixel whole:
+// - The browser places things in steps of 1/64 of a CSS pixel. The picture's left and top
+//   edges (20 is the frame's own top margin, as in the style above) are moved to the next "step": the shortest CSS length that is both a whole number
+//   of screen pixels and of those 64ths (1 CSS pixel at 100%, 4 at 125%, 2 at 150%, 4 at
+//   175%, 0.5 at 200%), so they fall exactly on screen pixels.
+// - A width like 1200 screen pixels at 175% (685.71 CSS pixels) is not one of those steps,
+//   so the picture keeps its own 600 x 450 and is enlarged by a transform (k / scale), which
+//   has no steps. Its frame is given the enlarged size, so the page lays out around it.
+// Again whenever the window's size or the screen's scale changes (zoom, or the window moved
+// to another screen), or the text above the picture changes height.
+(function () {
+  var img = document.querySelector(".shot img");
+  var box = img.parentNode;   // the <picture> around it
+  var room = document.querySelector(".shot");
+  box.style.display = "block";
+  img.style.width = "600px";
+  img.style.height = "450px";
+  img.style.transformOrigin = "0 0";
+  function stepFor(ratio) {
+    for (var q = 1; q <= 64; q++) {
+      var css = q / ratio;
+      if (Math.abs(css * 64 - Math.round(css * 64)) < 1e-6) return css;
+    }
+    return 1;
+  }
+  function fit() {
+    var ratio = window.devicePixelRatio || 1, step = stepFor(ratio);
+    var k = Math.max(1, Math.floor((room.clientWidth - step) * ratio / 600));
+    var scale = k / ratio;
+    img.style.transform = "scale(" + scale + ")";
+    img.style.marginLeft = "0px";
+    room.style.marginTop = "";
+    box.style.width = Math.ceil(600 * scale + step) + "px";
+    box.style.height = Math.ceil(450 * scale + step) + "px";
+    // The left edge: the picture moves inside its frame. The top edge: the whole frame moves
+    // down (its top would otherwise cut the picture's first row).
+    var at = box.getBoundingClientRect();
+    var left = at.left + window.scrollX, top = at.top + window.scrollY;
+    img.style.marginLeft = (Math.ceil(left / step - 1e-6) * step - left) + "px";
+    room.style.marginTop = (20 + Math.ceil(top / step - 1e-6) * step - top) + "px";
+  }
+  function watchScale() {
+    var query = window.matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
+    if (query.addEventListener) query.addEventListener("change", function () { fit(); watchScale(); }, { once: true });
+  }
+  window.addEventListener("resize", fit);
+  window.addEventListener("load", fit);
+  // The download line above can grow when the release's facts arrive and push the picture down.
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.querySelector(".get"));
+  fit();
+  watchScale();
+})();</script>
+</body>
+</html>

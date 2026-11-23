@@ -1,0 +1,42 @@
+# Publishes the folder `site` as the project's website with GitHub Pages, at
+# https://madkmedia.github.io/Bevel95/. It runs when a push to main changes something in
+# `site`, and by hand (Actions > Publish the website > Run workflow). It builds nothing:
+# the folder is published as it is. Pages must be switched on first, with
+# Settings > Pages > Source: GitHub Actions.
+name: Publish the website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+  workflow_dispatch:
+
+# Nothing by default; the one job asks only for what publishing needs.
+permissions: {}
+
+# One publish at a time; a newer one waits rather than cutting an older one off.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v5

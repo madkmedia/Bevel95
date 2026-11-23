@@ -6177,6 +6177,17 @@ sharable").
   (`.github/ISSUE_TEMPLATE/bug_report.yml`) and a build-and-test workflow
   (`.github/workflows/test.yml`, untried). The owner's checklists moved unchanged to
   `private/checklists.md`. The art guard allows `docs/img/`.
+- **The website** (the owner, 2026-11-21 and 2026-11-22: "Yes go ahead"): one hand-written page,
+  `site/index.html`, with the README's animation (`site/bevel95.gif`), its still for people who ask
+  for less motion (`desktop-600.png`), the link preview (`preview.png`, the still with every pixel
+  doubled) and the icon (`favicon.png`). GitHub Pages publishes the folder as it is through
+  `.github/workflows/pages.yml` (on a push to main that changes `site/`, or by hand) at
+  https://madkmedia.github.io/Bevel95/. Nothing is loaded from other servers but one request to
+  GitHub's releases API for the newest release, so the download link can name the file, its size
+  and date (without it the link leads to the releases page). A small script sizes the picture in
+  whole screen pixels (one picture pixel always covers k x k of them, never smeared; without the
+  script, CSS rules do it for the usual scales). The owner's decisions: a plain look, the page's
+  words as the owner wrote them, the 600 x 450 animation. The art guard allows `site/`.
 - **What is not public, and why**: the maintainer's working instructions for their AI helper
   (`CLAUDE.local.md`: paths of their PC, preferences; the public `CLAUDE.md` is a short version
   for contributors' AI helpers), their running list and checklists (`private/todo.md`,

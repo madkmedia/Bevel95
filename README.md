@@ -13,6 +13,8 @@ look you choose.
   <img src="docs/img/bevel95.gif" width="600" alt="Windows 11 with its own taskbar, then the same desktop turned into the Windows 98 look by Bevel95: the Start menu opened out to Minesweeper, Minesweeper and the Calculator, then the same desktop in the Windows 2000 and Windows 95 looks">
 </picture>
 
+Website: https://madkmedia.github.io/Bevel95/
+
 ## What it does
 
 - **The taskbar**: a button for each window (grouped by program, or one per window, as you
