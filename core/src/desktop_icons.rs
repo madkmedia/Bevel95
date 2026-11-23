@@ -132,6 +132,9 @@ pub enum Picture {
     /// Today's pictures from the shell, 32×32 and 16×16, shared by every item that shows the same
     /// (a folder window keeps one copy per kind of file: `ShellPicture`).
     Shell(std::sync::Arc<ShellPicture>),
+    /// The look's own picture for a kind of file its Windows knew (`crate::file_kinds`), found by
+    /// the item's ending (its id) when it is drawn, at the screen's depth.
+    Kind(crate::file_kinds::Kind),
 }
 
 /// A file's pictures as the shell gives them, large (32×32) and small (16×16).
@@ -1752,6 +1755,11 @@ impl Desktop {
             }
             Picture::Shell(p) => {
                 let icon = p.large.clone()?;
+                if selected { desktop_art::selected(&icon, highlight) } else { icon }
+            }
+            // Selected, as the shell's pictures are (the plain average with the selection color).
+            Picture::Kind(k) => {
+                let icon = crate::file_kinds::picture(self.era, theme.depth, *k, &item.id, false)?;
                 if selected { desktop_art::selected(&icon, highlight) } else { icon }
             }
         };

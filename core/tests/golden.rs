@@ -2022,6 +2022,14 @@ fn scenes() -> Vec<Scene> {
         ] {
             out.push(Scene { section, name: format!("{}-{state}", era_prefix(era)), caption, image: views_scene(theme, era, &fonts, mode) });
         }
+        // The look's own pictures and Type names for the kinds of file its Windows knew.
+        for (mode, state, caption) in [
+            (ViewMode::Large, "folder-kinds-large", "Kinds of file the look knew, Large Icons: each with its Windows' own picture (a program without an icon of its own: the program picture; the Internet shortcut with its arrow), the hidden one faded, Notes.txt selected"),
+            (ViewMode::Small, "folder-kinds-small", "The same folder in Small Icons: the look's 16x16 pictures"),
+            (ViewMode::Details, "folder-kinds-details", "The same folder in Details: the look's own Type names"),
+        ] {
+            out.push(Scene { section, name: format!("{}-{state}", era_prefix(era)), caption, image: kinds_scene(theme, era, &fonts, mode) });
+        }
     }
     // The web view panel of 98's and 2000's folder windows.
     for (era, theme, section) in [(Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
@@ -3465,6 +3473,69 @@ fn views_scene(theme: &Theme, era: Era, fonts: &Fonts, mode: ViewMode) -> Frameb
     w.paint(&mut fb, theme, fonts);
     fb
 }
+/// A folder of `era` holding one file of each main kind its Windows knew, in `mode`: each with the
+/// look's own picture and Type name (`file_kinds::decide`, as the folder program reads them), the
+/// shortcut's arrow, a hidden file faded, one file selected.
+fn kinds_scene(theme: &Theme, era: Era, fonts: &Fonts, mode: ViewMode) -> Framebuffer {
+    use bevel_core::desktop_icons::{Item, Picture, local_filetime};
+    use bevel_core::file_kinds::{self, Choice, Kind};
+    use bevel_core::folder::{FolderWindow, art};
+    use bevel_core::kit::Form;
+    let mut names = vec![
+        "Notes.txt", "Setup.ini", "Start.bat", "Tools.dll", "Program.exe", "Edit.com", "Help.hlp", "Picture.bmp", "Photo.jpg", "Chime.wav",
+        "Tune.mid", "Movie.avi", "Page.htm", "Letter.doc", "Story.rtf", "Fonts.fon", "Settings.reg", "Site.url", "Hidden.sys",
+    ];
+    names.extend(match era {
+        Era::Win95 => &["Font.ttf"][..],
+        Era::Win98 => &["Book.chm", "Script.js", "Files.cab", "Desert.theme"][..],
+        Era::Win2000 => &["Book.chm", "Script.js", "Files.cab", "Setup.log", "Install.msi", "Song.mp3"][..],
+    });
+    let items: Vec<Item> = names
+        .iter()
+        .enumerate()
+        .map(|(n, name)| {
+            let d = file_kinds::decide(era, name);
+            let picture = match d.picture {
+                Choice::Look(k) => Picture::Kind(k),
+                Choice::OwnOrProgram => Picture::Kind(Kind::Program),
+                Choice::Today => panic!("{name}: a kind {era:?} knew"),
+            };
+            Item {
+                id: format!("C:\\Kinds\\{name}"),
+                name: name.to_string(),
+                picture,
+                shortcut: name.ends_with(".url"),
+                folder: false,
+                type_name: d.type_name.expect("a known kind's name").to_string(),
+                size: 1_000 + 37 * n as u64,
+                modified: local_filetime(2026, 11, 23, 9, n as u64),
+            }
+        })
+        .collect();
+    let small = art::Small::Folder;
+    let icon16 = art::small(era, small);
+    let size = if mode == ViewMode::Details { (520, 430) } else { (560, 430) };
+    let mut w = FolderWindow::new(era, "Kinds", icon16.clone(), true, size);
+    w.layout(fonts);
+    if era != Era::Win95 {
+        w.show_place("Kinds", icon16, true, "C:\\Kinds", art::listed(era, small));
+    }
+    w.set_view_mode(mode);
+    w.set_items(items);
+    if mode == ViewMode::Details {
+        let mut c = w.view.columns.clone();
+        c[2] = 190;
+        w.view.set_columns(&c);
+    }
+    w.view.set_hidden(["C:\\Kinds\\Hidden.sys".to_string()]);
+    let i = w.view.index_of("C:\\Kinds\\Notes.txt").expect("item");
+    w.view.select_only(Some(i));
+    w.layout(fonts);
+    let mut fb = Framebuffer::new(size.0, size.1, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
+}
+
 /// The web view's fonts from the fixtures (98: Verdana; 2000: the look's Tahoma and its 13pt bold).
 fn web_fonts(era: Era, fonts: &Fonts) -> std::sync::Arc<bevel_core::folder::web::WebFonts> {
     use bevel_core::folder::web::WebFonts;

@@ -10,10 +10,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use bevel_core::desktop_icons::Item;
+use bevel_core::theme::Era;
 use bevel_winkit::shell::{self, Seen};
 use windows_sys::Win32::UI::Shell::{FOLDERID_Desktop, FOLDERID_PublicDesktop, SHQUERYRBINFO, SHQueryRecycleBinW};
 
@@ -41,10 +42,20 @@ pub fn take() -> Option<Snapshot> {
     LATEST.lock().ok()?.take()
 }
 
-/// Starts reading (once), for as long as the desktop shows.
-pub fn start() {
+/// The look the items are read for (`Era::ALL`'s index): each look knew its own kinds of file
+/// (`bevel_core::file_kinds`).
+static ERA: AtomicU8 = AtomicU8::new(0);
+
+fn era() -> Era {
+    Era::ALL.get(usize::from(ERA.load(Ordering::SeqCst))).copied().unwrap_or(Era::Win95)
+}
+
+/// Starts reading (once), for as long as the desktop shows; everything is read again (in `era`,
+/// the look shown now).
+pub fn start(era: Era) {
     // The desktop's file commands log as "desktop" and have the folders read again at once.
     bevel_winkit::file_ops::set_hooks("desktop", read_again);
+    ERA.store(Era::ALL.iter().position(|&e| e == era).unwrap_or(0) as u8, Ordering::SeqCst);
     STOP.store(false, Ordering::SeqCst);
     AGAIN.store(true, Ordering::SeqCst);
     if RUNNING.swap(true, Ordering::SeqCst) {
@@ -93,7 +104,7 @@ fn run() {
                 let key = (s.path.clone(), s.modified);
                 let item = match known.remove(&key) {
                     Some(item) if !again => item,
-                    _ => shell::read_item(s),
+                    _ => shell::read_item(s, era()),
                 };
                 files.push(item.clone());
                 fresh.insert(key, item);

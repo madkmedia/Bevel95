@@ -176,11 +176,12 @@ static WM_ITEMS: Private = Private::new("Bevel95.Desktop.Items");
 /// or screen). The window is made on the desktop's own thread (`run`); nothing here waits.
 pub fn show(look: Look) {
     COLOR.store(colorref(look.theme.colors.desktop), Ordering::SeqCst);
+    let era = look.theme.era;
     if let Ok(mut l) = LOOK.lock() {
         *l = Some(look);
     }
     WANTED.store(true, Ordering::SeqCst);
-    crate::desktop_items::start();
+    crate::desktop_items::start(era);
     if let Some(hwnd) = window() {
         // SAFETY: a message to our own window; nothing waits for it.
         unsafe { PostMessageW(hwnd, WM_LOOK.id(), 0, 0) };

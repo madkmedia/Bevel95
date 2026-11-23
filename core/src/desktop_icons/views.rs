@@ -520,6 +520,7 @@ impl Desktop {
                 (None, Some(l)) => l.downscaled(SMALL_PICTURE),
                 _ => return None,
             },
+            Picture::Kind(k) => crate::file_kinds::picture(self.era, theme.depth, *k, &item.id, true)?,
         };
         let mut icon = icon;
         if item.shortcut {

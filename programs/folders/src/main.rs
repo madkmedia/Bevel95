@@ -521,8 +521,9 @@ fn start_reader(id: usize, shows: Shows, era: Era, stop: Arc<AtomicBool>, hub: H
                             pending.clear();
                             for s in &seen {
                                 let key = (s.path.clone(), s.modified);
-                                let item = known.remove(&key).unwrap_or_else(|| shell::quick_item(s, &mut kinds));
-                                if !s.folder && !checked.contains(&key) {
+                                let item = known.remove(&key).unwrap_or_else(|| shell::quick_item(s, &mut kinds, era));
+                                // A kind with the look's own picture is never read again.
+                                if !s.folder && !checked.contains(&key) && shell::reads_own_picture(&s.path, era) {
                                     pending.push(key.clone());
                                 }
                                 items.push(item.clone());
@@ -3035,6 +3036,13 @@ impl Hosted for FolderHost {
                         h.form.set_items(items);
                         h.form.view.set_hidden(hidden_ids);
                         icon = Some(h.form.icon.clone());
+                        // Each look knew its own kinds of file (their pictures and Type names:
+                        // `file_kinds`): a new reader reads the place again in the new look, as
+                        // Refresh does. Until it has, a kind the new look did not know shows no
+                        // picture (never the old look's).
+                        h.stop.store(true, Ordering::SeqCst);
+                        h.stop = Arc::new(AtomicBool::new(false));
+                        start_reader(h.id, h.shows.clone(), era, h.stop.clone(), HUB.with(Cell::get));
                     }
                     h.form.set_font(&look.regular);
                 });

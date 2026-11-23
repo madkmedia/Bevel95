@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use bevel_core::desktop_icons::{Item, Picture, ShellPicture};
 use bevel_core::fb::Icon;
+use bevel_core::file_kinds::{self, Choice};
+use bevel_core::theme::Era;
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::UI::Shell::{
     FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_PublicDesktop, KF_FLAG_DEFAULT, SHFILEINFOW, SHGFI_DISPLAYNAME, SHGFI_SYSICONINDEX,
@@ -243,19 +245,41 @@ pub fn list_folder_with(dir: &Path, switches: bevel_core::hidden::Switches) -> O
     Some((out, hidden))
 }
 
-/// The icon of a file or folder: Explorer's name for it (without ".lnk", and without the
+/// The icon of a file or folder in `era`: Explorer's name for it (without ".lnk", and without the
 /// extension where Explorer hides it), its type, and its picture: the look's own folder for a
-/// folder, today's shell picture otherwise.
-pub fn read_item(s: &Seen) -> Item {
+/// folder; for a file what `file_kinds::decide` says (the look's picture and Type name for a kind
+/// the look knew, a program's own picture or else the look's program picture, today's otherwise).
+/// Off every window's thread: the shell may read the file (never run it).
+pub fn read_item(s: &Seen, era: Era) -> Item {
     let path = s.path.to_string_lossy().into_owned();
-    let (name, type_name) = names(&path).unwrap_or_else(|| {
+    let (name, today_type) = names(&path).unwrap_or_else(|| {
         let name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         (name, String::new())
     });
     let extension = s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     let shortcut = !s.folder && (extension == "lnk" || extension == "url");
-    let picture = if s.folder { Picture::Folder } else { Picture::Own(large_file_icon(&path)) };
+    let file_name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let decision = if s.folder { None } else { Some(file_kinds::decide(era, &file_name)) };
+    let picture = match decision.map(|d| d.picture) {
+        None => Picture::Folder,
+        Some(Choice::Look(kind)) => Picture::Kind(kind),
+        Some(Choice::OwnOrProgram) => match own_icon_of_program(&path, &extension) {
+            Some(own) => Picture::Own(Some(own)),
+            None => Picture::Kind(file_kinds::Kind::Program),
+        },
+        Some(Choice::Today) => Picture::Own(large_file_icon(&path)),
+    };
+    let type_name = decision.and_then(|d| d.type_name).map_or(today_type, str::to_string);
     Item { id: path, name, picture, shortcut, folder: s.folder, type_name, size: s.size, modified: s.modified }
+}
+
+/// A program's own 32×32 picture, if it has one: the shell's picture of the file is not the one it
+/// gives every program of its kind (`x.exe` without a file: today's picture of a program without an
+/// icon). `None` also when the shell cannot read the file (locked, on a drive that is gone): the
+/// look's program picture then.
+fn own_icon_of_program(path: &str, extension: &str) -> Option<Icon> {
+    let own = icon_index(path)?;
+    (Some(own) != kind_of(extension, false).index).then(|| large_file_icon(path)).flatten()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -378,8 +402,11 @@ pub fn pictures_at(index: i32) -> Arc<ShellPicture> {
 /// An item as soon as its folder is listed, without opening the file: its name as Explorer shows
 /// it (its extension hidden where Explorer hides that kind's), its kind's type name and picture
 /// (`kinds` keeps each kind once). Folders get the look's own picture; a read-only or system
-/// folder is asked for its own name (desktop.ini can give one).
-pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>) -> Item {
+/// folder is asked for its own name (desktop.ini can give one). A file gets what
+/// `file_kinds::decide` says for `era`: a kind the look knew its picture and Type name at once (its
+/// own picture is never read: `reads_own_picture`), a program the look's program picture until its
+/// own is read, every other file today's kind's picture and name.
+pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>, era: Era) -> Item {
     let path = s.path.to_string_lossy().into_owned();
     let file_name = s.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let extension = if s.folder { String::new() } else { s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default() };
@@ -399,12 +426,27 @@ pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>) -> Item {
         name = own;
     }
     let shortcut = !s.folder && (extension == "lnk" || extension == "url");
-    let picture = if s.folder { Picture::Folder } else { kind.index.map_or(Picture::Own(None), |i| Picture::Shell(pictures_at(i))) };
-    Item { id: path, name, picture, shortcut, folder: s.folder, type_name: kind.type_name, size: s.size, modified: local_time(s.modified) }
+    let decision = if s.folder { None } else { Some(file_kinds::decide(era, &file_name)) };
+    let picture = match decision.map(|d| d.picture) {
+        None => Picture::Folder,
+        Some(Choice::Look(k)) => Picture::Kind(k),
+        Some(Choice::OwnOrProgram) => Picture::Kind(file_kinds::Kind::Program),
+        Some(Choice::Today) => kind.index.map_or(Picture::Own(None), |i| Picture::Shell(pictures_at(i))),
+    };
+    let type_name = decision.and_then(|d| d.type_name).map_or(kind.type_name, str::to_string);
+    Item { id: path, name, picture, shortcut, folder: s.folder, type_name, size: s.size, modified: local_time(s.modified) }
+}
+
+/// Whether a file's own picture is to be read after its name (`own_picture`, off the window's
+/// thread): not for a kind whose picture is the look's own (`file_kinds::Choice::Look`).
+pub fn reads_own_picture(path: &Path, era: Era) -> bool {
+    let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    !matches!(file_kinds::decide(era, &file_name).picture, Choice::Look(_))
 }
 
 /// A file's own picture (an application's, a shortcut's: read from the file), when it is not its
-/// kind's (`None`: the kind's picture is right, or the shell has none).
+/// kind's (`None`: the kind's picture is right, or the shell has none; for a program, the look's
+/// program picture stays).
 pub fn own_picture(path: &str, kind_index: Option<i32>) -> Option<Arc<ShellPicture>> {
     let index = icon_index(path)?;
     (Some(index) != kind_index).then(|| pictures_at(index))
@@ -428,6 +470,132 @@ pub fn local_time(utc: u64) -> u64 {
     }
     (u64::from(local.dwHighDateTime) << 32) | u64::from(local.dwLowDateTime)
 }
+#[cfg(test)]
+mod kind_tests {
+    use super::*;
+    use bevel_core::file_kinds::Kind as LookKind;
+
+    /// A scratch folder of the test's own (never anyone's), made empty.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = crate::log::installed_dir().join(name);
+        assert!(!dir.to_string_lossy().contains("AppData\\Local\\Bevel95\\"), "a scratch folder");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn seen(path: &Path) -> Seen {
+        use std::os::windows::fs::MetadataExt;
+        let meta = std::fs::metadata(path).unwrap();
+        Seen { path: path.to_path_buf(), folder: meta.is_dir(), size: meta.len(), modified: meta.last_write_time(), attributes: meta.file_attributes() }
+    }
+
+    /// Files made here: a text file, a program without an icon of its own (this test's own
+    /// program, copied: a Rust test program has none), one with icons (Windows' command prompt,
+    /// copied), a PDF (no kind the old Windows knew), in each look.
+    #[test]
+    fn a_file_shows_what_the_look_decides() {
+        crate::com::init();
+        let dir = scratch("file-kinds");
+        std::fs::write(dir.join("Notes.TXT"), b"x").unwrap();
+        std::fs::write(dir.join("paper.pdf"), b"%PDF-1.4\n").unwrap();
+        std::fs::copy(std::env::current_exe().unwrap(), dir.join("noicon.exe")).unwrap();
+        std::fs::copy(system_program("cmd.exe"), dir.join("withicon.exe")).unwrap();
+        for era in Era::ALL {
+            let mut kinds = HashMap::new();
+            let quick = |name: &str, kinds: &mut HashMap<(String, bool), Kind>| quick_item(&seen(&dir.join(name)), kinds, era);
+            let text = quick("Notes.TXT", &mut kinds);
+            assert!(matches!(text.picture, Picture::Kind(LookKind::Ending)), "{era:?}: {:?}", text.picture);
+            assert_eq!(text.type_name, "Text Document");
+            assert!(!reads_own_picture(&dir.join("Notes.TXT"), era), "a known kind's picture is never read");
+            let pdf = quick("paper.pdf", &mut kinds);
+            assert!(matches!(pdf.picture, Picture::Shell(_) | Picture::Own(None)), "today's picture: {:?}", pdf.picture);
+            assert_eq!(pdf.type_name, kind_of("pdf", false).type_name, "today's name");
+            assert!(reads_own_picture(&dir.join("paper.pdf"), era));
+            for (name, own) in [("noicon.exe", false), ("withicon.exe", true)] {
+                let path = dir.join(name);
+                let item = quick(name, &mut kinds);
+                assert!(matches!(item.picture, Picture::Kind(LookKind::Program)), "the program picture first");
+                assert_eq!(item.type_name, "Application");
+                assert!(reads_own_picture(&path, era));
+                let found = own_picture(&path.to_string_lossy(), kind_index(&path, &mut kinds));
+                assert_eq!(found.is_some(), own, "{name}: its own picture read afterwards");
+                // The desktop's way: the same in one go.
+                let item = read_item(&seen(&path), era);
+                match (own, &item.picture) {
+                    (false, Picture::Kind(LookKind::Program)) | (true, Picture::Own(Some(_))) => {}
+                    other => panic!("{name}: {other:?}"),
+                }
+                assert_eq!(item.type_name, "Application");
+            }
+            let text = read_item(&seen(&dir.join("Notes.TXT")), era);
+            assert!(matches!(text.picture, Picture::Kind(LookKind::Ending)) && text.type_name == "Text Document");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A program that cannot be read (held open by the test with no sharing) or is gone costs
+    /// nothing but its own picture: the look's program picture.
+    #[test]
+    fn a_file_that_cannot_be_read_gets_the_looks_picture() {
+        use std::os::windows::fs::OpenOptionsExt;
+        crate::com::init();
+        let dir = scratch("file-kinds-locked");
+        let path = dir.join("locked.exe");
+        std::fs::copy(system_program("cmd.exe"), &path).unwrap();
+        let s = seen(&path);
+        let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&path).unwrap();
+        let item = read_item(&s, Era::Win98);
+        assert!(matches!(item.picture, Picture::Kind(LookKind::Program)), "{:?}", item.picture);
+        let mut kinds = HashMap::new();
+        assert!(own_picture(&path.to_string_lossy(), kind_index(&path, &mut kinds)).is_none());
+        drop(held);
+        let _ = std::fs::remove_dir_all(&dir);
+        let gone = read_item(&s, Era::Win2000);
+        assert!(matches!(gone.picture, Picture::Kind(LookKind::Program)), "{:?}", gone.picture);
+    }
+
+    /// What a folder of 5,000 text files costs on its reader's thread, before (each file's own
+    /// picture asked of the shell after its name) and now (none asked). Prints the times; run it
+    /// with `cargo test -p bevel-winkit --lib -- --ignored --nocapture five_thousand`.
+    #[test]
+    #[ignore = "makes 5,000 files and prints times"]
+    fn five_thousand_text_files() {
+        crate::com::init();
+        let dir = scratch("file-kinds-5000");
+        for n in 0..5000 {
+            std::fs::write(dir.join(format!("note {n:04}.txt")), b"x").unwrap();
+        }
+        let (listed, _) = list_folder_with(&dir, bevel_core::hidden::Switches::NONE).unwrap();
+        // Before: today's kind's picture for every item, then every file's own picture asked for.
+        let started = std::time::Instant::now();
+        let mut kinds = HashMap::new();
+        for s in &listed {
+            let ext = s.path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let kind = kinds.entry((ext.clone(), false)).or_insert_with(|| kind_of(&ext, false)).clone();
+            let _ = kind.index.map(pictures_at);
+        }
+        let named = started.elapsed();
+        for s in &listed {
+            let _ = own_picture(&s.path.to_string_lossy(), kind_index(&s.path, &mut kinds));
+        }
+        let before = started.elapsed();
+        // Now: the names and the look's pictures at once, nothing read afterwards.
+        let started = std::time::Instant::now();
+        let mut kinds = HashMap::new();
+        let mut read = 0;
+        for s in &listed {
+            let _ = quick_item(s, &mut kinds, Era::Win98);
+            if reads_own_picture(&s.path, Era::Win98) {
+                read += 1;
+            }
+        }
+        let now = started.elapsed();
+        println!("5,000 text files: before {} ms named, {} ms with every picture; now {} ms with every picture ({read} read afterwards)", named.as_millis(), before.as_millis(), now.as_millis());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[cfg(test)]
 mod hidden_tests {
     use super::*;
