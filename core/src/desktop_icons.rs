@@ -784,10 +784,10 @@ impl Desktop {
         done.effects
     }
 
-    /// Where the rename box's menu opens from the keyboard: below the box (desktop pixels at 1×).
+    /// Where the rename box's menu opens from the keyboard: the box's middle (desktop pixels at
+    /// 1×), as Windows' edit box opened it (`edit::middle`).
     pub fn rename_caret_point(&self, font: &Font) -> Option<(i32, i32)> {
-        let (b, starts) = self.rename_box(font)?;
-        Some((starts.first().map_or(b.x, |s| s.0), b.bottom()))
+        crate::edit::middle(self.rename_box(font)?.0)
     }
 
     /// Text from the clipboard in place of the selection (its first line only: a name has one).

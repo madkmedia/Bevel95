@@ -100,7 +100,7 @@ fn field_done<P>(changed: bool, done: crate::edit::Done, copy: &mut Option<Strin
 pub fn field_key<P>(edit: &mut crate::edit::Edit, key: Key, mods: Mods, copy: &mut Option<String>) -> Option<FieldDone<P>> {
     let vk = key.vk();
     if (vk == 0x79 && mods.shift && !mods.ctrl) || vk == 0x5D {
-        return Some(FieldDone { effects: vec![Effect::FieldMenu], changed: false });
+        return Some(FieldDone { effects: vec![Effect::FieldMenuKey], changed: false });
     }
     let before = edit.text.clone();
     let done = edit.key(vk, mods.shift, mods.ctrl)?;
@@ -210,9 +210,11 @@ pub enum Effect<P> {
     Paste,
     /// Put the focused field's cut or copied text on the clipboard (`Form::take_copy`, brief 95).
     Copy,
-    /// Open the focused field's right-click menu at the pointer (`Form::field_menu`; Shift+F10
-    /// opens it at the caret's field: `Form::field_menu_at`).
+    /// Open the focused field's right-click menu at the pointer (`Form::field_menu`).
     FieldMenu,
+    /// The same opened from the keyboard (Shift+F10, the menu key): at the field's middle
+    /// (`Form::field_menu_at`), upward when there is no room below, the access keys underlined.
+    FieldMenuKey,
 }
 
 /// A core-drawn window with controls, as the controller and the host see it.
@@ -341,7 +343,8 @@ pub trait Form {
         None
     }
     /// Where that menu opens when opened from the keyboard (Shift+F10), in 1× pixels of the form:
-    /// below the field's caret. `None`: at the pointer.
+    /// the field's middle (the 2000 Reference PC: the Run box's menu stood there, flipped upward
+    /// for want of room below). `None`: at the pointer.
     fn field_menu_at(&self) -> Option<(i32, i32)> {
         None
     }

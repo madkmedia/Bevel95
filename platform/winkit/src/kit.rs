@@ -344,7 +344,7 @@ impl<H: Hosted> Host<H> {
                 (Some(0), Vec::new(), notches != 0)
             }
             // The menu key opens the focused text field's menu (brief 95).
-            WM_KEYDOWN if wparam == 0x5D && form.field_menu(false).is_some() => (Some(0), vec![Effect::FieldMenu], true),
+            WM_KEYDOWN if wparam == 0x5D && form.field_menu(false).is_some() => (Some(0), vec![Effect::FieldMenuKey], true),
             WM_KEYDOWN => (Some(0), self.ctl.key(form, key_of(wparam as u16), mods()), true),
             WM_CHAR => {
                 let effects = char::from_u32(wparam as u32).map(|ch| form.typed(ch)).unwrap_or_default();
@@ -357,7 +357,7 @@ impl<H: Hosted> Host<H> {
             }
             // Shift+F10 (a system key) opens the focused text field's menu (brief 95).
             WM_SYSKEYDOWN if wparam == 0x79 && mods().shift && form.field_menu(false).is_some() => {
-                (Some(0), vec![Effect::FieldMenu], true)
+                (Some(0), vec![Effect::FieldMenuKey], true)
             }
             WM_SYSKEYDOWN => {
                 let (handled, effects) = self.ctl.alt_key_with_mods(form, key_of(wparam as u16), mods());
@@ -1096,7 +1096,8 @@ fn carry_out<H: Hosted>(hwnd: HWND, later: Todo<H>) {
                     crate::clipboard::set_text(hwnd, &text);
                 }
             }
-            Later::Effect(Effect::FieldMenu) => field_menu::<H>(hwnd),
+            Later::Effect(Effect::FieldMenu) => field_menu::<H>(hwnd, false),
+            Later::Effect(Effect::FieldMenuKey) => field_menu::<H>(hwnd, true),
             Later::Effect(Effect::Activate(part)) => H::activate(part),
             Later::Effect(Effect::Close) => H::request_close(),
         }
@@ -1107,16 +1108,21 @@ fn carry_out<H: Hosted>(hwnd: HWND, later: Todo<H>) {
 /// look's own popup menu (`menu::track`), at the pointer, or below the field when opened from the
 /// keyboard (`Form::field_menu_at`); the chosen entry goes back to the form, and what it leaves
 /// to do (Copy, Paste) is carried out here.
-fn field_menu<H: Hosted>(hwnd: HWND) {
+fn field_menu<H: Hosted>(hwnd: HWND, keyboard: bool) {
     let has_text = crate::clipboard::has_text();
-    let Some((menu, at, look, origin)) =
+    let Some((mut menu, at, look, origin)) =
         lift::<H, _>(|host| Some((host.hosted.form().field_menu(has_text)?, host.hosted.form().field_menu_at(), host.look.clone(), host.origin)))
             .flatten()
     else {
         return;
     };
+    // Opened by the mouse, Windows 2000 underlined no access keys (95 and 98 always do; the
+    // Reference PCs' captures, compared exactly).
+    if !keyboard {
+        menu.show_keys = look.theme.era.always_shows_keys();
+    }
     let mut p = windows_sys::Win32::Foundation::POINT::default();
-    let at = match at {
+    let at = match at.filter(|_| keyboard) {
         Some((x, y)) => {
             let mut r = RECT::default();
             // SAFETY: our own window.
@@ -1129,7 +1135,8 @@ fn field_menu<H: Hosted>(hwnd: HWND) {
             (p.x, p.y)
         }
     };
-    let request = crate::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above: None, titles: &[] };
+    let above = keyboard.then_some(at.1);
+    let request = crate::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above, titles: &[] };
     let ended = crate::menu::track(&look, request);
     if let crate::menu::Outcome::Chosen(index) = ended.outcome {
         let effects = with::<H, _>(|h| h.form_mut().field_menu_chosen(index)).unwrap_or_default();

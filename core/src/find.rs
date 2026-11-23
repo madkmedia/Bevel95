@@ -888,8 +888,7 @@ impl kit::Form for FindWindow {
         Some(edit.menu(clipboard_has_text))
     }
     fn field_menu_at(&self) -> Option<(i32, i32)> {
-        let caret: i32 = self.advances.iter().take(self.caret).sum();
-        Some((self.field_x + caret - self.edit.scroll.get(), FIELD.bottom()))
+        crate::edit::middle(FIELD)
     }
     fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
         self.pull();

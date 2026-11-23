@@ -1186,9 +1186,7 @@ impl kit::Form for DialogWindow {
         Some(edit.menu(clipboard_has_text))
     }
     fn field_menu_at(&self) -> Option<(i32, i32)> {
-        let r = self.layout.rect(Part::Command)?;
-        let caret: i32 = self.advances.iter().take(self.dialog.caret).sum();
-        Some((self.field_x + caret - self.dialog.scroll.get(), r.bottom()))
+        crate::edit::middle(self.layout.rect(Part::Command)?)
     }
     fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
         self.pull();

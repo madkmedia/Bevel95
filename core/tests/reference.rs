@@ -604,6 +604,7 @@ fn cases() -> Vec<Case> {
     small_start_case_2000(&mut out, &f2k);
     own_start_cases(&mut out, &f95, &f2k);
     long_menu_cases(&mut out, &f95, &f2k);
+    field_menu_cases(&mut out, &f95, &f2k);
     own_properties_cases(&mut out, &f95, &f2k);
     tray_cases(&mut out, &f95, &f2k);
     desktop_cases(&mut out);
@@ -3531,6 +3532,53 @@ fn long_menu_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
     }
     start_scroll_cases(out, f95);
+}
+
+/// A text field's right-click menu (brief 95; survey part 3), drawn by the look's popup menu from
+/// `edit::Edit::menu`, against the Reference PCs' captures of the Run box's menu. The menu's place
+/// on the screen is the capture's (found by its frame).
+fn field_menu_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
+    use bevel_core::edit::{Edit, Op};
+    // (name, capture, look, fonts, the field's text, characters selected from its start, the
+    // clipboard holds text, where the menu's top left corner is)
+    type Row<'a> = (&'static str, &'static str, &'a Theme, &'a Fonts<'a>, &'a str, usize, bool, (i32, i32));
+    let cases: [Row; 6] = [
+        // 98: "exp" of "explorer /e,c:\windows\media" selected; the clipboard held text.
+        ("own-win98-field-menu-run-part-selected", "vm/win98-truecolor-address-run-box-right-click-menu-exp-selected.png", &WIN98, f95, "explorer /e,c:\\windows\\media", 3, true, (200, 370)),
+        // 98's address field, all of it selected (Select All grey), then nothing selected.
+        ("own-win98-field-menu-address-all-selected", "vm/win98-truecolor-address-folder-field-right-click-menu-all-selected.png", &WIN98, f95, "C:\\WINDOWS\\MEDIA", 16, true, (273, 233)),
+        ("own-win98-field-menu-address-nothing-selected", "vm/win98-truecolor-address-folder-field-right-click-menu-nothing-selected.png", &WIN98, f95, "C:\\WINDOWS\\MEDIA", 0, true, (273, 233)),
+        // 2000, Shift+F10: "c:" of "c:\winnt\help" selected; the clipboard held text.
+        ("own-win2000-field-menu-run-part-selected", "vm/win2000-truecolor-address-run-box-shift-f10-menu-part-selected.png", &WIN2000, f2k, "c:\\winnt\\help", 2, true, (191, 355)),
+        // 2000's address field ("Media"): part of it selected, by the mouse; and Shift+F10 with
+        // all of it selected and the clipboard empty (Paste and Select All grey).
+        ("own-win2000-field-menu-address-part-selected", "vm/win2000-truecolor-address-folder-field-mouse-right-click-part-selected-3.png", &WIN2000, f2k, "Media", 2, true, (204, 189)),
+        ("own-win2000-field-menu-address-all-selected-clipboard-empty", "vm/win2000-truecolor-address-folder-field-shift-f10-menu-all-selected-clipboard-empty.png", &WIN2000, f2k, "Media", 5, false, (454, 195)),
+    ];
+    for (name, file, theme, fonts, text, selected, clipboard, (x, y)) in cases {
+        let mut edit = Edit::new(text);
+        edit.apply(Op::Home, false);
+        for _ in 0..selected {
+            edit.apply(Op::Right, true);
+        }
+        let mut menu = edit.menu(clipboard);
+        // Opened by the mouse, Windows 2000 underlines no access keys (as its other menus).
+        menu.show_keys = !name.ends_with("address-part-selected");
+        let layout = paint::layout_menu(theme, fonts, &menu, MenuStyle::Popup, 600);
+        let mut ours = Framebuffer::new(layout.width, layout.height, 0);
+        paint::paint_menu(&mut ours, theme, fonts, &menu, MenuStyle::Popup, &layout);
+        // 98's address-field menus: the mouse pointer lies over the menu's top left corner.
+        let masks = match name {
+            n if n.starts_with("own-win98-field-menu-address") => vec![Rect::new(272, 232, 14, 22)],
+            // The mouse pointer at the menu's corner.
+            "own-win2000-field-menu-address-part-selected" => vec![Rect::new(203, 188, 18, 26)],
+            // Here the PC drew the grey Undo without its dotted access-key underline, which the
+            // Run box's menu (above, exact) has: not understood, the 6 pixels masked.
+            "own-win2000-field-menu-address-all-selected-clipboard-empty" => vec![Rect::new(475, 211, 6, 2)],
+            _ => Vec::new(),
+        };
+        out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
+    }
 }
 
 /// Windows 98's own Start menu when it scrolls (brief 92): the PC's menu after MS-DOS Prompt was

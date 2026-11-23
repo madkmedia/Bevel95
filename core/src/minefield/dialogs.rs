@@ -712,9 +712,7 @@ impl kit::Form for Sheet {
     }
     fn field_menu_at(&self) -> Option<(i32, i32)> {
         let Part::Field(i) = self.focus else { return None };
-        let f = self.fields.get(i)?;
-        let caret: i32 = f.advances.iter().take(f.caret).sum();
-        Some((f.text_x() + caret - f.scroll.get(), f.rect.bottom()))
+        crate::edit::middle(self.fields.get(i)?.rect)
     }
     fn field_menu_chosen(&mut self, index: usize) -> Vec<Effect<Part>> {
         let mut copied = None;

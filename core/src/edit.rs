@@ -521,6 +521,13 @@ pub fn paint_line(
     fb.blit(&line, x, y);
 }
 
+/// Where a field's menu opens from the keyboard (Shift+F10): the field's middle (the 2000
+/// Reference PC: the Run box's menu stood at the field's middle, upward for want of room below;
+/// its left edge 1 pixel right of the exact middle of the even-width box).
+pub fn middle(field: crate::fb::Rect) -> Option<(i32, i32)> {
+    Some((field.x + (field.w + 1) / 2, field.y + field.h / 2))
+}
+
 /// The op of entry `index` of `Edit::menu`.
 pub fn menu_op(index: usize) -> Option<Op> {
     match index {

@@ -2644,10 +2644,7 @@ impl Form for FolderWindow {
     fn field_menu_at(&self) -> Option<(i32, i32)> {
         let font = self.font()?;
         if self.field.focused {
-            // Below the caret in the address box (Shift+F10, as Windows' edit box opens it).
-            let (tx, ty) = self.chrome.address_text_at();
-            let caret = font.measure(&self.field.text.chars().take(self.field.caret).collect::<String>()) - self.field.scroll.get();
-            Some((tx + caret, ty + font.height))
+            crate::edit::middle(self.rect(Part::Address)?)
         } else {
             self.view.rename_caret_point(&font)
         }

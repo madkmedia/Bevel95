@@ -1305,6 +1305,39 @@ fn dialog_scene(theme: &Theme, fonts: &Fonts, kind: DialogKind, era: Era) -> Fra
     fb
 }
 
+/// Run's field with part of its text selected, as Windows' edit box draws a selection (brief 95).
+fn field_selected_scene(theme: &Theme, fonts: &Fonts, era: Era) -> Framebuffer {
+    let mut d = Dialog::new(DialogKind::Run, era);
+    d.text = "notepad readme.txt".to_string();
+    d.caret = 7;
+    d.anchor = Some(4);
+    d.caret_on = true;
+    let l = dialog::layout(&d);
+    let mut fb = Framebuffer::new(l.width, l.height, 0);
+    dialog::paint_dialog(&mut fb, theme, fonts, &d, &l);
+    fb
+}
+
+/// A text field's right-click menu (`edit::Edit::menu`) drawn by the look's popup menu: with
+/// `selected` "pad" of "notepad" selected, else a change made and nothing selected; `clipboard`:
+/// the clipboard holds text (brief 95).
+fn field_menu_scene(theme: &Theme, fonts: &Fonts, selected: bool, clipboard: bool) -> Framebuffer {
+    use bevel_core::edit::{Edit, Op};
+    let mut e = Edit::new("notepad");
+    if selected {
+        for _ in 0..3 {
+            e.apply(Op::Left, true);
+        }
+    } else {
+        e.type_char('s');
+    }
+    let menu = e.menu(clipboard);
+    let layout = paint::layout_menu(theme, fonts, &menu, MenuStyle::Popup, 480);
+    let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut fb, theme, fonts, &menu, MenuStyle::Popup, &layout);
+    fb
+}
+
 /// Run with its list of earlier commands open under the field, on the desktop's color, as the
 /// window host shows it (the window and the list beside the window's bottom edge).
 fn run_list_scene(theme: &Theme, fonts: &Fonts, era: Era) -> Framebuffer {
@@ -1955,6 +1988,9 @@ fn scenes() -> Vec<Scene> {
             bar_submenu_scene(theme, era, &fonts, Some(BarEntry::Size)),
         );
         add("run", "Run, with \"notepad\" typed", dialog_scene(theme, &fonts, DialogKind::Run, era));
+        add("field-selected", "Run's field with part of its text selected: \"pad\" of \"notepad readme.txt\" (brief 95)", field_selected_scene(theme, &fonts, era));
+        add("field-menu", "A text field's right-click menu with \"pad\" selected and text on the clipboard: Undo grey (nothing to undo) (brief 95)", field_menu_scene(theme, &fonts, true, true));
+        add("field-menu-grey", "The same with nothing selected, nothing to paste, after a change: Cut, Copy, Paste and Delete grey, Undo there", field_menu_scene(theme, &fonts, false, false));
         add(
             "run-list",
             "Run's list of earlier commands, dropped down by its button and moved down three with the arrow key (12 commands: a scroll bar; 2000 shows them all with the bar grayed)",

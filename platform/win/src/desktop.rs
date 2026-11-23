@@ -1554,7 +1554,7 @@ fn menu_look(era: bevel_core::theme::Era, scale: bevel_core::scale::Scale) -> Op
 /// the clipboard, Paste taking the clipboard's text.
 fn rename_menu(hwnd: HWND, keyboard: bool) {
     let has_text = bevel_winkit::clipboard::has_text();
-    let Some((menu, era, scale, below)) = with_state_value(hwnd, |st, font| {
+    let Some((mut menu, era, scale, below)) = with_state_value(hwnd, |st, font| {
         let below = st.view.rename_caret_point(font);
         (st.view.rename_menu(has_text).map(|m| (m, st.view.era, st.look.scale, below)), Vec::new())
     })
@@ -1562,6 +1562,10 @@ fn rename_menu(hwnd: HWND, keyboard: bool) {
         return;
     };
     let Some(look) = menu_look(era, scale) else { return };
+    // Opened by the mouse, Windows 2000 underlined no access keys (the Reference PCs).
+    if !keyboard {
+        menu.show_keys = era.always_shows_keys();
+    }
     let mut p = POINT::default();
     let at = match below.filter(|_| keyboard) {
         Some((x, y)) => {
@@ -1576,7 +1580,8 @@ fn rename_menu(hwnd: HWND, keyboard: bool) {
             (p.x, p.y)
         }
     };
-    let request = bevel_winkit::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above: None, titles: &[] };
+    let above = keyboard.then_some(at.1);
+    let request = bevel_winkit::menu::Request { owner: hwnd, menu, style: bevel_core::paint::MenuStyle::Popup, at, above, titles: &[] };
     if let bevel_winkit::menu::Outcome::Chosen(i) = bevel_winkit::menu::track(&look, request).outcome {
         let effects = with_state_value(hwnd, |st, font| st.view.update(font, |v| v.rename_menu_chosen::<()>(i))).unwrap_or_default();
         rename_effects(hwnd, &effects);
@@ -1600,7 +1605,8 @@ fn rename_effects(hwnd: HWND, effects: &[bevel_core::kit::Effect<()>]) {
                     with_state(hwnd, |st, font| st.view.update(font, |v| v.rename_paste(&text)).1);
                 }
             }
-            Effect::FieldMenu => rename_menu(hwnd, true),
+            Effect::FieldMenuKey => rename_menu(hwnd, true),
+            Effect::FieldMenu => rename_menu(hwnd, false),
             _ => {}
         }
     }
