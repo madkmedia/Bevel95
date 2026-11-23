@@ -117,7 +117,7 @@ pub const OTHER_CODE_PAGES: [CodePage; 5] = [
     },
 ];
 
-/// Every character the program atlases hold (`render`): code page 1252 and the letters of
+/// Every character the stored letters hold (made by `render`): code page 1252 and the letters of
 /// `OTHER_CODE_PAGES`. Anything else is drawn as its stand-in, as Windows 95's best fit to
 /// 1252 had it, or as '?' (`bevel_core::text::Font::glyph`).
 pub fn charset() -> Vec<char> {
@@ -131,12 +131,19 @@ pub fn charset() -> Vec<char> {
 /// menu font (Tahoma 8pt, the look's own), its title Tahoma 13pt bold (17 px).
 pub const WEB_FONTS: [(&str, i32, bool); 4] = [("Verdana", 11, false), ("Verdana", 11, true), ("Verdana", 21, true), ("Tahoma", 17, true)];
 
+thread_local! {
+    /// How often this thread asked Windows for letters (`render`, `render_1252`): the tests prove
+    /// with it that making a look asks Windows for nothing.
+    pub(super) static ASKED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// Renders `face` at `px` pixels per em (GDI lfHeight = -px), non-antialiased, with every
 /// character of `charset`: the letters of code page 1252 exactly as `render_1252` draws them
 /// (the font asked with `ANSI_CHARSET`), and each other code page's letters from the same face
 /// asked with that code page's character set (`other_letters`), set on the same baseline. What
-/// every program draws with.
+/// every program drew with until 0.1.5; now what the stored letters are made from and checked against.
 pub fn render(face: &str, px: i32, bold: bool) -> Result<Font, String> {
+    ASKED.with(|a| a.set(a.get() + 1));
     load_own_files(face);
     let _dpi = DpiUnaware::enter();
     let cell = cell_1252(face, px, bold)?;
@@ -148,8 +155,9 @@ pub fn render(face: &str, px: i32, bold: bool) -> Result<Font, String> {
 }
 
 /// `render` with the letters of code page 1252 only: what the font fixtures in
-/// `core/tests/fixtures` hold, and the font of what shows only Bevel95's own words.
+/// `core/tests/fixtures` hold.
 pub fn render_1252(face: &str, px: i32, bold: bool) -> Result<Font, String> {
+    ASKED.with(|a| a.set(a.get() + 1));
     load_own_files(face);
     let _dpi = DpiUnaware::enter();
     let cell = cell_1252(face, px, bold)?;
@@ -369,7 +377,7 @@ fn load_file_privately(own_font_file: &'static str, log_missing: bool) -> bool {
             let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
             clear_last_error();
             // SAFETY: a null-terminated path; FR_PRIVATE keeps the font to this process, and it
-            // goes with the process (never removed earlier: atlases are made again on a change).
+            // goes with the (test) process.
             let loaded = unsafe { AddFontResourceExW(wide.as_ptr(), FR_PRIVATE, null()) };
             if loaded == 0 {
                 log(&win32_failed(&format!("font: AddFontResourceExW({own_font_file})")));
@@ -406,8 +414,7 @@ fn failed_with(what: &str, code: u32) -> String {
     if code == 0 { format!("{what} failed (Windows gave no error number)") } else { format!("{what} failed (Win32 error {code})") }
 }
 
-/// Logs `line` the first time this process has it (a program makes its atlases again whenever
-/// the look changes).
+/// Logs `line` the first time this process has it (the tests make atlases again and again).
 fn log_once(line: String) {
     static SAID: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let mut said = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -752,15 +759,17 @@ mod tests {
         }
     }
 
-    /// Windows' fonts made unreachable to the old way (GDI "gives another face" and SSERIFE.FON
-    /// "cannot be read": the stand-ins below), every look's letters are still made, the same as
-    /// always: the programs no longer ask Windows (brief 89).
+    /// Every look's letters, and the web view's, are made without asking Windows at all (brief
+    /// 89): counted (`ASKED`) while they are made, with Windows' fonts made unreachable to the old
+    /// way too (GDI "gives another face" and SSERIFE.FON "cannot be read": the stand-ins below);
+    /// and they are what Windows draws (so taking the stored letters away turns this red as well).
     #[test]
-    fn every_look_is_made_without_windows_fonts() {
+    fn every_look_is_made_without_asking_windows() {
         use bevel_core::theme::{Depth, Era};
         GDI_REFUSES.with(|g| g.set(true));
         FILE_FAILS.with(|f| f.set(true));
         let old_way = render("MS Sans Serif", 11, false);
+        ASKED.with(|a| a.set(0));
         // Every look's message window (Bevel95's own, as `confirm::show_message` opens it), its
         // words in several alphabets, painted with the letters made while the old way fails.
         const WORDS: &str = "Größe: Łódź, Šárka, Ελλάδα, Жёлтый, İstanbul, Rīga.";
@@ -783,9 +792,11 @@ mod tests {
             }
         }
         let web: Vec<Font> = WEB_FONTS.iter().map(|&(f, p, b)| crate::font::letters(f, p, b)).collect();
+        let asked = ASKED.with(std::cell::Cell::get);
         GDI_REFUSES.with(|g| g.set(false));
         FILE_FAILS.with(|f| f.set(false));
         assert!(old_way.is_err(), "the stand-ins do make the old way fail");
+        assert_eq!(asked, 0, "making the looks asked Windows for letters");
         // Each look's letters are its own face's, the same as Windows draws them (made now, with
         // the stand-ins gone), and the web view's too; so every window is painted pixel for pixel as with the letters Windows draws.
         assert_eq!(looks.len(), 9);

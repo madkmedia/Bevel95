@@ -2,8 +2,8 @@
 //! to their reports. This test reads every log call of the bar, the shared Windows side and the
 //! programs, and fails if one is given what was taken out of them on 2026-11-17: a window's
 //! title, a notification icon's tooltip, a displayed path, what was typed into Run, a program's,
-//! document's or desktop item's name, the places Windows names. A log call is `log(`,
-//! `log_win32(` or `report(` with everything up to its closing parenthesis.
+//! document's or desktop item's name, the places Windows names, a window's class. A log call is
+//! `log(`, `log_win32(`, `report(` or `counted(` with everything up to its closing parenthesis.
 //!
 //! The one exception is `bevel95 --list-windows` (`window_list::log_all`), which writes window
 //! titles because the person runs it on purpose; its first line says so.
@@ -38,6 +38,14 @@ const FORBIDDEN: &[(&str, &str)] = &[
     (".id,", "an item's id, a path (use log::path_kind)"),
     ("{folder}", "a folder's path (use log::path_kind)"),
     ("{file}", "a file's path or name (use log::path_kind)"),
+    // A window's class can carry another program's name (WPF's "HwndWrapper[<program>;..]"):
+    // the kind of window in Bevel95's own words instead (`window_list::kind_of`; the review of
+    // brief 90, R5).
+    ("class_name(", "a window's class (use window_list::kind_of)"),
+    ("{class}", "a window's class (use window_list::kind_of)"),
+    ("{class:", "a window's class (use window_list::kind_of)"),
+    ("{front_class", "a window's class (use window_list::kind_of)"),
+    ("_class}", "a window's class (use window_list::kind_of)"),
 ];
 
 /// The forbidden patterns `call` contains, with why.
@@ -61,7 +69,7 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn log_calls(source: &str) -> Vec<(usize, String)> {
     let bytes = source.as_bytes();
     let mut calls = Vec::new();
-    for name in ["log(", "log_win32(", "report("] {
+    for name in ["log(", "log_win32(", "report(", "counted("] {
         let mut from = 0;
         while let Some(at) = source[from..].find(name) {
             let start = from + at;
@@ -157,5 +165,22 @@ fn an_items_id_is_refused() {
         assert!(!forbidden_in(&calls[0].1).is_empty(), "not refused: {line}");
     }
     let calls = log_calls("        log(&format!(\"desktop: opening {} in a folder window\", item_kind(id)));\n");
+    assert!(forbidden_in(&calls[0].1).is_empty());
+}
+
+/// A window's class is refused in every kind of log call, counted ones too (the review of brief 90,
+/// R5); its kind in Bevel95's own words passes.
+#[test]
+fn a_windows_class_is_refused() {
+    for line in [
+        "        counted(&N, &format!(\"desktop: class {class} kept the front\"));\n",
+        "        log(&format!(\"in front: class {}\", window_list::class_name(front)));\n",
+        "        log(&format!(\"in front: class {front_class}\"));\n",
+    ] {
+        let calls = log_calls(line);
+        assert_eq!(calls.len(), 1, "{line}");
+        assert!(!forbidden_in(&calls[0].1).is_empty(), "not refused: {line}");
+    }
+    let calls = log_calls("        counted(&N, &format!(\"desktop: {} kept the front\", window_list::kind_of(front)));\n");
     assert!(forbidden_in(&calls[0].1).is_empty());
 }

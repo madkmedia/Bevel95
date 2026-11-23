@@ -2489,6 +2489,11 @@ impl Form for FolderWindow {
     }
 
     fn button(&mut self, button: Button, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        // A right or middle press that brought the window forward uses up the activating click: a
+        // later left click on a name is a slow click again (the review of brief 90).
+        if down {
+            self.click_activated = false;
+        }
         if button != Button::Right {
             return Vec::new();
         }
@@ -2540,7 +2545,8 @@ impl Form for FolderWindow {
     fn set_active(&mut self, active: bool) {
         self.active = active;
         self.view.active = active;
-        // Another window took the keyboard while a label was renamed: the platform takes the name.
+        // (Another window took the keyboard while a label was renamed: the platform takes the name.)
+        // A window that went behind forgets an activating click whose press it did not get.
         if !active {
             self.click_activated = false;
         }
@@ -3019,6 +3025,16 @@ mod tests {
         c.mouse_down(&mut w, lx, ly);
         c.mouse_up(&mut w, lx, ly);
         assert!(w.slow_rename_waiting());
+        // A right press that brought the window forward uses the activating click up.
+        let _ = w.slow_rename_due();
+        w.set_active(false);
+        w.set_active(true);
+        w.activated_by_click();
+        let _ = w.button(Button::Right, true, lx, ly);
+        let _ = w.button(Button::Right, false, lx, ly);
+        c.mouse_down(&mut w, lx, ly);
+        c.mouse_up(&mut w, lx, ly);
+        assert!(w.slow_rename_waiting(), "after a right-click activation, a slow click");
         // A window that went behind again forgets an activating click it did not get the press of.
         let _ = w.slow_rename_due();
         w.activated_by_click();

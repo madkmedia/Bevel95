@@ -20,8 +20,9 @@ pub fn letters(face: &str, px: i32, bold: bool) -> Font {
         .expect("the stored MS Sans Serif letters (proved by the tests)")
 }
 
-/// While alive, GDI on this thread behaves as if the screen were 96 DPI, so font
-/// selection picks the 96-DPI raster font file (SSERIFE.FON) even on a high-DPI monitor.
+/// While alive, Windows' calls on this thread behave as if the screen were 96 DPI: the shell's
+/// pictures come at their 96-DPI sizes (`shell`, `start_menu`), and the tests' font drawing
+/// (`gdi`) picks the 96-DPI raster font file (SSERIFE.FON) even on a high-DPI monitor.
 pub struct DpiUnaware(DPI_AWARENESS_CONTEXT);
 
 impl DpiUnaware {

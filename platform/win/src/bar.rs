@@ -1747,6 +1747,23 @@ fn start_action(index: usize) {
     }
 }
 
+/// The window in front at a press on the bar, as a task button's click is to see it
+/// (`tasks::front_seen`), and the one Windows has in front. Read first of all at the press, before
+/// Quick Search, a flyout, a menu or the volume control is closed (the review of brief 90, R1).
+/// The press's desktop mark is used up.
+fn front_at_press() -> (Option<u64>, Option<u64>) {
+    let front = window_list::active_window() as u64;
+    let front = (front != 0).then_some(front);
+    // One of the bar's own windows that has no button: a menu, the volume control, Quick Search.
+    let own = front.is_some_and(|w| window_list::is_own(w as HWND));
+    let seen = with_app(|app| {
+        let own_in_front = own && !app.windows.iter().any(|w| Some(w.id) == front);
+        tasks::front_seen(front, app.left_for_desktop.take(), own_in_front)
+    })
+    .flatten();
+    (seen, front)
+}
+
 /// A click on a task button: one window comes to the front (or is minimized if it already
 /// is); several windows get a list to pick from (`tasks::click` decides).
 fn click_task(bar: HWND, index: usize) {
@@ -1771,13 +1788,13 @@ fn click_task(bar: HWND, index: usize) {
         Click::Nothing => {}
         Click::Minimize(id) => window_list::minimize(id as HWND),
         Click::Activate(id) => {
-            // Brought forward where the window in front at the press would have been minimized:
-            // a menu of Bevel95's was open, or the desktop was the last thing pressed (brief 90).
-            if front != raw {
+            // Brought forward though Windows had it in front at the press: the desktop was the
+            // last thing pressed, and Windows had not let the desktop come forward (brief 90).
+            if raw == Some(id) && front != raw {
                 static INSTEAD: AtomicU32 = AtomicU32::new(0);
                 bevel_winkit::log::counted(
                     &INSTEAD,
-                    "task buttons: a click brought its window forward; it was in front, but a menu of Bevel95's or the desktop was the last thing pressed",
+                    "task buttons: a click brought its window forward though it was in front: the desktop was the last thing pressed",
                 );
             }
             window_list::activate(id as HWND);
@@ -1809,12 +1826,12 @@ fn check_activated() {
     if front != hwnd || minimized {
         let exe = window_list::program_path(hwnd);
         let exe = exe.rsplit(['\\', '/']).next().unwrap_or("");
-        let front_class = if front.is_null() { String::from("none") } else { window_list::class_name(front) };
         log(&format!(
-            "a click's window is not in front {} ms later: class {}, program {exe}{}; in front: class {front_class}",
+            "a click's window is not in front {} ms later: {}, program {exe}{}; in front: {}",
             ACTIVATE_CHECK.as_millis(),
-            window_list::class_name(hwnd),
+            window_list::kind_of(hwnd),
             if minimized { ", still minimized" } else { "" },
+            window_list::kind_of(front),
         ));
     }
 }
@@ -3019,6 +3036,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONDOWN => {
             forget_tray_press();
+            // The window in front at the press, read before anything closes (closing Quick
+            // Search, a flyout, a menu or the volume control hands the front to the program under
+            // it): what a task button's click decides from (brief 90, the review's R1).
+            let (seen, front_now) = front_at_press();
             crate::find_window::close_for_a_press();
             // First of all, a Windows flyout in front closes (and the network icon's own list
             // is not opened again by the press that closed it).
@@ -3029,18 +3050,6 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             let list_open = popup::window_list_open();
             // The same for Windows 2000's Quick Launch list: a press on its "»" only closes it.
             let quick_list_was_open = popup::quick_list_open();
-            // The window in front at the press, before the menus close (closing one hands the
-            // front to the program under it): what a task button's click decides from (brief 90).
-            let front_now = window_list::active_window() as u64;
-            let front_now = (front_now != 0).then_some(front_now);
-            // One of the bar's own windows that has no button: a menu, the volume control, the
-            // classic desktop, Quick Search.
-            let own = front_now.is_some_and(|w| window_list::is_own(w as HWND));
-            let seen = with_app(|app| {
-                let own_in_front = own && !app.windows.iter().any(|w| Some(w.id) == front_now);
-                tasks::front_seen(front_now, app.left_for_desktop.take(), own_in_front)
-            })
-            .flatten();
             popup::close(false);
             // The bar never takes the focus, so a click on it does not reach the volume
             // control as a click elsewhere would (Windows' own taskbar did take it): it closes
@@ -3235,22 +3244,26 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             let order = with_app(|app| app.task_list.order().to_vec()).unwrap_or_default();
             let past_threshold = press.as_ref().is_some_and(ButtonPress::went_past_threshold);
-            match press.map(|p| p.release(&order)) {
+            let on_button = task_at(x, y) == Some(index);
+            let release = press.map_or(if on_button { Release::Click } else { Release::Nothing }, |p| p.release(&order, on_button));
+            match release {
                 // A drag: the button stays where it was dropped; nothing is clicked.
-                Some(Release::Dropped) => {
+                Release::Dropped => {
                     let from = from.map_or(String::from("?"), |f| (f + 1).to_string());
                     log(&format!("task buttons: a drag moved a button from place {from} to {} of {count}", index + 1));
                     save_task_order();
                 }
-                // Past the drag threshold and let go with every button in its old place: a click
-                // (brief 90), wherever the pointer is now.
-                _ if past_threshold => {
-                    static BACK: AtomicU32 = AtomicU32::new(0);
-                    bevel_winkit::log::counted(&BACK, "task buttons: a press went past the drag threshold, the button stayed in its place: a click");
+                // Let go on the button in its own place: a click, also past the drag threshold and
+                // back (brief 90).
+                Release::Click => {
+                    if past_threshold {
+                        static BACK: AtomicU32 = AtomicU32::new(0);
+                        bevel_winkit::log::counted(&BACK, "task buttons: a press went past the drag threshold, the button stayed in its place: a click");
+                    }
                     click_task(bar, index);
                 }
-                _ if task_at(x, y) == Some(index) => click_task(bar, index),
-                _ => {
+                // Let go elsewhere: nothing (the review of brief 90, R2).
+                Release::Nothing => {
                     with_app(|app| app.press_front = None);
                 }
             }
@@ -3503,9 +3516,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                     let entered = wparam as u32 == HSHELL_FULLSCREENENTER;
                     // Which kind of window (no title): Windows reports the classic desktop too.
                     let window = lparam as HWND;
-                    let class = window_list::class_name(window);
-                    let class = if class.is_empty() { String::from("(gone)") } else { class };
-                    log(&format!("shell: a window of class {class} {} fullscreen", if entered { "entered" } else { "left" }));
+                    log(&format!("shell: {} {} fullscreen", window_list::kind_of(window), if entered { "entered" } else { "left" }));
                     with_app(|app| app.fullscreen.reported(lparam as HWND, entered));
                     return 0;
                 }

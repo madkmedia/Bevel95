@@ -1,5 +1,6 @@
-//! Bitmap-font text. The platform layer renders the real font once (GDI on Windows) and
-//! hands over a `Font`: one small 1-bit picture per character. Everything else (drawing,
+//! Bitmap-font text. A `Font` is one small 1-bit picture per character; the letters the programs
+//! draw with are stored in the program (`stored`, since 0.1.5: made once from Windows' own fonts
+//! by bevel-winkit's tests, never asked of Windows at run time). Everything else (drawing,
 //! measuring, "..." eliding) happens here, so it is identical on every platform.
 //!
 //! A `Font` can also be saved as a plain-text "fixture" (ASCII art, see `to_text`), which
@@ -41,10 +42,15 @@ pub fn stored_list() -> impl Iterator<Item = (&'static str, i32, bool)> {
 }
 
 /// The stored letters of `face` at `px` pixels per em, regular or bold (`None`: Bevel95 stores no
-/// such font).
+/// such font). Built-in letters that cannot be read are a mistake in the program, never something
+/// of the PC's (`every_stored_font_reads` proves they all read): it stops with the reason, not in
+/// silence (the review of brief 89).
 pub fn stored(face: &str, px: i32, bold: bool) -> Option<Font> {
     let &(name, _, _, bytes) = STORED.iter().find(|&&(f, p, b, _)| f.eq_ignore_ascii_case(face) && p == px && b == bold)?;
-    Font::from_stored(bytes, name, bold).ok()
+    match Font::from_stored(bytes, name, bold) {
+        Ok(font) => Some(font),
+        Err(e) => panic!("Bevel95's built-in letters cannot be read (a mistake in the program): {e}"),
+    }
 }
 
 /// One character: how far it moves the pen, and its ink.
@@ -264,6 +270,10 @@ impl Font {
             _ => return Err(short()),
         };
         let height = i32::from(height);
+        // The baseline lies within the cell.
+        if i32::from(ascent) > height || height == 0 {
+            return Err(format!("{name}: a baseline of {ascent} in a cell of {height}"));
+        }
         let mut at = 3;
         let mut glyphs = Vec::new();
         while at < bytes.len() {
@@ -535,8 +545,53 @@ impl Font {
 }
 
 #[cfg(test)]
-mod tests {
+mod stored_tests {
     use super::*;
+
+    /// Every built-in font reads, with every alphabet's letters (the review of brief 89).
+    #[test]
+    fn every_stored_font_reads() {
+        for (face, px, bold) in stored_list() {
+            let font = stored(face, px, bold).unwrap();
+            assert_eq!(font.glyphs().len(), 468, "{face} {px} {bold}");
+            assert_eq!(font.glyph('?').ch, '?');
+            assert!(font.ascent <= font.height);
+            assert_eq!(Font::from_stored(&font.to_stored().unwrap(), face, bold).unwrap(), font, "round trip");
+        }
+        assert!(stored("Arial", 11, false).is_none(), "not stored: none");
+    }
+
+    /// Bytes that are not stored letters are an error, never a panic (the review of brief 89).
+    #[test]
+    fn bad_bytes_are_an_error() {
+        let good = stored("MS Sans Serif", 11, false).unwrap().to_stored().unwrap();
+        let mut bad: Vec<(&str, Vec<u8>)> = vec![
+            ("nothing", Vec::new()),
+            ("a short head", vec![13, 11]),
+            ("a baseline below the cell", { let mut b = good.clone(); b[1] = 14; b }),
+            ("a cell of no height", { let mut b = good.clone(); b[0] = 0; b[1] = 0; b }),
+            ("cut in a letter's head", good[..good.len().min(3 + 3)].to_vec()),
+            ("cut in a letter's ink", good[..good.len() - 1].to_vec()),
+            ("no letters ('?' missing)", good[..3].to_vec()),
+            ("half a surrogate", { let mut b = good[..3].to_vec(); b.extend([0x00, 0xD8, 5, 0, 0]); b }),
+        ];
+        // Every length the good bytes can be cut to, and a byte changed anywhere in the head.
+        for n in [4, 7, 8, 9, 100, 1000] {
+            bad.push(("cut", good[..n.min(good.len() - 1)].to_vec()));
+        }
+        for (what, bytes) in bad {
+            assert!(Font::from_stored(&bytes, "test", false).is_err(), "{what}");
+        }
+        for k in 0..good.len().min(64) {
+            let mut b = good.clone();
+            b[k] = b[k].wrapping_add(0x5A);
+            let _ = Font::from_stored(&b, "test", false);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {    use super::*;
 
     /// A 3px-tall test font: "a" is 2 wide, "?" is 1 wide, "." is 1 wide, " " is blank.
     fn tiny() -> Font {

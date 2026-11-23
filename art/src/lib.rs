@@ -1,5 +1,7 @@
-//! Windows 95's, 98's and 2000's own pictures, sounds and logos that Bevel95 shows, in one place
-//! (they are Microsoft's, not covered by Bevel95's licence: README.md, "License").
+//! Windows 95's, 98's and 2000's own pictures, sounds and logos that Bevel95 shows, and the letters
+//! of the screen fonts its programs draw with (`fonts/`: drawn by Windows 11's own copies of those
+//! fonts), in one place (they are Microsoft's, not covered by Bevel95's licence: README.md,
+//! "License").
 //!
 //! Data and nothing else: no drawing, no rules, no dependencies. The one way in is [`get`]: a
 //! picture looked up by what it is, for which look and at which color depth. What a picture is

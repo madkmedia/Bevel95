@@ -710,9 +710,9 @@ impl kit::Form for FindWindow {
     }
 
     fn set_active(&mut self, active: bool) {
-        if self.active && !active {
-            self.turned_away = true;
-        }
+        // Turned away; and back in front before the bar's tick saw it (Alt+Tab away and straight
+        // back), it stays (the review of brief 90, R3).
+        self.turned_away = (self.active || self.turned_away) && !active;
         self.active = active;
     }
 
@@ -985,6 +985,11 @@ mod tests {
         w.set_active(true);
         w.set_active(false);
         assert!(w.turned_away());
+        // Away and straight back before it was asked: it stays (the review's R3).
+        w.set_active(true);
+        w.set_active(false);
+        w.set_active(true);
+        assert!(!w.turned_away(), "back in front");
     }
 
     #[test]

@@ -193,7 +193,7 @@ Bevel95 is free and stays free. If you have enjoyed it and would like to support
 
 ## License
 
-GPL-3.0-or-later for Bevel95's own code ([LICENSE](LICENSE)). The Windows artwork belongs to Microsoft and is not covered by it. Bevel95 is a hobby project for nostalgia and study; it is not affiliated with or endorsed by Microsoft.
+GPL-3.0-or-later for Bevel95's own code ([LICENSE](LICENSE)). The Windows artwork (its pictures, sounds and the letters of its screen fonts) belongs to Microsoft and is not covered by it. Bevel95 is a hobby project for nostalgia and study; it is not affiliated with or endorsed by Microsoft.
 
 ## See also
 

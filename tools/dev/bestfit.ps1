@@ -32,7 +32,7 @@ foreach ($code in 0x100..0xFFFF) {
 $lines = New-Object System.Text.StringBuilder
 $head = @'
 //! Windows' "best fit" from Unicode to code page 1252, the characters the glyph atlases hold
-//! (`bevel-winkit`'s `font::charset`). Windows 95 read window titles through this conversion,
+//! (`bevel-winkit`'s `font::gdi::charset_1252`). Windows 95 read window titles through this conversion,
 //! so a character it could not show became a near one where Windows had one (U+0141 as "L",
 //! U+0107 as "c", a non-breaking hyphen as "-"), and "?" otherwise. Generated from Windows
 //! itself by `tools/dev/bestfit.ps1` (WideCharToMultiByte(1252, 0, ...) for U+0100..U+FFFF):

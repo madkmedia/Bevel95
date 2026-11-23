@@ -174,13 +174,17 @@ mod tests {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, HWND_TOPMOST, LWA_ALPHA, MSG,
         PostThreadMessageW, RegisterClassW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowPos,
-        WM_QUIT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP, WindowFromPoint,
+        WM_QUIT, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WindowFromPoint,
     };
 
     use super::TIP_EX_STYLE;
     use crate::util::wide;
 
-    /// A plain window of this test's own, shown without taking the front.
+    /// Far outside every screen: the test's windows are shown there, where nobody sees them (the
+    /// review of brief 90: nothing on the owner's screen).
+    const AWAY: i32 = -30000;
+
+    /// A plain window of this test's own, shown (off every screen) without taking the front.
     fn window(class: &str, ex: u32, x: i32, y: i32) -> HWND {
         let name = wide(class);
         // SAFETY: a class of the test's own with the default procedure; a window of it.
@@ -194,18 +198,21 @@ mod tests {
     }
 
     /// The bar's tooltip lets a press through to the window under it, also when that window is
-    /// another thread's (brief 90): Windows' hit test passes a layered, transparent window by. The
-    /// tooltip's old style (transparent only, which passes a press on only within its own thread)
-    /// did catch it. Proven with windows of this test's own: one on a thread of its own, the
-    /// tooltip's look-alike above it.
+    /// another thread's (brief 90): Windows' hit test passes a layered, transparent window by.
+    /// Proven with windows of this test's own, off every screen: one on a thread of its own, the
+    /// tooltip's look-alike above it; and, so that the test cannot pass for nothing, a window of
+    /// the same kind without the two styles above the same window elsewhere, which Windows does
+    /// find. (It no longer shows the old style's fault: that style answered HTTRANSPARENT to the
+    /// hit test, which a test window of its own would need its own procedure to imitate.)
     #[test]
     fn a_press_over_the_tooltip_reaches_the_window_under_it() {
-        let (x, y) = (4, 4);
+        let (x, y) = (AWAY, AWAY);
         let (tx, rx) = mpsc::channel();
         let under = std::thread::spawn(move || {
             let hwnd = window("Bevel95TestUnderTip", WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, x, y);
+            let wide_under = window("Bevel95TestUnderPlain", WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, x + 100, y);
             // SAFETY: the thread's id, for the quit message.
-            tx.send((hwnd as usize, unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() })).unwrap();
+            tx.send((hwnd as usize, wide_under as usize, unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadId() })).unwrap();
             let mut msg = MSG::default();
             // SAFETY: this thread's own message loop.
             unsafe {
@@ -213,24 +220,25 @@ mod tests {
                     DispatchMessageW(&msg);
                 }
                 DestroyWindow(hwnd);
+                DestroyWindow(wide_under);
             }
         });
-        let (under_hwnd, thread) = rx.recv().unwrap();
+        let (under_hwnd, _, thread) = rx.recv().unwrap();
         let tip = window("Bevel95TestTip", TIP_EX_STYLE, x, y);
         // SAFETY: the test's own window.
         unsafe { SetLayeredWindowAttributes(tip, 0, 255, LWA_ALPHA) };
-        let old = window("Bevel95TestOldTip", WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT, x + 100, y);
+        let plain = window("Bevel95TestPlainAbove", WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, x + 100, y);
         // SAFETY: plain queries and our own windows.
-        let (through, caught) = unsafe {
+        let (through, found) = unsafe {
             (WindowFromPoint(POINT { x: x + 30, y: y + 15 }), WindowFromPoint(POINT { x: x + 130, y: y + 15 }))
         };
         unsafe {
             DestroyWindow(tip);
-            DestroyWindow(old);
+            DestroyWindow(plain);
             PostThreadMessageW(thread, WM_QUIT, 0, 0);
         }
         under.join().unwrap();
         assert_eq!(through as usize, under_hwnd, "the press goes through the tooltip to the window under it");
-        assert_eq!(caught, old, "the old style caught it");
+        assert_eq!(found, plain, "a window without the tooltip's styles is found there (the test is not empty)");
     }
 }

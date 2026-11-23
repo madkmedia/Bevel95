@@ -154,12 +154,48 @@ pub fn program_path(hwnd: HWND) -> String {
     process_path(process_id(hwnd)).unwrap_or_default()
 }
 
-/// A window as the log may show it: its class and its program's file name, never its title
-/// (no private text in the log).
+/// A window as the log may show it: its kind in Bevel95's own words (`kind_of`) and its program's
+/// file name, never its title or class (no private text in the log).
 pub fn describe(hwnd: HWND) -> String {
     let path = program_path(hwnd);
     let exe = path.rsplit(['\\', '/']).next().filter(|s| !s.is_empty()).unwrap_or("an unknown program");
-    format!("a window of class {} ({exe})", class_name(hwnd))
+    format!("{} ({exe})", kind_of(hwnd))
+}
+
+/// The kind of a window as the log may say it, in Bevel95's own words from a fixed list: never
+/// its class, which can carry another program's name (WPF's `HwndWrapper[<program>;..]`; the
+/// review of brief 90, R5).
+pub fn kind_of(hwnd: HWND) -> &'static str {
+    if hwnd.is_null() {
+        return "no window";
+    }
+    if !exists(hwnd) {
+        return "a window that is gone";
+    }
+    if is_own(hwnd) {
+        return "one of Bevel95's windows";
+    }
+    window_kind(&class_name(hwnd))
+}
+
+/// `kind_of` by a window's class (Windows' own classes; anything else is another program's).
+fn window_kind(class: &str) -> &'static str {
+    match class {
+        "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "NotifyIconOverflowWindow" | "TopLevelWindowForOverflowXamlIsland" => {
+            "Windows' own taskbar"
+        }
+        "Windows.UI.Core.CoreWindow" | "Shell_LightDismissOverlay" | "StartMenuSizingFrame" | "XamlExplorerHostIslandWindow" => {
+            "Windows' own Start or one of its panels"
+        }
+        "Progman" | "WorkerW" | "SHELLDLL_DefView" => "Windows' own desktop",
+        "#32768" => "a menu",
+        "#32770" => "a dialog box",
+        "tooltips_class32" => "a tooltip",
+        "ApplicationFrameWindow" => "a Store app's window",
+        "ConsoleWindowClass" | "PseudoConsoleWindow" => "a console window",
+        "" => "a window without a class",
+        _ => "another program's window",
+    }
 }
 
 fn process_path(pid: u32) -> Option<String> {
@@ -404,13 +440,10 @@ pub fn activate(hwnd: HWND) {
     match bring_forward(hwnd) {
         Forward::Direct => {}
         Forward::Joined => log(&format!(
-            "SetForegroundWindow refused at first for a window of class {}; it worked with the input joined",
-            class_name(hwnd)
+            "SetForegroundWindow refused at first for {}; it worked with the input joined",
+            kind_of(hwnd)
         )),
-        Forward::Refused => log(&format!(
-            "SetForegroundWindow refused for a window of class {}, also with the input joined",
-            class_name(hwnd)
-        )),
+        Forward::Refused => log(&format!("SetForegroundWindow refused for {}, also with the input joined", kind_of(hwnd))),
     }
 }
 
@@ -566,3 +599,18 @@ pub fn log_all() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::window_kind;
+
+    /// The log says a window's kind from a fixed list, never its class (the review of brief 90,
+    /// R5): a class that carries a program's name comes out as "another program's window".
+    #[test]
+    fn a_windows_kind_is_said_in_bevel95s_words() {
+        assert_eq!(window_kind("Shell_TrayWnd"), "Windows' own taskbar");
+        assert_eq!(window_kind("Windows.UI.Core.CoreWindow"), "Windows' own Start or one of its panels");
+        assert_eq!(window_kind("Progman"), "Windows' own desktop");
+        assert_eq!(window_kind("HwndWrapper[SomeProgram;;0f1e2d3c]"), "another program's window");
+        assert_eq!(window_kind("Chrome_WidgetWin_1"), "another program's window");
+    }
+}

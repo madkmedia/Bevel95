@@ -165,9 +165,10 @@ pub fn front_seen(front: Option<u64>, left_for_desktop: Option<u64>, own_in_fron
 }
 
 /// The window that was in front when the classic desktop was pressed (`left`), kept while that
-/// window is still in front (`front` now): once another came forward, the person is elsewhere.
+/// window is still in front (`front` now): once another came forward, the person is elsewhere. No
+/// window in front at all (0: Windows between two windows for a moment) changes nothing.
 pub fn still_left(left: Option<u64>, front: u64) -> Option<u64> {
-    left.filter(|&w| w == front)
+    left.filter(|&w| w == front || front == 0)
 }
 
 /// The click on a button holding `windows`. One window comes to the front, or is minimized if
@@ -206,10 +207,12 @@ pub struct ButtonPress {
 /// What the release of a pressed task button ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Release {
-    /// No drag: the button's click (if the pointer is still on it).
+    /// Let go on the button, every button in its place: the button's click.
     Click,
     /// A drag: the button stays where it was dropped, and nothing is clicked.
     Dropped,
+    /// Let go off the button with every button in its place: nothing (no click, no drop).
+    Nothing,
 }
 
 impl ButtonPress {
@@ -228,12 +231,19 @@ impl ButtonPress {
         true
     }
 
-    /// The button is let go with the windows' order now `order`. A press that went past the drag
-    /// threshold and was let go with every button in its old place is a click too (brief 90: a
-    /// mouse that slipped a few pixels did nothing; the old Windows had no dragging, and any
-    /// release on the button was a click).
-    pub fn release(&self, order: &[u64]) -> Release {
-        if self.dragging && order != self.saved.as_slice() { Release::Dropped } else { Release::Click }
+    /// The button is let go with the windows' order now `order`, the pointer on that button or
+    /// not (`on_button`). A press that went past the drag threshold and was let go on the button
+    /// with every button in its old place is a click too (brief 90: a mouse that slipped a few
+    /// pixels did nothing; the old Windows had no dragging, and any release on the button was a
+    /// click); let go anywhere else it is nothing (the review of brief 90, R2).
+    pub fn release(&self, order: &[u64], on_button: bool) -> Release {
+        if self.dragging && order != self.saved.as_slice() {
+            Release::Dropped
+        } else if on_button {
+            Release::Click
+        } else {
+            Release::Nothing
+        }
     }
 
     /// Whether the press went past the drag threshold (for the log, with `release`).
@@ -390,6 +400,21 @@ mod tests {
         assert_eq!(still_left(Some(7), 7), Some(7));
         assert_eq!(still_left(Some(7), 8), None);
         assert_eq!(still_left(None, 7), None);
+        assert_eq!(still_left(Some(7), 0), Some(7), "a front empty for a moment keeps the mark");
+    }
+
+    /// Quick Search open over program 7, a press on 7's button (the review of brief 90, R1): read
+    /// first, the window in front is Quick Search, one of the bar's own windows without a button,
+    /// so 7 comes forward. Read after Quick Search closed, Windows has handed the front back to 7,
+    /// and the click would minimize it: the bar reads the front before closing anything.
+    #[test]
+    fn a_click_with_quick_search_open_brings_the_program_back() {
+        let state = |front| ClickState { front, minimized: false, list_was_open: false };
+        const QUICK_SEARCH: u64 = 99;
+        let read_first = front_seen(Some(QUICK_SEARCH), None, true);
+        assert_eq!(click(&[7], state(read_first)), Click::Activate(7));
+        let read_after_closing = front_seen(Some(7), None, false);
+        assert_eq!(click(&[7], state(read_after_closing)), Click::Minimize(7), "why the order matters");
     }
 
     #[test]
@@ -397,14 +422,17 @@ mod tests {
         let mut press = ButtonPress::new(vec![1], 50, vec![1, 2], 50);
         // Within Windows' threshold (4 here), either way: still a click.
         assert!(!press.moved(54, 4) && !press.moved(46, 4));
-        assert_eq!(press.release(&[1, 2]), Release::Click);
+        assert_eq!(press.release(&[1, 2], true), Release::Click);
         // One pixel further: a drag, which begins once; the release clicks nothing once the
         // button is in another place.
         assert!(press.moved(55, 4));
         assert!(!press.moved(80, 4) && press.dragging);
-        assert_eq!(press.release(&[2, 1]), Release::Dropped);
-        // Past the threshold and back, every button in its old place: a click (brief 90).
-        assert_eq!(press.release(&[1, 2]), Release::Click);
+        assert_eq!(press.release(&[2, 1], true), Release::Dropped);
+        assert_eq!(press.release(&[2, 1], false), Release::Dropped, "dropped wherever it is let go");
+        // Past the threshold and back, every button in its old place: a click on the button (brief 90),
+        // nothing let go off it, on the bar or off the bar (the review's R2).
+        assert_eq!(press.release(&[1, 2], true), Release::Click);
+        assert_eq!(press.release(&[1, 2], false), Release::Nothing);
         assert!(press.went_past_threshold());
         // Up and down does not count, only sideways (the bar is one row high).
         let mut press = ButtonPress::new(vec![1], 50, vec![], 50);
@@ -535,7 +563,7 @@ mod tests {
 
         /// The release: the order stays, and nothing is clicked.
         fn release(&mut self) -> Release {
-            let release = self.press.release(self.list.order());
+            let release = self.press.release(self.list.order(), true);
             self.press.dragging = false;
             release
         }
@@ -558,7 +586,7 @@ mod tests {
         // Below Windows' threshold nothing moves (and the release would be a click).
         drag.to(34);
         assert_eq!(at(&drag.frame(10)), [("One", 0), ("Two", 102), ("Three", 204), ("Four", 306)]);
-        assert_eq!(drag.press.release(drag.list.order()), Release::Click);
+        assert_eq!(drag.press.release(drag.list.order(), true), Release::Click);
         // Past it the pressed point follows the pointer, from the press.
         drag.to(35);
         assert_eq!(at(&drag.frame(20))[0], ("One", 5));

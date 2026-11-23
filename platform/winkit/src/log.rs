@@ -456,8 +456,8 @@ pub fn counted(counter: &std::sync::atomic::AtomicU32, line: &str) {
 //
 // People attach bevel95.log to their reports, so it holds no text that came from outside
 // Bevel95: no window titles, file or folder names, notification tooltips, typed commands, desktop
-// item names or paths under the user's folders. What a report needs instead: a window's class and
-// its program's file name, a count, a kind ("a folder", "a .txt file"), and Bevel95's own folder
+// item names or paths under the user's folders. What a report needs instead: a window's kind in
+// Bevel95's own words (never its class, which can carry a program's name) and its program's file name, a count, a kind ("a folder", "a .txt file"), and Bevel95's own folder
 // as %LOCALAPPDATA%\Bevel95. `bevel95 --list-windows`, run on purpose, is the one exception (it
 // says so in its first line). The test `log_calls_carry_no_private_text` (tests/private_log.rs)
 // reads every log call of the bar and the programs for what was taken out.

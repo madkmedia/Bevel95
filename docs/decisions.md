@@ -218,8 +218,11 @@ it, but write nothing).
   their reports). No log line holds text from outside Bevel95: no window titles, file or folder
   names, notification icons' tooltips (a Wi-Fi network's name), what was typed into Run, program,
   document or desktop item names, paths under the user's folders, the network's name. A line says
-  what a report needs instead: a window's class and its program's file name
-  (`window_list::describe`), a count, a kind (`winkit::log::path_kind`: "a folder", "a .txt file";
+  what a report needs instead: a window's kind and its program's file name
+  (`window_list::describe`; since 2026-11-24 the kind in Bevel95's own words from a fixed list,
+  `window_list::kind_of`, never the class, which can carry another program's name, such as WPF's
+  `HwndWrapper[<program>;..]`: the review of brief 90, R5; `private_log.rs` refuses a class in
+  every log call, `counted` ones included), a count, a kind (`winkit::log::path_kind`: "a folder", "a .txt file";
   `typed_kind`: "a command", "a web address", "a path to a .docx file"), Bevel95's own folder as
   `%LOCALAPPDATA%\Bevel95\settings.txt` (a portable copy's as "the portable folder\..."). Bevel95's
   own names and settings stay. The one exception is `bevel95 --list-windows`, which the person runs
@@ -321,7 +324,7 @@ it, but write nothing).
   style). AppName is the exe's version-info FileDescription, else its file name.
 - **Characters the fonts lack** (2026-11-11; until then every one was drawn "?", so an editor's
   unsaved file, whose title begins with U+25CF, a black circle, showed as "? ..."). The
-  glyph atlases held Windows-1252 only (now `font::charset_1252`; other European alphabets
+  glyph atlases held Windows-1252 only (now `font::gdi::charset_1252`; other European alphabets
   since 2026-11-19, below), as Windows 95's window titles could.
   Windows 95 read titles through Windows' "best fit" conversion to that code page, which
   turns many characters into a near one and the rest into "?". `core::text`'s `Font::glyph`,
@@ -343,7 +346,7 @@ it, but write nothing).
   98-look Start menu of a Russian Windows showed every Cyrillic letter as "?"). The atlases of
   every program (`winkit::font::render`) now hold, besides code page 1252, the letters of
   Central European (1250), Cyrillic (1251), Greek (1253), Turkish (1254) and Baltic (1257)
-  Windows: 250 characters (`font::OTHER_CODE_PAGES`, each code page's bytes 0x80..0xFF that
+  Windows: 250 characters (`font::gdi::OTHER_CODE_PAGES`, each code page's bytes 0x80..0xFF that
   1252 lacks, asked of Windows' own code page tables; each letter listed once, under the first
   code page that has it, so Baltic letters that 1250 has too come from 1250's font).
   - **Nothing of 1252 changes.** Its letters are drawn exactly as before: the same face asked
@@ -378,9 +381,10 @@ it, but write nothing).
     Turkish or Baltic Windows, so these letters' pixels are those of the bitmap files above as
     today's GDI draws them (95, 98) and today's Tahoma (2000), not checked against captures.
   - **The windows that use MS Sans Serif whatever the look** (classic dialog templates, Help's
-    controls: `core::text::ms_sans_serif`) get the same atlas from the platform
-    (`text::use_platform_ms_sans_serif`, set by the first `font::render` of a program); the
-    headless tests keep the fixture.
+    controls: `core::text::ms_sans_serif`) got the same atlas from the platform until 0.1.5
+    (`text::use_platform_ms_sans_serif`, set by the first `font::render` of a program; the
+    headless tests kept the fixture). Since 0.1.5 they take the stored letters, in the programs
+    and the tests alike (next entry).
   - **Typed and compared names.** Typed letters reach every text field as they are (WM_CHAR,
     one UTF-16 unit each; these letters are all in the Basic Multilingual Plane). Quick Search
     compares by `core::text::fold`: lowercase letter by letter in every alphabet, Turkish İ and
@@ -427,7 +431,7 @@ it, but write nothing).
     its ink as bits; 76 KB for the eight files (`art/assets/fonts/*.glyphs`), read when the font
     is first wanted (`core::text::stored`). The way in is `winkit::font::letters(face, px,
     bold)`, which cannot fail: a face that were not stored (a mistake in the program, ruled
-    out by a test) would get MS Sans Serif 8pt of the same weight. `look::for_look`, `load` and
+    out by a test) would get MS Sans Serif 8pt of the same weight. Built-in letters that cannot be read (a mistake in the program, ruled out by `every_stored_font_reads`) stop the program with the reason; `from_stored` refuses bytes that are not letters (a short file, a cut letter, a baseline outside the cell) with an error, never a panic. `look::for_look`, `load` and
     `for_era` therefore no longer return errors; the log lines "cannot use the look's font",
     "cannot use the ... letters", "cannot switch to ...", "the web view's fonts could not be
     made", Setup's "cannot use the look's font" and its message "cannot draw its windows on this
@@ -441,7 +445,7 @@ it, but write nothing).
     what GDI draws on the PC today (and that every font the programs use is stored);
     `the_fixtures_are_the_stored_letters` that the headless tests' fixtures are their 1252 part;
     `the_font_file_gives_gdis_pixels` that MS Sans Serif is SSERIFE.FON's own letters; and
-    `every_look_is_made_without_windows_fonts` makes every look in every color depth, and the
+    `every_look_is_made_without_asking_windows` counts every ask of Windows (none while the looks are made) and makes every look in every color depth, and the
     web view's fonts, with GDI made to "give another face" and SSERIFE.FON made "unreadable",
     and paints each look's message window (words in six alphabets) pixel for pixel as with
     Windows' letters. On another PC whose Windows draws differently these tests would fail:
@@ -1555,7 +1559,7 @@ it, but write nothing).
     from Windows' own SSERIFE.FON (`font/fon.rs`: the FONT resources of the 16-bit file, read as
     bytes, never loaded as code; its bold made up as GDI makes it, each row again a pixel to the
     right), which gives GDI's atlas letter for letter, regular and bold, on this PC
-    (`font::tests::the_font_file_gives_gdis_pixels`), and the reason is logged once. Tahoma (the
+    (`font::gdi::tests::the_font_file_gives_gdis_pixels`), and the reason is logged once. Tahoma (the
     2000 look) has no second way: a TrueType file would need a rasterizer. On a PC where Windows
     registered another MS Sans Serif file (the 120-DPI set, another language's file), Bevel95 now
     draws the original 96-DPI letters of SSERIFE.FON, which may differ from what it drew there
@@ -1608,7 +1612,7 @@ it, but write nothing).
 - The review's second and third moves, done for the first program: every program is its own exe
   in the workspace (`programs/<name>/`), and each owns its state per window. What they share:
   `core` (drawing, the control kit) and the new library `platform/winkit` (crate `bevel-winkit`):
-  the GDI font atlases (`font.rs`), the control kit's window host (`kit.rs`), a program's menus
+  the letters (`font.rs`: the stored ones since 0.1.5), the control kit's window host (`kit.rs`), a program's menus
   (`menu.rs`), the look Bevel95 is set to (`look.rs`), the log and the small helpers. The bar's
   crate keeps only what is the bar's; its `kit.rs` is a thin wrapper that hands the bar's fonts to
   the host. Proof that nothing changed for the bar: `tools/dev/dialogcaps.ps1` before and after,
@@ -2480,18 +2484,22 @@ it, but write nothing).
   (`private/review/2026-11-23-lost-clicks.md`, two passes) that held in the code was repaired,
   and each path by which a press can still do nothing writes a counted line (Bevel95's own
   words only; the first three, then the 10th, 100th, ...: `winkit::log::counted`).
-  - **A task button decides from the window in front at the press** (`tasks::front_seen`):
-    read before the press closes one of Bevel95's menus or the volume control (closing one
-    handed the front to the program under it, whose button's click then minimized it). One of
-    the bar's own windows without a button in front (a menu, the volume control, the classic
-    desktop, Quick Search) counts as no program's window: the button's window comes forward.
+  - **A task button decides from the window in front at the press** (`tasks::front_seen`,
+    `bar::front_at_press`): read first of all, before the press closes Quick Search, a flyout,
+    one of Bevel95's menus or the volume control (closing one handed the front to the program
+    under it, whose button's click then minimized it: the review's R1, repaired 2026-11-24, with
+    Quick Search open). One of the bar's own windows without a button in front (a menu, the
+    volume control, Quick Search) counts as no program's window: the button's window comes
+    forward. (The classic desktop is owned by Windows' desktop window, so Windows names that as
+    the window in front; it has no button either, and the click brings the window forward too.)
     So does a press on the classic desktop that Windows did not let come forward (the program
     stayed in front though the person had left it): until another window comes forward
     (`tasks::still_left`, on the tick) that program's button is drawn raised and its click
     brings it forward. Known and left: if the person then clicks back into that same program,
     the bar cannot tell, and the first click on its button brings it forward (nothing visible)
-    rather than minimizing it. Log: "task buttons: a click brought its window forward; it was
-    in front, but a menu of Bevel95's or the desktop was the last thing pressed".
+    rather than minimizing it. Log: "task buttons: a click brought its window forward though it
+    was in front: the desktop was the last thing pressed". A moment with no window in front at
+    all does not end the desktop's mark.
   - **A desktop double-click on a folder brings its window forward**: the start that hands the
     folder to the running folder program gives that program leave to come forward first
     (`AllowSetForegroundWindow`, as the Help viewer's start already did). A window that came
@@ -2505,8 +2513,11 @@ it, but write nothing).
     screens, wallpaper, work area) keeps the first press of a double-click and stops a drag
     timer that ran. Logs: "the icons were read again during a press or a double-click; taken in
     after it", "a second click came in time but on another icon than the first", and "Windows
-    did not let the desktop come forward at a click; class ... kept the front", now counted every
-    time (it was logged once per run).
+    did not let the desktop come forward at a click; ... kept the front" with the kind of window
+    in Bevel95's own words (`window_list::kind_of`, never its class: the review's R5), now
+    counted every time (it was logged once per run). A recorded press holds new icons back only
+    while a mouse button is really down: a right press let go over another window is given up at
+    the next reading (R4).
   - **Folder windows, as the Reference PCs did** (survey part 4, `private/probes/start-long`):
     the click that brings a folder window forward (Windows' WA_CLICKACTIVE, told to the form by
     the kit: `Form::activated_by_click`) selects but arms no slow-click rename; a slow second
@@ -2514,17 +2525,20 @@ it, but write nothing).
     another file while a name is being renamed ends the rename and, once the name is taken,
     selects that file (`FolderWindow::click_after_rename`); a double-click on it opens it. If a
     question comes up instead (a name Windows refuses, the extension warning), the press goes no
-    further, as before, and the log says so. The desktop already did both.
+    further, as before, and the log says so. A right or middle press that brought the window forward uses the activating click up. The desktop already did both.
   - **A task button let go in its own place is a click**, also when the pointer went past the
     drag threshold and back (`ButtonPress::release` compares the order: only a button in another
-    place is a drag's drop). Dragging task buttons is Bevel95's own; the old Windows had none, and
-    any release on the button was a click.
+    place is a drag's drop), but only let go on that button; anywhere else it is nothing, no
+    click and no drop (the review's R2). Dragging task buttons is Bevel95's own; the old Windows
+    had none, and any release on the button was a click.
   - **The bar's tooltip lets presses through** to whatever is under it, any program's: it is now a
     layered, transparent window (`WS_EX_LAYERED | WS_EX_TRANSPARENT`, fully opaque by
     `SetLayeredWindowAttributes`), which Windows' hit test passes by; `HTTRANSPARENT` alone passed
-    a press on only to windows of the bar's own thread. Proven by `tip::tests` with two windows of
-    the test's own (one on another thread under the tooltip's look-alike: `WindowFromPoint` finds
-    it; the old style caught it). A press that still lands on it is logged.
+    a press on only to windows of the bar's own thread. Proven by `tip::tests` with windows of the
+    test's own, shown far off every screen (one on another thread under the tooltip's look-alike:
+    `WindowFromPoint` finds it; a window without those styles at the same kind of place is found,
+    so the test is not empty; it no longer shows the old style's fault). A press that still lands
+    on it is logged.
   - **The kit lets go of a held part when Windows takes the mouse away for no window** (Alt+Tab,
     the Windows key, a message box: WM_CAPTURECHANGED with no new holder), unless the kit is
     letting go itself (`own_release`); before, the next moves dragged a thumb or a column line with
@@ -2627,7 +2641,7 @@ it, but write nothing).
   (`close_for_a_press`) and then goes on to do what it does there. Its own right-click menu (the
   kit keeps a window with its own menu open looking in front) and a drag of its column line do
   not close it; a program it starts closes it anyway, as before. Opened from Start > Find the
-  same. Not changed: a Quick Search that Windows never let come forward (the Windows key's
+  same. Turned away and straight back within the tick (Alt+Tab there and back), it stays (the review's R3). Not changed: a Quick Search that Windows never let come forward (the Windows key's
   rare refusal) closes only by Esc, its "X" or a press on the bar or the desktop.
 - PROVISIONAL (ours): everything about the window's look and wording, its place, the Windows
   key group's wording and place, the submenu entry's wording.
@@ -3837,7 +3851,7 @@ it, but write nothing).
     `art/assets/web/*.pic` (palette and runs; on white, as drawn).
   - **Fonts**: 98's text is Verdana 8pt and its bold, its title Verdana 16pt bold (21 px); 2000's
     text is the look's Tahoma, its title Tahoma 13pt bold (17 px): rendered by GDI at 96 DPI without
-    smoothing like the other atlases (`winkit::font::WEB_FONTS`, fixtures in `core/tests/fixtures`).
+    smoothing like the other atlases (`winkit::font::gdi::WEB_FONTS`; stored since 0.1.5, fixtures in `core/tests/fixtures`).
     Each matches the captures exactly except two of today's Verdana glyphs, corrected as Tahoma's
     were (`text::PERIOD_GLYPHS`): bold 21 px "v" (its strokes meet a row later) and 11 px "/".
   - **Windows 2000's Folder Options** (older::options, Tools > Folder Options..., the only entry of

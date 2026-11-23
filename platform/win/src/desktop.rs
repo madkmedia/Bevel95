@@ -271,10 +271,10 @@ fn run() {
         }
         CBT_HOOK.store(hook as usize, Ordering::SeqCst);
         log(&format!(
-            "desktop: showing over Windows' desktop ({}x{}), owned by its window (class {})",
+            "desktop: showing over Windows' desktop ({}x{}), owned by {}",
             rect_w(&r),
             rect_h(&r),
-            crate::window_list::class_name(owner)
+            crate::window_list::kind_of(owner)
         ));
         // The bar may have switched it off meanwhile.
         if !WANTED.load(Ordering::SeqCst) {
@@ -460,7 +460,7 @@ fn check(by: &str, gap: u64) {
         let w = unsafe { GetWindow(below, GW_HWNDPREV) };
         // SAFETY: as above.
         match unsafe { (IsWindowVisible(w) != 0, IsIconic(w) != 0) } {
-            (false, _) => format!("a hidden window of class {}", crate::window_list::class_name(w)),
+            (false, _) => format!("a hidden window ({})", crate::window_list::kind_of(w)),
             (true, true) => String::from("a minimized window"),
             (true, false) => String::from("a program's window"),
         }
@@ -663,6 +663,13 @@ const DRAG_MS: u32 = 15;
 const ITEMS_LATER_TIMER: usize = 3;
 /// New icons are waiting for `ITEMS_LATER_TIMER` (counted once per wait in the log).
 static ITEMS_WAITING: AtomicBool = AtomicBool::new(false);
+
+/// Whether a press the desktop recorded (`gesture`) still holds: only while a mouse button is
+/// down (a right press let go over another window leaves no release here: the review of brief 90,
+/// R4).
+fn press_holds(gesture: bool, button_down: bool) -> bool {
+    gesture && button_down
+}
 
 /// How many milliseconds new icons must still wait after a left press at message time `pressed`
 /// (now `now`, Windows' double-click time `double`), so that a second press of a double-click
@@ -1248,11 +1255,11 @@ fn activate(hwnd: HWND) {
     }
     // SAFETY: our own window, on its own thread, right after the user's click.
     if unsafe { SetForegroundWindow(hwnd) } == 0 {
-        // Counted every time, with only the kind of window that kept the front (brief 90).
+        // Counted every time, with only the kind of window that kept the front, in Bevel95's own
+        // words (brief 90; never its class: the review's R5).
         static REFUSED: AtomicU32 = AtomicU32::new(0);
-        let front = crate::window_list::foreground();
-        let class = if front.is_null() { String::from("none") } else { crate::window_list::class_name(front) };
-        counted(&REFUSED, &format!("desktop: Windows did not let the desktop come forward at a click; class {class} kept the front"));
+        let kind = crate::window_list::kind_of(crate::window_list::foreground());
+        counted(&REFUSED, &format!("desktop: Windows did not let the desktop come forward at a click; {kind} kept the front"));
     }
     ACTIVATING.store(false, Ordering::SeqCst);
 }
@@ -2115,8 +2122,21 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
             // (the snapshot stays where it is), so neither is given up nor lands elsewhere.
             // SAFETY: plain queries.
             let (now, double) = unsafe { (windows_sys::Win32::System::SystemInformation::GetTickCount(), GetDoubleClickTime()) };
+            // A press counts as held only while a mouse button is really down: a right press let go
+            // over another window leaves no release here, and is given up now (the review of brief
+            // 90, R4), so new icons never wait for the next press.
+            // SAFETY: plain queries of the buttons' state.
+            let down = unsafe {
+                use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON};
+                GetAsyncKeyState(i32::from(VK_LBUTTON)) < 0 || GetAsyncKeyState(i32::from(VK_RBUTTON)) < 0
+            };
             let busy = STATE.with(|c| {
-                c.borrow().as_ref().map(|st| (st.view.gesture_active(), items_wait(st.last_press.as_ref().map(|p| p.0), now, double)))
+                let mut st = c.borrow_mut();
+                let st = st.as_mut()?;
+                if !press_holds(st.view.gesture_active(), down) {
+                    st.view.cancel();
+                }
+                Some((st.view.gesture_active(), items_wait(st.last_press.as_ref().map(|p| p.0), now, double)))
             });
             if let Some((held, wait)) = busy
                 && (held || wait > 0)
@@ -2281,7 +2301,19 @@ pub unsafe extern "system" fn desktop_proc(hwnd: HWND, msg: u32, wparam: WPARAM,
 
 #[cfg(test)]
 mod tests {
-    use super::{colorref, command_of_param, command_param, id_code, items_wait, point_of_param, point_param, remember_targets, targets_of, worth_a_line};
+    use super::{
+        colorref, command_of_param, command_param, id_code, items_wait, point_of_param, point_param, press_holds, remember_targets, targets_of,
+        worth_a_line,
+    };
+
+    /// A recorded press holds new icons back only while a button is down: a right press let go
+    /// over another window is given up at the next reading (the review of brief 90, R4).
+    #[test]
+    fn a_press_let_go_elsewhere_does_not_hold_the_icons() {
+        assert!(press_holds(true, true));
+        assert!(!press_holds(true, false), "let go elsewhere");
+        assert!(!press_holds(false, true));
+    }
 
     /// New icons wait while a double-click may still come, and only then (brief 90).
     #[test]
