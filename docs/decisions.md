@@ -1468,6 +1468,39 @@ it, but write nothing).
   comparison as before; `--restore`, `--after`, `--uninstall` and the other switches never reach
   this code. Windows' own message box only if the look's font cannot be had. PROVISIONAL: the
   words.
+- **"Bevel95 Setup could not be shown" (GitHub issue 6, 2026-11-23, brief 85)**: on a user's PC
+  (Windows 11 26200, two graphics adapters) the released 0.1.4 said so at every start and its
+  log said only "setup: the window could not be shown". `ask` can fail in two ways: the look's
+  fonts (`look::for_look` -> `font::render`: a GDI call failing, GDI giving another face, a
+  letter drawn outside its cell or past the scratch bitmap) or the window (`CreateWindowExW`,
+  already logged with its error). The first threw its reason away. Not reproduced here: a scratch
+  program of its own under the UTF-8 code page (`activeCodePage` in its manifest:
+  `private/probes/setup-shown/`, output.txt) got exactly the same fonts from GDI and from
+  Bevel95's own code as the PC's code page 1252; a PC that registered only the 120-DPI font files
+  or another language's could not be stood in for without changing Windows. Repaired:
+  - **The reason is logged, always**: which look's font, why (the call and Windows' error number,
+    or the face and kind GDI gave instead), the code page, the system's and the main screen's DPI
+    (`look::for_look`, `font::system_facts`; the bar's own lines too). Setup's message says where
+    the log is.
+  - **The fonts do not depend on what is registered**: the looks' own files (SSERIFE.FON,
+    tahoma.ttf, tahomabd.ttf) are loaded from Windows' Fonts folder for the process alone before
+    GDI is asked (as the other code pages' files already were), and MS Sans Serif 8pt must come
+    as the 13-pixel bitmap font. If GDI still does not hand it out, its letters are read straight
+    from Windows' own SSERIFE.FON (`font/fon.rs`: the FONT resources of the 16-bit file, read as
+    bytes, never loaded as code; its bold made up as GDI makes it, each row again a pixel to the
+    right), which gives GDI's atlas letter for letter, regular and bold, on this PC
+    (`font::tests::the_font_file_gives_gdis_pixels`), and the reason is logged once. Tahoma (the
+    2000 look) has no second way: a TrueType file would need a rasterizer.
+  - **Setup can always be answered**: if its own window still cannot be created, the one file
+    asks through Windows' own message windows (a first run: Yes installs with the second page's
+    defaults, No unpacks a portable copy beside the file, Cancel does nothing; a newer copy over
+    an installed one: update or nothing; anything else: nothing). If the look itself cannot be
+    made, the bar could not draw either: nothing is offered, the message says so with the log's
+    place. A copy as built still runs as a bar from where it is, as before; the one file never
+    does.
+  - Nothing else changed where everything works: the font fixtures, the golden pictures and the
+    full comparison are the same. Not built: installing without a window from the command line
+    (the reporter's question, `private/todo.md`).
 
 ## Programs: the shared Windows side and program windows (2026-11-09, the owner: "do minesweeper")
 
