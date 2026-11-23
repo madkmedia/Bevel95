@@ -433,6 +433,21 @@ pub fn with_setting(text: &str, key: &str, value: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Windows 2000's "Scroll the Programs menu" is read from settings.txt and written back (the
+    /// review of brief 91, 14).
+    #[test]
+    fn scroll_programs_is_read_and_written_back() {
+        assert!(!Config::default().start.scroll_programs, "off on a fresh installation");
+        let (on, warnings) = parse(&DEFAULT_FILE.replace("scroll_programs = no", "scroll_programs = yes"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(on.start.scroll_programs);
+        let written = flag_settings(&on).into_iter().find(|(k, _)| *k == "scroll_programs");
+        assert_eq!(written, Some(("scroll_programs", "yes")));
+        let text = with_setting(DEFAULT_FILE, "scroll_programs", "yes");
+        assert!(parse(&text).0.start.scroll_programs, "written back, read again");
+        assert!(!parse(&with_setting(&text, "scroll_programs", "no")).0.start.scroll_programs);
+    }
+
     #[test]
     fn default_file_gives_default_config() {
         assert_eq!(parse(DEFAULT_FILE), (Config::default(), vec![]));

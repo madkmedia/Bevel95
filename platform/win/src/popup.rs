@@ -14,14 +14,14 @@ use std::sync::atomic::Ordering;
 use bevel_core::bar_menu::{self, BarCommand, BarEntry};
 use bevel_core::fb::{Framebuffer, Icon, Rect};
 use bevel_core::icons;
-use bevel_core::layout::{place_popup, place_start_menu, place_submenu};
+use bevel_core::layout::{place_popup, place_start_menu};
 use bevel_core::paint::{self, EntryKind, Long, Menu, MenuEntry, MenuLayout, MenuStyle, Strip};
 use bevel_core::start::LongKind;
 use bevel_core::programs::{Entry, Folder, Item};
 use bevel_core::scale::Scale;
 use bevel_core::start::{self, DocumentsEntry, StartEntry};
 use bevel_core::text::{escape_access_keys, split_access_key};
-use bevel_core::theme::{Era, SubmenuPlacement};
+use bevel_core::theme::Era;
 use bevel_core::volume;
 use bevel_core::window_menu::{self, GroupCommand, WindowCommand};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
@@ -110,6 +110,9 @@ pub enum Kind {
     /// Windows 2000's list of the Quick Launch icons left out (its "»"): entry i starts the icon
     /// `targets[i]`, by what it is, and only while it is still on the band.
     QuickList(Vec<crate::quick_launch::Target>),
+    /// A live test's long menu (`open_test_long_menu`), by its folders' indices from the top: its
+    /// entries start nothing.
+    Test(Vec<usize>),
 }
 
 /// The folder trees that cascade from the Start menu (`App::start_tree`).
@@ -369,6 +372,11 @@ pub fn open_start(bar: HWND, by_keyboard: bool) {
     with_app(|app| {
         app.start_programs = programs;
         app.start_favorites = favorites;
+        // The scroll places of folders that are gone go with them (the list never grows without
+        // end: brief 92).
+        let mut places = std::mem::take(&mut app.menu_scroll);
+        places.retain(|key, _| place_still_there(app, key));
+        app.menu_scroll = places;
     });
     let user = start_menu::user_name();
     // "Show small icons in Start menu": 16×16 icons and no banner.
@@ -386,17 +394,16 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
     // SAFETY: a plain query.
     let previous = unsafe { GetForegroundWindow() };
     let (long, offset) = long_of(&kind);
-    let Some((mut layout, scale, screen)) = measure(&menu, style, Some((long, offset))) else {
+    // The look's rule for a long menu, columns wider than the whole screen scrolling instead
+    // (`start::layout_root`, the same code the tests draw with).
+    let Some((layout, scale, screen)) = with_app(|app| {
+        let m = app.monitor;
+        let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
+        let layout = start::layout_root(app.theme, &app.fonts(), app.era, &menu, style, long, offset, app.scale, screen);
+        (layout, app.scale, screen)
+    }) else {
         return;
     };
-    // Columns wider than the whole screen: the menu scrolls instead (brief 91).
-    if layout.columns.len() > 1 && style != MenuStyle::Popup && scale.len(layout.width) > screen.w {
-        let era = with_app(|app| app.era).unwrap_or(Era::Win95);
-        if let Some((scrolling, ..)) = measure(&menu, style, Some((start::scroll_instead(era), offset))) {
-            log(&format!("a menu of {} entries did not fit the screen in columns: it scrolls", menu.entries.len()));
-            layout = scrolling;
-        }
-    }
     let (w, h) = (scale.len(layout.width), scale.len(layout.height));
     let (left, top) = match at {
         At::Point(x, y) => place_popup(x, y, w, h, screen),
@@ -405,7 +412,11 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
         At::Above(x, y) => bevel_core::tray_icon::place_menu(x, y, w, h, screen),
         At::Chevron(chevron) => bevel_core::quick_launch::place_list(chevron, w, h, screen),
     };
-    let rect = Rect::new(left, top, w, h);
+    show_root(bar, kind, menu, style, layout, Rect::new(left, top, w, h), previous);
+}
+
+/// Shows a root menu laid out and placed (screen pixels), taking the focus.
+fn show_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, layout: MenuLayout, rect: Rect, previous: HWND) {
     let Some(hwnd) = create(bar, rect, false) else {
         return;
     };
@@ -420,6 +431,60 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
             InvalidateRect(bar, null(), 0); // the Start button (or the "»") is drawn pressed now
         }
     }
+}
+
+/// The live test's long menu (`bar::WM_TEST_LONG_MENU`, brief 92): two folders ("Long Folder",
+/// 60 items; "Test Folder", 5 items), then `n` entries "Entry 000" and on, all made up. Laid out and
+/// placed by the look's own rule as the Programs menu beside the Start menu would be (the Start menu
+/// itself is not shown: it holds the person's own words). Its entries start nothing.
+pub fn open_test_long_menu(bar: HWND, n: usize) {
+    close(false);
+    // SAFETY: a plain query.
+    let previous = unsafe { GetForegroundWindow() };
+    let Some((era, small, button)) = with_app(|app| Some((app.era, app.options.small_icons, app.start_button_on_screen()?))).flatten() else {
+        return;
+    };
+    let menu = test_menu(era, &[], n);
+    let long = start::long_rule(era, LongKind::Programs, with_app(|app| app.start_options.scroll_programs).unwrap_or(false));
+    let Some((layout, rect)) = with_app(|app| {
+        let m = app.monitor;
+        let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
+        let s = app.scale;
+        // Where the Start menu would stand, and its Programs entry.
+        let style = if small { MenuStyle::StartSmall } else { MenuStyle::Start };
+        let start_menu = start::menu(era, app.start_options, "", |e| icons::start_icon(era, e));
+        let start_layout = paint::layout_menu(app.theme, &app.fonts(), &start_menu, style, s.old_fit(screen.h));
+        let (w, h) = (s.len(start_layout.width), s.len(start_layout.height));
+        let (x, y) = place_start_menu(button, w, h, screen);
+        let parent = Rect::new(x, y, w, h);
+        let programs = start::entries(era, app.start_options).iter().position(|e| *e == Some(StartEntry::Programs))?;
+        let r = s.rect(*start_layout.rects.get(programs)?);
+        let entry = Rect::new(x + r.x, y + r.y, r.w, r.h);
+        let (layout, left, top) = start::place_cascade(app.theme, &app.fonts(), era, &menu, MenuStyle::Cascade, long, 0, s, screen, parent, entry, false);
+        let rect = Rect::new(left, top, s.len(layout.width), s.len(layout.height));
+        Some((layout, rect))
+    })
+    .flatten() else {
+        return;
+    };
+    log(&format!("test long menu: opened with {n} entries ({} columns{})", layout.columns.len(), if layout.scroll.is_some() { ", scrolling" } else { "" }));
+    show_root(bar, Kind::Test(Vec::new()), menu, MenuStyle::Cascade, layout, rect, previous);
+}
+
+/// The live test's made-up menus (`open_test_long_menu`): at the top, two folders and `n` entries;
+/// in "Long Folder" 60 items, in "Test Folder" 5.
+fn test_menu(era: Era, path: &[usize], n: usize) -> Menu {
+    let group = icons::program_group(era);
+    let entries: Vec<MenuEntry> = match path {
+        [] => {
+            let mut e = vec![MenuEntry::submenu("Long Folder", Some(group.clone())), MenuEntry::submenu("Test Folder", Some(group))];
+            e.extend((0..n).map(|i| MenuEntry::item(&format!("Entry {i:03}"), None)));
+            e
+        }
+        [0] => (0..60).map(|i| MenuEntry::item(&format!("Item {i:02}"), None)).collect(),
+        _ => (0..5).map(|i| MenuEntry::item(&format!("Test {i}"), None)).collect(),
+    };
+    Menu { show_keys: true, ..Menu::new(entries) }
 }
 
 /// The submenu that entry `index` of the menu at `level` opens: what it is, its entries and
@@ -473,6 +538,11 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
                 e @ (StartEntry::Settings | StartEntry::Find) => Want::Fixed(e),
                 _ => return None,
             },
+            Kind::Test(path) => {
+                let mut path = path.clone();
+                path.push(index);
+                Want::Ready(Kind::Test(path.clone()), test_menu(app.era, &path, 0), MenuStyle::Cascade)
+            }
             Kind::Folder(tree, path) => {
                 let mut path = path.clone();
                 path.push(index);
@@ -512,26 +582,38 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
     Some((kind, menu, style))
 }
 
-/// Opens the submenu of entry `index` of the menu at `level` (closing deeper ones).
+/// Opens the submenu of entry `index` of the menu at `level` (closing deeper ones). An entry that
+/// a scrolling menu shows not, or not whole (a key chose it, or the strips scrolled it away
+/// after the pointer did), is first brought into view, and the place remembered (brief 92).
 fn open_child(level: usize, index: usize, highlight_first: bool) {
     close_from(level + 1);
     let Some((kind, mut menu, style)) = submenu_of(level, index) else {
         return;
     };
-    let Some((parent_rect, entry_rect, rule, frame, bar, in_columns)) = with_app(|app| {
+    let moved = with_app(|app| {
+        let parent = app.menus.get_mut(level)?;
+        if !parent.layout.reveal(index) {
+            return None;
+        }
+        let offset = parent.layout.scroll.map_or(0, |s| s.offset);
+        let hwnd = parent.hwnd;
+        remember(app, level, offset);
+        Some(hwnd)
+    })
+    .flatten();
+    if let Some(hwnd) = moved {
+        // SAFETY: our own window.
+        unsafe { InvalidateRect(hwnd, null(), 0) };
+    }
+    let Some((parent_rect, entry_rect, in_columns, bar)) = with_app(|app| {
         let parent = app.menus.get(level)?;
-        // Where the entry shows now (a scrolling menu's entries move).
         let e = parent.layout.shown_rect(index)?;
-        let in_columns = parent.layout.columns.len() > 1;
-        let s = app.scale;
-        let r = s.rect(e);
+        // Beside the entry's own column only in a menu of the Start menu's family (Windows' own
+        // popup menus keep their old placement: brief 92).
+        let in_columns = parent.layout.columns.len() > 1 && parent.style != MenuStyle::Popup;
+        let r = app.scale.rect(e);
         let entry = Rect::new(parent.rect.x + r.x, parent.rect.y + r.y, r.w, r.h);
-        let (rule, frame) = match style {
-            MenuStyle::Popup => (app.theme.popup.submenu, app.theme.popup.frame),
-            _ => (app.theme.start_menu.submenu, app.theme.start_menu.frame),
-        };
-        let rule = SubmenuPlacement { overlap: s.len(rule.overlap), margin_bottom: s.len(rule.margin_bottom), ..rule };
-        Some((parent.rect, entry, rule, s.len(frame), BAR_HWND.load(Ordering::SeqCst) as HWND, in_columns))
+        Some((parent.rect, entry, in_columns, BAR_HWND.load(Ordering::SeqCst) as HWND))
     })
     .flatten() else {
         return;
@@ -539,36 +621,22 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
     if highlight_first {
         menu.hover = first_entry(&menu, style, true);
     }
-    // A submenu of a menu in columns opens beside the column of its own entry (survey part 1, 2).
-    let parent_rect = if in_columns {
-        Rect::new(entry_rect.x - frame, parent_rect.y, entry_rect.w + 2 * frame, parent_rect.h)
-    } else {
-        parent_rect
-    };
     let (long, offset) = long_of(&kind);
-    let Some((mut layout, scale, screen)) = measure(&menu, style, Some((long, offset))) else {
+    // Laid out and placed by `start::place_cascade`, the same code the golden pictures draw with.
+    let Some((layout, left, top, scale)) = with_app(|app| {
+        let m = app.monitor;
+        let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
+        let (layout, x, y) =
+            start::place_cascade(app.theme, &app.fonts(), app.era, &menu, style, long, offset, app.scale, screen, parent_rect, entry_rect, in_columns);
+        (layout, x, y, app.scale)
+    }) else {
         return;
     };
-    let mut place = None;
-    if layout.columns.len() > 1 && style != MenuStyle::Popup {
-        // Columns: beside the parent, or (95) at the screen's left edge; where even that does not
-        // fit, the menu scrolls instead (brief 91).
-        let beside = parent_rect.right() - rule.overlap;
-        let era = with_app(|app| app.era).unwrap_or(bevel_core::theme::Era::Win95);
-        match start::place_columns(era, beside, scale.len(layout.width), screen.x, screen.w) {
-            Some(x) => place = Some(x),
-            None => match measure(&menu, style, Some((start::scroll_instead(era), offset))) {
-                Some((scrolling, ..)) => {
-                    log(&format!("a menu of {} entries did not fit the screen in columns: it scrolls", menu.entries.len()));
-                    layout = scrolling;
-                }
-                None => return,
-            },
-        }
+    if layout.scroll.is_some() && !matches!(long, Long::Scroll { .. }) {
+        log(&format!("a menu of {} entries did not fit the screen in columns: it scrolls", menu.entries.len()));
     }
     let (w, h) = (scale.len(layout.width), scale.len(layout.height));
-    let (left, top) = place_submenu(parent_rect, entry_rect, w, h, frame, rule, screen);
-    let rect = Rect::new(place.unwrap_or(left), top, w, h);
+    let rect = Rect::new(left, top, w, h);
     let Some(hwnd) = create(bar, rect, true) else {
         return;
     };
@@ -592,27 +660,12 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
     unsafe { ShowWindow(hwnd, SW_SHOWNA) };
 }
 
-/// A menu's layout at 1×, the scale, and the main screen. A menu of the Start menu's family
-/// (not Windows' own popup menus, which are never that long) longer than the screen goes on as
-/// `long` says (`start::long_rule`, brief 91), scrolled to `offset` if it scrolls.
-fn measure(menu: &Menu, style: MenuStyle, long: Option<(Long, i32)>) -> Option<(MenuLayout, Scale, Rect)> {
-    with_app(|app| {
-        let m = app.monitor;
-        let screen = Rect::new(m.left, m.top, rect_w(&m), rect_h(&m));
-        let h = app.scale.old_fit(screen.h);
-        let layout = match long.filter(|_| style != MenuStyle::Popup) {
-            Some((long, offset)) => paint::layout_long_menu(app.theme, &app.fonts(), menu, style, h, long, offset),
-            None => paint::layout_menu(app.theme, &app.fonts(), menu, style, h),
-        };
-        (layout, app.scale, screen)
-    })
-}
-
 /// Which of the Start menu's long menus `kind` is (`start::long_rule`).
 fn long_kind(kind: &Kind) -> LongKind {
     match kind {
         Kind::Folder(Tree::Programs, _) => LongKind::Programs,
         Kind::Folder(Tree::Favorites, _) => LongKind::Favorites,
+        Kind::Test(_) => LongKind::Programs,
         _ => LongKind::Other,
     }
 }
@@ -622,17 +675,64 @@ fn long_kind(kind: &Kind) -> LongKind {
 fn long_of(kind: &Kind) -> (Long, i32) {
     with_app(|app| {
         let long = start::long_rule(app.era, long_kind(kind), app.start_options.scroll_programs);
-        (long, app.menu_scroll.get(&scroll_key(kind)).copied().unwrap_or(0))
+        let offset = scroll_key(app, kind).and_then(|key| app.menu_scroll.get(&key).copied()).unwrap_or(0);
+        (long, offset)
     })
     .unwrap_or((Long::Columns { own_widths: true }, 0))
 }
 
-/// The name under which a menu's scroll place is remembered while the bar runs (which menu, by
-/// its place in the tree; never shown or logged).
-fn scroll_key(kind: &Kind) -> String {
-    format!("{kind:?}")
+/// Between the names of a folder's path in a scroll place's key (no file name holds it).
+const KEY_SEP: char = '\u{1F}';
+
+/// The name under which a menu's scroll place is remembered while the bar runs: by what the menu
+/// is, never by where it stands (brief 92): a folder by the names of its path in its tree, the
+/// Start menu, Documents, Settings and Find by what they are. The lists of a task button or of
+/// Quick Launch are not remembered. Never shown or logged.
+fn scroll_key(app: &crate::bar::App, kind: &Kind) -> Option<String> {
+    match kind {
+        Kind::Folder(tree, path) => {
+            let (root, name) = match tree {
+                Tree::Programs => (&app.start_programs, "Programs"),
+                Tree::Favorites => (&app.start_favorites, "Favorites"),
+            };
+            let mut key = name.to_string();
+            for k in 1..=path.len() {
+                key.push(KEY_SEP);
+                key.push_str(&root.folder_at(&path[..k])?.name);
+            }
+            Some(key)
+        }
+        Kind::Start => Some("Start".to_string()),
+        Kind::Documents(_) => Some("Documents".to_string()),
+        Kind::Fixed(entry) => Some(format!("{entry:?}")),
+        _ => None,
+    }
 }
 
+/// Remembers where the menu at `level` is scrolled to (`scroll_key`).
+fn remember(app: &mut crate::bar::App, level: usize, offset: i32) {
+    if let Some(key) = app.menus.get(level).and_then(|p| scroll_key(app, &p.kind)) {
+        app.menu_scroll.insert(key, offset);
+    }
+}
+
+/// Whether the menu a scroll place's key names is still there (its folders read anew).
+fn place_still_there(app: &crate::bar::App, key: &str) -> bool {
+    let mut names = key.split(KEY_SEP);
+    let root = match names.next() {
+        Some("Programs") => &app.start_programs,
+        Some("Favorites") => &app.start_favorites,
+        _ => return true,
+    };
+    let mut folder = root;
+    for name in names {
+        match folder.folders.iter().find(|f| bevel_core::text::same_name(&f.name, name)) {
+            Some(next) => folder = next,
+            None => return false,
+        }
+    }
+    true
+}
 fn create(owner: HWND, rect: Rect, submenu: bool) -> Option<HWND> {
     let class = wide(MENU_CLASS);
     let ex = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | if submenu { WS_EX_NOACTIVATE } else { 0 };
@@ -766,6 +866,12 @@ fn choose(level: usize, index: usize) {
         open_child(level, index, false);
         return;
     }
+    // The live test's menu: its entries start nothing.
+    if let Kind::Test(path) = &kind {
+        close(false);
+        log(&format!("test long menu: entry {index} of level {} chosen (it starts nothing)", path.len()));
+        return;
+    }
     let action = match kind {
         Kind::BarMenu(_) | Kind::BarOwn(_) => {
             let entry = match kind {
@@ -887,6 +993,8 @@ fn choose(level: usize, index: usize) {
             Some(target) => Action::QuickItem(target, bevel_core::quick_launch::IconEntry::Open),
             None => return,
         },
+        // Handled above (it starts nothing).
+        Kind::Test(_) => return,
     };
     let bar = BAR_HWND.load(Ordering::SeqCst) as HWND;
     match action {
@@ -1071,18 +1179,19 @@ fn strip_at(hwnd: HWND, x: i32, y: i32) -> Option<Strip> {
 }
 
 /// Marks `strip` (or none) as the one under the pointer in the menu at `level`. True if that
-/// changed it.
+/// changed it. The window is painted again only where that shows (98's sunken strip; Windows
+/// 2000's flat strips look the same: brief 92).
 fn set_strip(level: usize, strip: Option<Strip>) -> bool {
     let changed = with_app(|app| {
         let popup = app.menus.get_mut(level)?;
         let scroll = popup.layout.scroll.as_mut()?;
         (scroll.hot != strip).then(|| {
             scroll.hot = strip;
-            popup.hwnd
+            (popup.hwnd, !scroll.flat)
         })
     })
     .flatten();
-    if let Some(hwnd) = changed {
+    if let Some((hwnd, true)) = changed {
         // SAFETY: our own window.
         unsafe { InvalidateRect(hwnd, null(), 0) };
     }
@@ -1107,8 +1216,7 @@ fn scroll_step(hwnd: HWND) {
             scroll.hot = None;
         }
         let (offset, repeat, going) = (scroll.offset, paint::scroll_pace(scroll.flat).1, scroll.hot.is_some());
-        let key = scroll_key(&popup.kind);
-        app.menu_scroll.insert(key, offset);
+        remember(app, level, offset);
         Some((moved, repeat, going))
     })
     .flatten();
@@ -1142,8 +1250,7 @@ fn reveal_hover(level: usize) {
             return None;
         }
         let offset = popup.layout.scroll.map_or(0, |s| s.offset);
-        let key = scroll_key(&popup.kind);
-        app.menu_scroll.insert(key, offset);
+        remember(app, level, offset);
         Some(app.menus[level].hwnd)
     })
     .flatten();
@@ -1215,7 +1322,7 @@ fn key(vk: u16) {
         with_app(|app| {
             let popup = &app.menus[level];
             let era_95 = app.era == Era::Win95 && popup.style != MenuStyle::Popup && popup.layout.columns.len() > 1;
-            era_95.then(|| hover.and_then(|i| popup.layout.beside(i, toward))).flatten()
+            era_95.then(|| hover.and_then(|i| popup.layout.beside(&popup.menu, popup.style, i, toward))).flatten()
         })
         .flatten()
     };

@@ -839,21 +839,30 @@ impl MenuLayout {
         let frame = self.frame;
         let Some(s) = self.scroll else { return (frame, self.height - frame) };
         let top = frame + if s.shows(Strip::Up) { STRIP_H } else { 0 };
-        let bottom = self.height - frame - if s.shows(Strip::Down) { STRIP_H } else { 0 };
+        let bottom = self.inner_bottom() - if s.shows(Strip::Down) { STRIP_H } else { 0 };
         (top, bottom)
     }
 
-    /// The strip at (x, y), if one shows there.
+    /// The row below the last row entries may reach in a scrolling menu: the inner bottom, or for
+    /// Windows 2000's flat strips one row lower (its menus' bottom border is 2 pixels, and the face
+    /// row above it is the entries': the Reference PC's last entry ends on row 597 of 600, its
+    /// bottom strip at 586..597; brief 92).
+    pub fn inner_bottom(&self) -> i32 {
+        self.height - self.frame + i32::from(self.scroll.is_some_and(|s| s.flat))
+    }
+    /// The strip at (x, y), if one shows there (over the entries' part only: the Start menu's
+    /// banner has none).
     pub fn strip_at(&self, x: i32, y: i32) -> Option<Strip> {
         let s = self.scroll?;
-        let inside = x >= self.frame && x < self.width - self.frame;
+        let left = self.columns.first().map_or(self.frame, |&(x, _)| x);
+        let inside = x >= left && x < self.width - self.frame;
         if !inside {
             return None;
         }
         if s.shows(Strip::Up) && y >= self.frame && y < self.frame + STRIP_H {
             return Some(Strip::Up);
         }
-        let bottom = self.height - self.frame;
+        let bottom = self.inner_bottom();
         (s.shows(Strip::Down) && y >= bottom - STRIP_H && y < bottom).then_some(Strip::Down)
     }
 
@@ -862,7 +871,7 @@ impl MenuLayout {
     pub fn reveal(&mut self, i: usize) -> bool {
         let (Some(mut s), Some(&r)) = (self.scroll, self.rects.get(i)) else { return false };
         let before = s.offset;
-        let (frame, inner_bottom) = (self.frame, self.height - self.frame);
+        let (frame, inner_bottom) = (self.frame, self.inner_bottom());
         if r.y - s.offset < frame + if s.offset > 0 { STRIP_H } else { 0 } {
             // Up: the entry's top just under the top strip (none at the very top).
             let to = r.y - frame - STRIP_H;
@@ -883,12 +892,13 @@ impl MenuLayout {
     }
 
     /// The entry in the same row of the column `toward` the left (-1) or right (+1) of entry
-    /// `i`'s, or the last entry of that column if it is shorter (Windows 95's Left and Right).
-    pub fn beside(&self, i: usize, toward: i32) -> Option<usize> {
+    /// `i`'s, or the last of that column if it is shorter (Windows 95's Left and Right); only an
+    /// entry that can be chosen (`Menu::selectable`: never a separator).
+    pub fn beside(&self, menu: &Menu, style: MenuStyle, i: usize, toward: i32) -> Option<usize> {
         let col = self.column_of(i) as i32 + toward;
         let &(x, _) = self.columns.get(usize::try_from(col).ok()?)?;
         let y = self.rects.get(i)?.y;
-        let in_col: Vec<usize> = (0..self.rects.len()).filter(|&j| self.rects[j].x == x).collect();
+        let in_col: Vec<usize> = (0..self.rects.len()).filter(|&j| self.rects[j].x == x && menu.selectable(j, style)).collect();
         in_col.iter().copied().find(|&j| self.rects[j].y >= y).or_else(|| in_col.last().copied())
     }
 }
@@ -912,7 +922,9 @@ pub fn layout_long_menu(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuSt
                 // PC's last entry ends on the inner bottom row).
                 let frame = tall.frame;
                 let content = tall.rects.iter().map(|r| r.bottom()).max().unwrap_or(frame) - frame;
-                let end = (content - (screen_h - 2 * frame)).max(0);
+                // Windows 2000's flat menus let the entries reach the row above their 2-pixel border
+                // (MenuLayout::inner_bottom).
+                let end = (content - (screen_h - 2 * frame + i32::from(flat))).max(0);
                 let row = icon_items(theme, style).h;
                 let scroll = Scroll { offset: offset.clamp(0, end), end, row, flat, hot: None };
                 MenuLayout { height: screen_h, scroll: Some(scroll), ..tall }
@@ -967,37 +979,59 @@ fn column_width(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, mem
     items.icon_x + items.icon + items.text_gap + widest + pad
 }
 
-/// A scrolling menu (`Long::Scroll`): its entries painted as one tall column, the rows that show
-/// copied in between the strips, then the strips (Windows 98: 12 rows of the face color, a black
-/// arrow 5, 3 and 1 pixels wide in the middle 3 rows in from the inner edge; under the pointer
-/// sunken, black above and left, the light 3-D color below and right, without its arrow; Windows
-/// 2000: the same, flat always, its down arrow one row lower). Measured, survey part 1, 3.
+/// A scrolling menu (`Long::Scroll`): the frame and (Start menu) the banner as for a menu of its
+/// height, standing still; only the entries whose rows meet the view are painted, shifted by the
+/// scroll and clipped to the view (no picture as tall as the whole menu: brief 92); then the
+/// strips over the entries' part only, from the banner's right edge to the frame (Windows 98's
+/// own Start menu when it scrolls: `win98-...-startmenu-with-dropped-msdosprompt-on-top-scrolls`).
+/// The strips: Windows 98 12 rows of the face color, a black arrow 5, 3 and 1 pixels wide in the
+/// middle of their width, 3 rows in from the inner edge; under the pointer sunken, black above and
+/// left, the light 3-D color below and right, without its arrow; Windows 2000 the same, flat
+/// always, its down arrow one row lower. Measured, survey part 1, 3.
 fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, layout: &MenuLayout, scroll: Scroll) {
     let c = &theme.colors;
     let frame = layout.frame;
-    let tall_h = layout.rects.iter().map(|r| r.bottom()).max().unwrap_or(frame) + frame;
-    let tall_h = tall_h.max(scroll.end + layout.height);
-    let tall_layout = MenuLayout { height: tall_h, scroll: None, ..layout.clone() };
-    let mut tall = Framebuffer::new(layout.width, tall_h, 0);
-    paint_menu_with(&mut tall, theme, fonts, menu, style, &tall_layout);
-    menu_frame(fb, c);
+    let left = layout.columns.first().map_or(frame, |&(x, _)| x);
+    // The frame and the banner, still.
+    let bare = Menu { entries: Vec::new(), hover: None, ..Menu::default() };
+    let bare_layout = MenuLayout { rects: Vec::new(), scroll: None, ..layout.clone() };
+    paint_menu_with(fb, theme, fonts, &bare, style, &bare_layout);
+    // The entries that show, where they show.
     let (top, bottom) = layout.view();
+    let showing: Vec<usize> = (0..layout.rects.len()).filter(|&i| layout.shown_rect(i).is_some()).collect();
+    let part = Menu {
+        entries: showing.iter().map(|&i| menu.entries[i].clone()).collect(),
+        hover: menu.hover.and_then(|h| showing.iter().position(|&i| i == h)),
+        show_keys: menu.show_keys,
+        extra_bottom: menu.extra_bottom,
+        system_bitmaps: menu.system_bitmaps,
+        dotted_disabled_keys: menu.dotted_disabled_keys,
+        explorer_bold: menu.explorer_bold,
+        width_labels: Vec::new(),
+    };
+    let part_layout = MenuLayout {
+        rects: showing.iter().map(|&i| { let r = layout.rects[i]; Rect::new(r.x, r.y - scroll.offset, r.w, r.h) }).collect(),
+        scroll: None,
+        ..layout.clone()
+    };
+    let mut entries = Framebuffer::new(layout.width, layout.height, 0);
+    paint_menu_with(&mut entries, theme, fonts, &part, style, &part_layout);
     for y in top..bottom {
-        for x in frame..layout.width - frame {
-            fb.set(x, y, tall.get(x, y + scroll.offset));
+        for x in left..layout.width - frame {
+            fb.set(x, y, entries.get(x, y));
         }
     }
-    let inner_w = layout.width - 2 * frame;
-    let arrow_x = frame + (inner_w - 1 - 5) / 2;
+    let inner_w = layout.width - frame - left;
+    let arrow_x = left + (inner_w - 1 - 5) / 2;
     for strip in [Strip::Up, Strip::Down] {
         if !scroll.shows(strip) {
             continue;
         }
         let y = match strip {
             Strip::Up => frame,
-            Strip::Down => layout.height - frame - STRIP_H,
+            Strip::Down => layout.inner_bottom() - STRIP_H,
         };
-        let r = Rect::new(frame, y, inner_w, STRIP_H);
+        let r = Rect::new(left, y, inner_w, STRIP_H);
         fb.fill(r, c.face);
         if scroll.hot == Some(strip) && !scroll.flat {
             fb.hline(r.x, r.y, r.w, c.dark_shadow);
@@ -1007,11 +1041,11 @@ fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Men
             continue;
         }
         // Up: 1, 3, 5 wide from 3 rows under the strip's top; down: 5, 3, 1 ending 3 rows above
-        // the inner bottom (2 on Windows 2000).
+        // the strip's bottom.
         let rows: [(i32, i32); 3] = match strip {
             Strip::Up => [(r.y + 3, 1), (r.y + 4, 3), (r.y + 5, 5)],
             Strip::Down => {
-                let last = r.bottom() - 1 - if scroll.flat { 2 } else { 3 };
+                let last = r.bottom() - 1 - 3;
                 [(last - 2, 5), (last - 1, 3), (last, 1)]
             }
         };
@@ -1020,7 +1054,6 @@ fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Men
         }
     }
 }
-
 /// The menu window's border: a raised window edge plus face color inside it.
 fn menu_frame(fb: &mut Framebuffer, c: &Colors) {
     let outer = Rect::new(0, 0, fb.width, fb.height);
@@ -1219,7 +1252,7 @@ fn paint_menu_with(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Me
 mod long_menu_tests {
     use super::*;
     use crate::text::Font;
-    use crate::theme::{Era, WIN95, WIN98, WIN2000};
+    use crate::theme::{WIN95, WIN98, WIN2000};
 
     fn fonts() -> (Font, Font) {
         (
@@ -1286,10 +1319,10 @@ mod long_menu_tests {
         let c = &WIN95.colors;
         assert_eq!((fb.get(x0 + w0 + 1, l.frame), fb.get(x0 + w0 + 2, l.height - l.frame - 1)), (c.shadow, c.highlight));
         // Windows 95's Left and Right go to the same row of the column beside.
-        assert_eq!(l.beside(5, 1), Some(27 + 5));
-        assert_eq!(l.beside(27 + 5, -1), Some(5));
-        assert_eq!(l.beside(20, 1), Some(39), "a shorter column: its last entry");
-        assert_eq!(l.beside(5, -1), None);
+        assert_eq!(l.beside(&menu, MenuStyle::Cascade, 5, 1), Some(27 + 5));
+        assert_eq!(l.beside(&menu, MenuStyle::Cascade, 27 + 5, -1), Some(5));
+        assert_eq!(l.beside(&menu, MenuStyle::Cascade, 20, 1), Some(39), "a shorter column: its last entry");
+        assert_eq!(l.beside(&menu, MenuStyle::Cascade, 5, -1), None);
     }
 
     /// The scroll steps and their ends; the strips show only when there is more on their side; a
@@ -1328,8 +1361,8 @@ mod long_menu_tests {
         // The pace as plain numbers.
         assert_eq!(scroll_pace(false), (150, 300));
         assert_eq!(scroll_pace(true), (60, 60));
-        // Painted: the bottom strip's arrow in the middle of the inner width (98: x 227..231 for a
-        // menu at 165..294 is its 62nd..66th inner pixel... here by the same rule).
+        // Painted: the bottom strip's arrow in the middle of the inner width (measured on 98: x
+        // 227..231 in a menu at 165..294, the inner left plus (inner width - 6) / 2).
         let mut fb = Framebuffer::new(l.width, l.height, 0);
         let mut l2 = l.clone();
         l2.scroll = Some(Scroll { offset: 0, ..l.scroll.unwrap() });
@@ -1344,6 +1377,87 @@ mod long_menu_tests {
         paint_menu(&mut fb, &WIN98, &f, &menu, MenuStyle::Cascade, &l2);
         assert_eq!(fb.get(ax + 2, row), WIN98.colors.face, "no arrow under the pointer");
         assert_eq!(fb.get(frame, 600 - frame - STRIP_H), WIN98.colors.dark_shadow);
-        let _ = Era::Win98;
+    }
+
+    /// Left and Right land only on entries that can be chosen: a 95 Start-style menu in columns
+    /// with separators (the review of brief 91, 10).
+    #[test]
+    fn beside_never_lands_on_a_separator() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let mut entries: Vec<MenuEntry> = (0..40).map(|i| MenuEntry::item(&format!("Entry {i:03}"), None)).collect();
+        // A separator in the second column's rows: in the row of entry 3.
+        let l0 = layout_long_menu(&WIN95, &f, &Menu::new(entries.clone()), MenuStyle::StartSmall, 300, Long::Columns { own_widths: true }, 0);
+        let per_col = l0.rects.iter().filter(|r| r.x == l0.columns[0].0).count();
+        entries[per_col + 3] = MenuEntry::separator();
+        let menu = Menu::new(entries);
+        let l = layout_long_menu(&WIN95, &f, &menu, MenuStyle::StartSmall, 300, Long::Columns { own_widths: true }, 0);
+        assert!(l.columns.len() > 1);
+        let to = l.beside(&menu, MenuStyle::StartSmall, 3, 1).unwrap();
+        assert!(menu.selectable(to, MenuStyle::StartSmall), "landed on {to}");
+        assert_ne!(menu.entries[to].kind, EntryKind::Separator);
+    }
+
+    /// A layout whose entries overflow the screen by the padding only: whatever it gives, nothing
+    /// scrolls and no strip shows (the review of brief 91, 11).
+    #[test]
+    fn overflowing_by_the_padding_only_shows_no_strip() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let frame = WIN98.start_menu.frame;
+        let row = WIN98.start_menu.small.h;
+        // 29 rows exactly fill the inside; one row's padding more makes the old layout break.
+        for h in [29 * row + 2 * frame, 29 * row + 2 * frame + WIN98.start_menu.bottom_pad - 1] {
+            let menu = long(0, 29);
+            let l = layout_long_menu(&WIN98, &f, &menu, MenuStyle::Cascade, h, Long::Scroll { flat: false }, 0);
+            if let Some(s) = l.scroll {
+                assert_eq!(s.end, 0, "{h}: an end of 0");
+                assert!(!s.shows(Strip::Up) && !s.shows(Strip::Down), "{h}: no strip");
+                assert_eq!(l.strip_at(l.width / 2, l.height - frame - 1), None);
+                assert!(l.shown_rect(28).is_some(), "{h}: every entry shows");
+            }
+        }
+    }
+
+    /// An entry scrolled out of sight is brought into view whole before its submenu opens (the
+    /// review of brief 91, 1: the core's part).
+    #[test]
+    fn an_entry_out_of_sight_is_brought_into_view() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let mut menu = long(3, 60);
+        menu.hover = Some(1);
+        let mut l = layout_long_menu(&WIN98, &f, &menu, MenuStyle::Cascade, 600, Long::Scroll { flat: false }, 10_000);
+        assert_eq!(l.shown_rect(1), None, "scrolled to the end: the second folder is out of sight");
+        assert!(l.reveal(1));
+        let shown = l.shown_rect(1).unwrap();
+        let (top, bottom) = l.view();
+        assert!(shown.y >= top && shown.bottom() <= bottom, "whole in view");
+    }
+    /// How long one repaint of a scrolling menu of 400 entries takes (a measurement, not a check;
+    /// brief 92: run it with `cargo test -p bevel-core --release --lib scrolling_menu_timing --
+    /// --ignored --nocapture`).
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn scrolling_menu_timing() {
+        let (r, b) = fonts();
+        let f = Fonts { regular: &r, bold: &b };
+        let icon = Some(crate::fb::Icon { width: 16, height: 16, pixels: vec![0xFF00_80FF; 256] });
+        let mut menu = Menu::new((0..400).map(|i| MenuEntry::item(&format!("Entry {i:03}"), icon.clone())).collect());
+        menu.hover = Some(200);
+        let mut l = layout_long_menu(&WIN98, &f, &menu, MenuStyle::Cascade, 600, Long::Scroll { flat: false }, 0);
+        if let Some(s) = l.scroll.as_mut() {
+            s.set(s.end / 2);
+        }
+        let mut times = Vec::new();
+        for _ in 0..21 {
+            let started = std::time::Instant::now();
+            let mut fb = Framebuffer::new(l.width, l.height, 0);
+            paint_menu(&mut fb, &WIN98, &f, &menu, MenuStyle::Cascade, &l);
+            times.push(started.elapsed().as_secs_f64() * 1000.0);
+            std::hint::black_box(fb);
+        }
+        times.sort_by(f64::total_cmp);
+        println!("a scrolling menu of 400 entries: one repaint {:.3} ms (median of 21; fastest {:.3}, slowest {:.3})", times[10], times[0], times[20]);
     }
 }

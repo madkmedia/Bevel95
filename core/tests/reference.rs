@@ -3275,11 +3275,6 @@ fn tray_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
         volume::paint(&mut ours, &WIN2000, f95.regular, &v);
         // The mouse pointer's shadow touches the bottom left of the ones opened from the tray.
         let masks = if x == 715 { vec![Rect::new(715, 585, 8, 2)] } else { Vec::new() };
-        let mut masks: Vec<Rect> = masks;
-        // The PC's mouse pointer, resting in the second column's empty part (95's capture).
-        if name == "own-win95-long-programs-50" {
-            masks.push(Rect::new(400, 300, 11, 19));
-        }
         out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
     }
     // (The speaker's and the taskbar's right-click menus were captured too, vm/win2000-
@@ -3470,40 +3465,107 @@ fn own_start_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
 /// - Windows 2000, 59 entries: three columns at x 250.
 fn long_menu_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
     let entries = |first: usize, n: usize| (first..first + n).map(|i| format!("Entry {i:03}")).collect::<Vec<_>>();
-    let mut cases = Vec::new();
+    let with = |head: &[&str], tail: Vec<String>, own: &[&str]| {
+        let mut l: Vec<String> = head.iter().map(|s| s.to_string()).collect();
+        l.extend(tail);
+        l.extend(own.iter().map(|s| s.to_string()));
+        l
+    };
     // 98: its own order, then what was added later, in the order it was made.
-    let mut l98: Vec<String> = ["Accessories>", "Internet Explorer>", "Online Services>", "StartUp>", "MS-DOS Prompt", "Windows Explorer", "Long Folder>"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-    l98.extend(entries(0, 30));
-    cases.push(("own-win98-long-programs-37", "vm/win98-truecolor-startlong-800x600-programs-36entries-open.png", &WIN98, f95, l98, Long::Scroll { flat: false }, 165));
+    let h98 = ["Accessories>", "Internet Explorer>", "Online Services>", "StartUp>", "MS-DOS Prompt", "Windows Explorer", "Long Folder>"];
     // 95: folders, then the entries, then the PC's own programs, by name.
-    let mut l95: Vec<String> = ["Accessories>", "Long Folder>", "Online Services>", "StartUp>"].iter().map(|s| s.to_string()).collect();
-    l95.extend(entries(0, 40));
-    l95.extend(["Internet Explorer", "Internet Mail", "Internet News", "Microsoft NetMeeting", "MS-DOS Prompt", "Windows Explorer"].map(String::from));
-    cases.push(("own-win95-long-programs-50", "vm/win95-truecolor-startlong-800x600-programs-50entries-open.png", &WIN95, f95, l95, Long::Columns { own_widths: true }, 160));
-    // Windows 2000's columns are not compared yet: their widths at 800x600 with 59 entries (130,
-    // 129 and 126; the lines at 384 and 517) follow neither the menu's widest entry nor each
-    // column's own. Bevel95 draws them all as wide as the menu's widest (PROVISIONAL, todo.md).
-    let _ = f2k;
-    for (name, file, theme, fonts, labels, long, x) in cases {
+    let h95 = ["Accessories>", "Long Folder>", "Online Services>", "StartUp>"];
+    let o95 = ["Internet Explorer", "Internet Mail", "Internet News", "Microsoft NetMeeting", "MS-DOS Prompt", "Windows Explorer"];
+    // 2000: the same rule, its entries numbered from 100.
+    let h2k = ["Accessories>", "Long Folder>", "Startup>"];
+    let o2k = ["Internet Explorer", "Outlook Express"];
+    let scroll98 = Long::Scroll { flat: false };
+    let scroll2k = Long::Scroll { flat: true };
+    let cols95 = Long::Columns { own_widths: true };
+    // (name, capture, theme, fonts, labels, rule, x (None: the screen's left edge), screen height,
+    // the last entry chosen (else the first), scrolled to the end)
+    let cases = vec![
+        ("own-win98-long-programs-37", "vm/win98-truecolor-startlong-800x600-programs-36entries-open.png", &WIN98, f95, with(&h98, entries(0, 30), &[]), scroll98, Some(165), 600, false, false),
+        ("own-win98-long-programs-57-end", "vm/win98-truecolor-startlong-800x600-programs-57entries-end-last-selected.png", &WIN98, f95, with(&h98, entries(0, 50), &[]), scroll98, Some(165), 600, true, true),
+        ("own-win98-long-programs-117-end", "vm/win98-truecolor-startlong-800x600-programs-117entries-end-last-selected.png", &WIN98, f95, with(&h98, entries(0, 110), &[]), scroll98, Some(165), 600, true, true),
+        ("own-win98-long-programs-117-640-end", "vm/win98-truecolor-startlong-640x480-programs-117entries-end-last-selected.png", &WIN98, f95, with(&h98, entries(0, 110), &[]), scroll98, Some(165), 480, true, true),
+        ("own-win95-long-programs-50", "vm/win95-truecolor-startlong-800x600-programs-50entries-open.png", &WIN95, f95, with(&h95, entries(0, 40), &o95), cols95, Some(160), 600, false, false),
+        ("own-win95-long-programs-80-640", "vm/win95-truecolor-startlong-640x480-programs-80entries-open.png", &WIN95, f95, with(&h95, entries(0, 70), &o95), cols95, None, 480, false, false),
+        ("own-win2000-long-programs-59-scroll", "vm/win2000-truecolor-startlong-800x600-programs-59entries-scroll-on-open-2.png", &WIN2000, f2k, with(&h2k, entries(100, 54), &o2k), scroll2k, Some(250), 600, false, false),
+        ("own-win2000-long-programs-59-scroll-end", "vm/win2000-truecolor-startlong-800x600-programs-59entries-scroll-on-scrolled-to-end.png", &WIN2000, f2k, with(&h2k, entries(100, 54), &o2k), scroll2k, Some(250), 600, false, true),
+    ];
+    // Windows 2000's columns are not compared: their widths at 800x600 with 59 entries (130, 129
+    // and 126; the lines at 384 and 517) follow neither the menu's widest entry nor each column's
+    // own. Tried in brief 92: each column's own widest (the reviewer's idea; the arrow's room is
+    // the same with and without arrows in 2000) gives a first column of about 105; the widest of a
+    // column and every later one, a pixel more where it opens a submenu (ours) gives 132, 131 and
+    // 128, lines at 386 and 521. Bevel95 draws them all as wide as the menu's widest (PROVISIONAL).
+    for (name, file, theme, fonts, labels, long, x, h, last, end) in cases {
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let m = menu(&labels, Some(0), true);
-        let layout = paint::layout_long_menu(theme, fonts, &m, MenuStyle::Cascade, 600, long, 0);
+        let hover = if last { labels.len() - 1 } else { 0 };
+        let m = menu(&labels, Some(hover), true);
+        let layout = paint::layout_long_menu(theme, fonts, &m, MenuStyle::Cascade, h, long, if end { i32::MAX } else { 0 });
         let mut ours = Framebuffer::new(layout.width, layout.height, 0);
         paint::paint_menu(&mut ours, theme, fonts, &m, MenuStyle::Cascade, &layout);
-        let y = 600 - layout.height;
+        let (x, y) = (x.unwrap_or(0), h - layout.height);
         let items = &theme.start_menu.small;
-        let masks = (0..m.entries.len())
+        let (top, bottom) = layout.view();
+        let mut masks: Vec<Rect> = (0..m.entries.len())
             .filter_map(|i| layout.shown_rect(i))
             .map(|r| Rect::new(x + r.x + items.icon_x, y + r.y + (r.h - items.icon) / 2, items.icon, items.icon))
+            .map(|r| {
+                // A picture cell cut by a strip: only its part in view.
+                let t = r.y.max(y + top);
+                Rect::new(r.x, t, r.w, (r.bottom().min(y + bottom) - t).max(0))
+            })
             .collect();
-        let mut masks: Vec<Rect> = masks;
-        // The PC's mouse pointer, resting in the second column's empty part (95's capture).
+        // The PC's mouse pointer where it rested (95's capture: in the second column's empty part).
         if name == "own-win95-long-programs-50" {
             masks.push(Rect::new(400, 300, 11, 19));
         }
+        // 2000's capture scrolled to the end: the pointer rests on the last entry's label (its tip
+        // at 346, 593), and the label's three rows just above it.
+        if name == "own-win2000-long-programs-59-scroll-end" {
+            masks.push(Rect::new(346, 590, 14, 10));
+        }
+        out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
+    }
+    start_scroll_cases(out, f95);
+}
+
+/// Windows 98's own Start menu when it scrolls (brief 92): the PC's menu after MS-DOS Prompt was
+/// dropped on top of it. It kept its height (347, from y 229 down to the bar), so its entries no
+/// longer fit and it scrolls, shown at its top: the banner stands still and whole, the bottom strip
+/// covers the entries' part only. Laid out by `layout_long_menu` for a "screen" of the menu's own
+/// height (Bevel95 meets the same layout on a short screen). The pictures are masked (the dropped
+/// entry's is the PC's). The PC's menu has Windows 98's plain Log Off... (no user name: with one,
+/// as on the PC's other captures, the menu is 4 pixels wider than this one).
+fn start_scroll_cases(out: &mut Vec<Case>, f95: &Fonts) {
+    {
+        let (name, user, log_off) = ("own-win98-start-scrolls", "", false);
+        let opts = bevel_core::config::StartOptions { favorites: true, log_off, scroll_programs: false };
+        let mut m = bevel_core::start::menu(Era::Win98, opts, user, |e| bevel_core::icons::start_icon(Era::Win98, e));
+        m.entries.insert(0, MenuEntry::item("MS-DOS Prompt", None));
+        m.show_keys = true;
+        let layout = paint::layout_long_menu(&WIN98, f95, &m, MenuStyle::Start, 347, Long::Scroll { flat: false }, 0);
+        let mut ours = Framebuffer::new(layout.width, layout.height, 0);
+        paint::paint_menu(&mut ours, &WIN98, f95, &m, MenuStyle::Start, &layout);
+        let (x, y) = (2, 229);
+        let items = &WIN98.start_menu.large;
+        let (top, bottom) = layout.view();
+        let masks: Vec<Rect> = (0..m.entries.len())
+            .filter(|&i| m.entries[i].kind != EntryKind::Separator)
+            .filter_map(|i| layout.shown_rect(i))
+            .map(|r| Rect::new(x + r.x + items.icon_x, y + r.y + (r.h - items.icon) / 2, items.icon, items.icon))
+            .map(|r| {
+                let t = r.y.max(y + top);
+                Rect::new(r.x, t, r.w, (r.bottom().min(y + bottom) - t).max(0))
+            })
+            .collect();
+        // The PC's pressed Start button lies over the menu's bottom left corner (x 2..53, y 572..575).
+        let mut masks = masks;
+        masks.push(Rect::new(2, 572, 52, 4));
+        let file = "vm/win98-truecolor-startdrag-800x600-startmenu-with-dropped-msdosprompt-on-top-scrolls.png";
         out.push(Case { name, file, regions: vec![whole(&ours, (x, y))], ours, masks, vga: false });
     }
 }

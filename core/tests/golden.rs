@@ -19,7 +19,7 @@ use bevel_core::fb::{Framebuffer, Icon, Rect};
 use bevel_core::layout::{self, place_popup, place_start_menu, place_submenu};
 use bevel_core::paint::{self, Bar, Long, Menu, MenuEntry, MenuLayout, MenuStyle, ScrollArrow, Strip, Task, TaskState};
 use bevel_core::programs::{self, Folder, Item, Shown};
-use bevel_core::scale::upscale;
+use bevel_core::scale::{Scale, upscale};
 use bevel_core::tasks::{self, Group, TaskList, WindowInfo};
 use bevel_core::text::{Font, Fonts, fixture_name};
 use bevel_core::theme::{Depth, Era, Theme, WIN95, WIN98, WIN2000, rgb};
@@ -373,23 +373,12 @@ fn long_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, w: i32, h: i32, n: us
     programs.show_keys = true;
     programs.hover = Some(if scene == LongScene::Submenu { 1 } else { 0 });
     let scroll_programs = scene == LongScene::ScrollSetting;
-    let rule = theme.start_menu.submenu;
-    // Lays out and places a menu cascading from `entry` of `parent` (in columns: beside the
-    // entry's column), as `popup::open_child` does.
+    // Lays out and places a menu cascading from `entry` of `parent`: `start::place_cascade`, the
+    // code the bar runs (brief 92).
     let place = |menu: &Menu, long: Long, offset: i32, parent: Rect, entry: Rect, in_columns: bool| {
-        let parent = if in_columns { Rect::new(entry.x - 3, parent.y, entry.w + 6, parent.h) } else { parent };
-        let mut l = paint::layout_long_menu(theme, fonts, menu, MenuStyle::Cascade, h, long, offset);
-        let mut forced = None;
-        if l.columns.len() > 1 {
-            match start::place_columns(era, parent.right() - rule.overlap, l.width, 0, w) {
-                Some(x) => forced = Some(x),
-                None => l = paint::layout_long_menu(theme, fonts, menu, MenuStyle::Cascade, h, start::scroll_instead(era), offset),
-            }
-        }
-        let (px, py) = place_submenu(parent, entry, l.width, l.height, 3, rule, screen_rect);
-        (l, forced.unwrap_or(px), py, parent)
-    };
-    let long = start::long_rule(era, start::LongKind::Programs, scroll_programs);
+        let (l, x, y) = start::place_cascade(theme, fonts, era, menu, MenuStyle::Cascade, long, offset, Scale::whole(1), screen_rect, parent, entry, in_columns);
+        (l, x, y, parent)
+    };    let long = start::long_rule(era, start::LongKind::Programs, scroll_programs);
     let (mut pl, px, py, _) = place(&programs, long, 0, parent, entry, false);
     if let Some(mut s) = pl.scroll {
         match scene {
@@ -418,6 +407,39 @@ fn long_menu_scene(theme: &Theme, era: Era, fonts: &Fonts, w: i32, h: i32, n: us
         paint::paint_menu(&mut sfb, theme, fonts, &sub, MenuStyle::Cascade, &sl);
         screen.blit(&sfb, sx, sy);
     }
+    screen
+}
+
+/// Windows 98's own Start menu on a screen too short for it (640x360, as a 1280x720 screen at Size
+/// 2): it scrolls, its banner standing still and whole, the strips over the entries' part only
+/// (brief 92; as the Reference PC's Start menu showed it when it had to scroll). At its top, or
+/// scrolled to the end with the pointer on the top strip. Laid out by `start::layout_root`, the
+/// code the bar runs.
+fn start_scrolls_scene(theme: &Theme, fonts: &Fonts, end: bool) -> Framebuffer {
+    let era = Era::Win98;
+    let (w, h) = (640, 360);
+    let screen_rect = Rect::new(0, 0, w, h);
+    let mut screen = Framebuffer::new(w, h, desktop(era));
+    let mut bar = Framebuffer::new(w, theme.bar.height, 0);
+    paint::paint_bar(&mut bar, theme, fonts, &Bar { start_pressed: true, clock: CLOCK.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() });
+    let bar_top = h - bar.height;
+    screen.blit(&bar, 0, bar_top);
+    let mut menu = start::menu(era, StartOptions::default(), "Admin", |e| icons::start_icon(era, e));
+    menu.show_keys = true;
+    menu.hover = Some(if end { menu.entries.len() - 1 } else { 0 });
+    let long = start::long_rule(era, start::LongKind::Other, false);
+    let mut layout = start::layout_root(theme, fonts, era, &menu, MenuStyle::Start, long, 0, Scale::whole(1), screen_rect);
+    if end && let Some(mut s) = layout.scroll {
+        s.set(s.end);
+        s.hot = Some(Strip::Up);
+        layout.scroll = Some(s);
+    }
+    let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut fb, theme, fonts, &menu, MenuStyle::Start, &layout);
+    let button = layout::start_button(theme, fonts);
+    let button = Rect::new(button.x, bar_top + button.y, button.w, button.h);
+    let (x, y) = place_start_menu(button, fb.width, fb.height, screen_rect);
+    screen.blit(&fb, x, y);
     screen
 }
 
@@ -1979,6 +2001,8 @@ fn scenes() -> Vec<Scene> {
             ),
             Era::Win98 => {
                 add("long-programs-800-middle", "800x600, 117 entries, scrolled to the middle: both strips", long_menu_scene(theme, era, &fonts, 800, 600, 117, LongScene::Middle));
+                add("start-scrolls", "The Start menu on a screen too short for it (640x360): it scrolls, the banner standing still, the bottom strip over the entries only", start_scrolls_scene(theme, &fonts, false));
+                add("start-scrolls-end", "The same scrolled to the end, the pointer on the top strip (sunken, no arrow), the last entry chosen", start_scrolls_scene(theme, &fonts, true));
                 add(
                     "long-programs-800-end",
                     "800x600, 117 entries, scrolled to the end with the pointer on the top strip: it is drawn sunken, without its arrow; the bottom strip is gone",

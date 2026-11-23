@@ -284,16 +284,98 @@ pub fn scroll_instead(era: Era) -> crate::paint::Long {
     crate::paint::Long::Scroll { flat: era == Era::Win2000 }
 }
 
-/// Where a menu of columns `w` wide stands across a screen `screen_x..screen_x + screen_w`, opening
-/// at `beside` (right of the entry it cascades from): there if it fits; Windows 95 moves it to the
-/// screen's left edge when it would pass the right one (covering the Start menu), Windows 2000
-/// never moves it. `None`: it does not fit even so, and scrolls instead (`scroll_instead`).
-pub fn place_columns(era: Era, beside: i32, w: i32, screen_x: i32, screen_w: i32) -> Option<i32> {
-    let right = screen_x + screen_w;
-    if beside + w <= right {
-        return Some(beside);
+/// Where a menu of columns `w` wide stands across a screen `screen_x..screen_x + screen_w`: right of
+/// its parent (`right`: its left edge there) if it fits there whole; else left of its parent
+/// (`left`: its left edge there), as every Windows menu goes and as Bevel95 did before brief 91;
+/// only where it fits on neither side the look's last way: Windows 95 moves it to the screen's
+/// left edge (measured for the Programs menu beside the Start menu, whose left has no room),
+/// Windows 2000 never moves it. `None`: it scrolls instead (`scroll_instead`). The left side is
+/// PROVISIONAL (brief 92): only the Programs menu beside the Start menu was measured.
+pub fn columns_x(era: Era, right: i32, left: i32, w: i32, screen_x: i32, screen_w: i32) -> Option<i32> {
+    if right + w <= screen_x + screen_w {
+        return Some(right);
+    }
+    if left >= screen_x {
+        return Some(left);
     }
     (era == Era::Win95 && w <= screen_w).then_some(screen_x)
+}
+
+/// A menu of the Start menu's family laid out and placed beside entry `entry` of its parent
+/// `parent` (screen pixels at `scale`, on `screen`), as the bar opens a submenu: the look's rule for
+/// a menu longer than the screen (`long`, scrolled to `offset`); beside the entry's own column when
+/// the parent stands in columns (`parent_in_columns`: never for Windows' own popup menus); a block
+/// of columns where `columns_x` puts it, scrolling where it fits nowhere; anything else where
+/// `layout::place_submenu` puts it. One piece of code for the bar and the golden pictures (brief
+/// 92). Returns the layout (1×) and the menu's left and top on the screen.
+#[allow(clippy::too_many_arguments)]
+pub fn place_cascade(
+    theme: &crate::theme::Theme,
+    fonts: &crate::text::Fonts,
+    era: Era,
+    menu: &Menu,
+    style: crate::paint::MenuStyle,
+    long: crate::paint::Long,
+    offset: i32,
+    scale: crate::scale::Scale,
+    screen: crate::fb::Rect,
+    parent: crate::fb::Rect,
+    entry: crate::fb::Rect,
+    parent_in_columns: bool,
+) -> (crate::paint::MenuLayout, i32, i32) {
+    use crate::fb::Rect;
+    use crate::paint::{self, MenuStyle};
+    let (rule, frame) = match style {
+        MenuStyle::Popup => (theme.popup.submenu, theme.popup.frame),
+        _ => (theme.start_menu.submenu, theme.start_menu.frame),
+    };
+    let rule = crate::theme::SubmenuPlacement { overlap: scale.len(rule.overlap), margin_bottom: scale.len(rule.margin_bottom), ..rule };
+    let frame = scale.len(frame);
+    let parent = if parent_in_columns { Rect::new(entry.x - frame, parent.y, entry.w + 2 * frame, parent.h) } else { parent };
+    let screen_h = scale.old_fit(screen.h);
+    let mut layout = match style {
+        MenuStyle::Popup => paint::layout_menu(theme, fonts, menu, style, screen_h),
+        _ => paint::layout_long_menu(theme, fonts, menu, style, screen_h, long, offset),
+    };
+    if style != MenuStyle::Popup && layout.columns.len() > 1 {
+        let w = scale.len(layout.width);
+        match columns_x(era, parent.right() - rule.overlap, parent.x + rule.overlap - w, w, screen.x, screen.w) {
+            Some(x) => {
+                let (_, y) = crate::layout::place_submenu(parent, entry, w, scale.len(layout.height), frame, rule, screen);
+                return (layout, x, y);
+            }
+            None => layout = paint::layout_long_menu(theme, fonts, menu, style, screen_h, scroll_instead(era), offset),
+        }
+    }
+    let (x, y) = crate::layout::place_submenu(parent, entry, scale.len(layout.width), scale.len(layout.height), frame, rule, screen);
+    (layout, x, y)
+}
+
+/// A root menu of the Start menu's family (the Start menu, a task button's list, 2000's Quick
+/// Launch list) laid out for `screen`: the look's rule, and columns wider than the whole screen
+/// scroll instead. Windows' own popup menus as before.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_root(
+    theme: &crate::theme::Theme,
+    fonts: &crate::text::Fonts,
+    era: Era,
+    menu: &Menu,
+    style: crate::paint::MenuStyle,
+    long: crate::paint::Long,
+    offset: i32,
+    scale: crate::scale::Scale,
+    screen: crate::fb::Rect,
+) -> crate::paint::MenuLayout {
+    use crate::paint::{self, MenuStyle};
+    let screen_h = scale.old_fit(screen.h);
+    if style == MenuStyle::Popup {
+        return paint::layout_menu(theme, fonts, menu, style, screen_h);
+    }
+    let layout = paint::layout_long_menu(theme, fonts, menu, style, screen_h, long, offset);
+    if layout.columns.len() > 1 && scale.len(layout.width) > screen.w {
+        return paint::layout_long_menu(theme, fonts, menu, style, screen_h, scroll_instead(era), offset);
+    }
+    layout
 }
 
 #[cfg(test)]
@@ -316,17 +398,59 @@ mod tests {
         assert_eq!(scroll_instead(Era::Win2000), Long::Scroll { flat: true });
     }
 
-    /// Windows 95 moves columns that pass the right edge to the left one (measured: 80 entries at
-    /// 640x480 from x 0); Windows 2000 never moves them; what fits nowhere scrolls (`None`).
+    /// Columns stand right of their parent if they fit there, else left of it (brief 92), else the
+    /// look's last way: Windows 95 the screen's left edge (measured: 80 entries at 640x480 from x 0,
+    /// the Programs menu beside the Start menu, which has no room on its left), Windows 2000 never
+    /// moved (`None`: it scrolls).
     #[test]
-    fn columns_stand_beside_or_move_to_the_left_edge() {
-        assert_eq!(place_columns(Era::Win95, 160, 400, 0, 640), Some(160), "fits beside");
-        assert_eq!(place_columns(Era::Win95, 160, 494, 0, 640), Some(0), "moved to the left edge");
-        assert_eq!(place_columns(Era::Win95, 160, 640, 0, 640), Some(0), "just fits the width");
-        assert_eq!(place_columns(Era::Win95, 160, 641, 0, 640), None, "one pixel too wide: scrolls");
-        assert_eq!(place_columns(Era::Win2000, 250, 398, 0, 800), Some(250));
-        assert_eq!(place_columns(Era::Win2000, 250, 551, 0, 800), None, "would run off: scrolls");
-        assert_eq!(place_columns(Era::Win95, 1920 + 160, 494, 1920, 640), Some(1920), "a second screen's left edge");
+    fn columns_stand_right_then_left_then_the_looks_way() {
+        // Beside the Start menu (no room on its left: the left edge would be negative).
+        assert_eq!(columns_x(Era::Win95, 160, 3 - 400, 400, 0, 640), Some(160), "fits beside");
+        assert_eq!(columns_x(Era::Win95, 160, 3 - 494, 494, 0, 640), Some(0), "moved to the left edge");
+        assert_eq!(columns_x(Era::Win95, 160, 3 - 640, 640, 0, 640), Some(0), "just fits the width");
+        assert_eq!(columns_x(Era::Win95, 160, 3 - 641, 641, 0, 640), None, "one pixel too wide: scrolls");
+        assert_eq!(columns_x(Era::Win2000, 250, 3 - 398, 398, 0, 800), Some(250));
+        assert_eq!(columns_x(Era::Win2000, 250, 3 - 551, 551, 0, 800), None, "would run off: scrolls");
+        assert_eq!(columns_x(Era::Win95, 1920 + 160, 1920 + 3 - 494, 494, 1920, 640), Some(1920), "a second screen's left edge");
+        // A long folder far to the right: left of its parent, as before brief 91, in every look.
+        for era in [Era::Win95, Era::Win2000] {
+            assert_eq!(columns_x(era, 600, 420 - 300, 300, 0, 800), Some(120), "{era:?}: left of the parent");
+        }
+    }
+
+    /// The bar's placement of a long submenu, in one place (brief 92): a 95 Programs menu of 80
+    /// entries at 640x480 beside the Start menu moves to the left edge; at Size 2 the same at twice
+    /// the pixels; Windows' own popup menus keep their old place.
+    #[test]
+    fn a_long_submenu_is_placed_by_one_rule() {
+        use crate::fb::Rect;
+        use crate::paint::{Menu, MenuEntry, MenuStyle};
+        use crate::scale::Scale;
+        let r = crate::text::Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px.font")).unwrap();
+        let b = crate::text::Font::parse(include_str!("../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap();
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let theme = &crate::theme::WIN95;
+        let mut entries: Vec<MenuEntry> = (0..100).map(|i| MenuEntry::item(&format!("Entry {i:03}"), None)).collect();
+        entries.insert(0, MenuEntry::submenu("Accessories", None));
+        let menu = Menu::new(entries);
+        let long = long_rule(Era::Win95, LongKind::Programs, false);
+        for k in [1, 2] {
+            let s = Scale::whole(k);
+            let screen = Rect::new(0, 0, 640 * k, 480 * k);
+            let parent = Rect::new(0, 220 * k, 163 * k, 238 * k);
+            let entry = Rect::new(3 * k, 223 * k, 157 * k, 32 * k);
+            let (l, x, _) = place_cascade(theme, &fonts, Era::Win95, &menu, MenuStyle::Cascade, long, 0, s, screen, parent, entry, false);
+            assert!(l.columns.len() > 1 && l.scroll.is_none(), "columns");
+            assert_eq!(x, 0, "Size {k}: moved to the screen's left edge");
+        }
+        // Too many to fit even at the left edge: it scrolls, at its usual place.
+        let mut more = menu.clone();
+        more.entries.extend((100..240).map(|i| MenuEntry::item(&format!("Entry {i:03}"), None)));
+        let screen = Rect::new(0, 0, 640, 480);
+        let (l, x, y) =
+            place_cascade(theme, &fonts, Era::Win95, &more, MenuStyle::Cascade, long, 0, Scale::whole(1), screen, Rect::new(0, 220, 163, 238), Rect::new(3, 223, 157, 32), false);
+        assert!(l.scroll.is_some());
+        assert_eq!((x, y, l.height), (163 - theme.start_menu.submenu.overlap, 0, 480), "beside the Start menu, the screen's height");
     }
 
     /// As read on the reference PCs after opening zebra, apple and mango (in that order).

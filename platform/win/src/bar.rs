@@ -154,6 +154,12 @@ pub static WM_QUICK_LAUNCH: Private = Private::new("Bevel95.Bar.QuickLaunch");
 /// Display Properties for live tests (`display_window::test_message`): opens and closes it and the
 /// Pattern window, and shows a test's wallpaper or pattern on the desktop without saving it.
 pub static WM_DISPLAY: Private = Private::new("Bevel95.Bar.Display");
+/// A live test's long menu (brief 92, `private\probes\start-long\live.ps1`): opens a menu of made-up
+/// entries and folders ("Entry 000" ...; wParam: how many entries, 1 to 500) laid out and placed by
+/// the look's own rule as the Programs menu beside the Start menu would be. Its entries start
+/// nothing: choosing one closes the menu and writes a line to the log. A test command for test
+/// items only (`popup::open_test_long_menu`); it had no `WM_APP` number before.
+pub static WM_TEST_LONG_MENU: Private = Private::new("Bevel95.Bar.TestLongMenu");
 
 /// Every message of the bar registered by name, with the `WM_APP + n` it was before (the names
 /// `tools\dev\postbar.ps1` knows and decisions.md lists).
@@ -183,6 +189,7 @@ fn register_messages() {
     crate::pictures::WM_PICTURE.id();
     crate::pictures::WM_PICTURE_AGAIN.id();
     crate::wallpaper_browse::WM_BROWSED.id();
+    WM_TEST_LONG_MENU.id();
 }
 /// The timer that slides an auto-hiding bar in and out, and its step.
 const SLIDE: usize = 2;
@@ -3367,6 +3374,10 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 Some(index) => popup::open_task_menu(bar, index, at.x, at.y),
                 None => popup::open(bar, at.x, at.y, on_clock(x, y)),
             }
+            return 0;
+        }
+        m if m == WM_TEST_LONG_MENU.id() => {
+            popup::open_test_long_menu(bar, wparam.clamp(1, 500));
             return 0;
         }
         m if m == WM_BAR_COMMAND.id() => {
