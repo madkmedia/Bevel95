@@ -3,6 +3,10 @@
 //!
 //!   cargo run --release -p bevel-core --example pack -- <out.exe> <bevel95.exe> <companion.exe>...
 //!   cargo run --release -p bevel-core --example pack -- --check <file.exe>
+//!   cargo run --release -p bevel-core --example pack -- --settings <settings.txt>
+//!
+//! `--settings` writes the settings.txt Setup's Portable choice writes into a new portable folder
+//! (Bevel95's defaults, with its mark: `config::DEFAULT_FILE`), for the release's portable zip.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -13,6 +17,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.as_slice() {
         [check, file] if check == "--check" => check_file(Path::new(file)),
+        [settings, out] if settings == "--settings" => {
+            std::fs::write(out, bevel_core::config::DEFAULT_FILE).map_err(|e| format!("cannot write {out}: {e}"))
+        }
         [out, bar, programs @ ..] if !out.starts_with("--") && !programs.is_empty() => make(Path::new(out), bar, programs),
         _ => Err("usage: pack <out.exe> <bevel95.exe> <companion.exe>... | pack --check <file.exe>".into()),
     };

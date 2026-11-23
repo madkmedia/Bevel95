@@ -96,6 +96,12 @@ Double-click the file. **Bevel95 Setup** asks how you want to use it:
 To update later, run a newer file: Setup offers to update the installed copy and keeps your
 settings.
 
+**Without Setup**: each release also has `Bevel95-<version>-portable.zip`, the same portable copy
+already unpacked. Unzip it into a folder of its own and start `bevel95.exe`; keep its
+`settings.txt` beside it (without it, Bevel95 asks as Setup does). Such a copy has no desktop
+shortcuts: Ctrl+Win+T, the bar's **Bevel95**, **Exit**, or `bevel95.exe --restore` in its folder
+bring Windows' taskbar back.
+
 ## Switching back to Windows' taskbar, and removing Bevel95
 
 - **Ctrl+Win+T** switches between Bevel95 and Windows' own taskbar at any time. While Windows'

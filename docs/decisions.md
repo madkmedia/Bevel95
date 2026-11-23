@@ -1501,6 +1501,23 @@ it, but write nothing).
   - Nothing else changed where everything works: the font fixtures, the golden pictures and the
     full comparison are the same. Not built: installing without a window from the command line
     (the reporter's question, `private/todo.md`).
+- **The portable zip, a release's second file** (2026-11-23, brief 86; the owner: "Yes, add the
+  zip"): `tools\release.ps1` writes `Bevel95-<version>-portable.zip` beside the one file in
+  `private\dist\<commit>\`. Unzipped it is exactly the folder Setup's Portable choice makes:
+  `bevel95.exe` (the bar as a plain program), `programs\` with the five companions, and
+  `settings.txt` with Bevel95's mark (Bevel95's defaults, `config::DEFAULT_FILE`, written by
+  `pack --settings` as Setup writes it). Made with .NET's own zip classes, the entries in a fixed
+  order and dated with the commit's time, so the same commit gives the same zip (two runs: the
+  same SHA-256). The script checks its own work: each program in the zip has the fingerprint of
+  the one file's part of that name, the bar's stamp says the version and the commit, settings.txt
+  holds the mark, nothing else is in it; it prints the zip's path, size and SHA-256 beside the one
+  file's. Proved against Setup's Portable in its test mode: the same seven files with the same
+  bytes; Setup's folder has, besides, the one file itself and the log Setup wrote. Tried in
+  scratch folders: the unzipped copy keeps its log in its own folder, writes nothing into the
+  scratch `%LOCALAPPDATA%\Bevel95` and no registry entry; a second start the same; a copy whose
+  settings.txt was deleted is no portable copy any more: Setup's first page shows (Cancel leaves
+  the folder as it was), which the README says. A release now uploads both files and lists both
+  SHA-256.
 
 ## Programs: the shared Windows side and program windows (2026-11-09, the owner: "do minesweeper")
 
@@ -6316,6 +6333,13 @@ sharable").
   whole screen pixels (one picture pixel always covers k x k of them, never smeared; without the
   script, CSS rules do it for the usual scales). The owner's decisions: a plain look, the page's
   words as the owner wrote them, the 600 x 450 animation. The art guard allows `site/`.
+  Since 2026-11-23 (brief 86) a small second line under the download link, "or the portable
+  zip", which the same script points at the newest release's `Bevel95-<version>-portable.zip`
+  (the same checks as for the one file: text only, the address must begin with the releases'
+  download address) and shows only then; without the zip, or without scripts, it stays hidden
+  (the plain link leads to the release's page, which lists both files). Checked in a browser at
+  390 wide against a made-up answer with the zip and one like today's without: no sideways
+  scrolling, the picture's size unchanged (`private/probes/portable-zip/site`).
 - **What is not public, and why**: the maintainer's working instructions for their AI helper
   (`CLAUDE.local.md`: paths of their PC, preferences; the public `CLAUDE.md` is a short version
   for contributors' AI helpers), their running list and checklists (`private/todo.md`,
