@@ -435,6 +435,20 @@ because that Windows 2000's Tahoma differs from today's in a few letters' widths
 | Option bullet | 5×5, centered in the first 21px (PROVISIONAL shape) | same |
 | Position | at the click, flipped up and/or left to stay on the screen | |
 
+### A text field's menu (brief 95)
+
+The edit box's right-click menu, as Windows' own popup menu draws it (survey part 3; compared
+exactly: the six `own-win*-field-menu-*` cases).
+
+| | Windows 95 | Windows 98 | Windows 2000 |
+|---|---|---|---|
+| Entries | as 98 (PROVISIONAL: no capture) | &Undo, —, Cu&t, &Copy, &Paste, &Delete, —, Select &All | the same |
+| Size (Run box, part selected) | | 92 × 126 | 87 × 126 |
+| Grey | | Undo: nothing to undo; Cut, Copy, Delete: nothing selected; Paste: no text on the clipboard; Select All: everything selected | the same; once the grey Undo had no dotted access-key underline (masked, not understood) |
+| Access keys | always | always | by the keyboard only (Shift+F10); none by the mouse |
+| Place | | at the pointer | the same; Shift+F10: at the field's middle (x + (w+1)/2, y + h/2), upward when there is no room below (the Run box's: 191, 355 to 277, 480) |
+| Selection in the field | | the menu's highlight colors behind the selected letters | the same |
+
 ## Window menu and scroll arrows
 
 **Right-click on a task button** (Windows' own menu style, above). For a button with one window:

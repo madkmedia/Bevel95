@@ -2781,6 +2781,43 @@ fn draw_long_menu_sheet() {
     println!("wrote the sheet");
 }
 
+/// The owner's sheet for brief 95: per look Run's field with part of its text selected, and the
+/// field's menu (part selected; nothing selected and nothing to paste), each labeled above it.
+/// `BEVEL95_SHEET=<file> cargo test -p bevel-core --test golden -- --ignored --exact draw_text_field_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of text fields to BEVEL95_SHEET; run it on request"]
+fn draw_text_field_sheet() {
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const GAP: i32 = 12;
+    const LABEL: i32 = 18;
+    let bold = load_font(&WIN95, true);
+    let mut rows: Vec<(String, Vec<Framebuffer>)> = Vec::new();
+    for era in Era::ALL {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let pictures = vec![field_selected_scene(theme, &fonts, era), field_menu_scene(theme, &fonts, true, true), field_menu_scene(theme, &fonts, false, false)];
+        rows.push((format!("{}: Run's field with \"pad\" selected; its menu; the menu with nothing selected and nothing to paste", era.title()), pictures));
+    }
+    let width = GAP + rows.iter().map(|(_, p)| p.iter().map(|f| f.width + GAP).sum::<i32>()).max().unwrap_or(0).max(760);
+    let height = GAP + rows.iter().map(|(_, p)| LABEL + p.iter().map(|f| f.height).max().unwrap_or(0) + GAP).sum::<i32>();
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    let mut y = GAP;
+    for (label, pictures) in &rows {
+        bold.draw(&mut sheet, GAP, y, label, rgb(0x000000));
+        let mut x = GAP;
+        for p in pictures {
+            sheet.blit(p, x, y + LABEL);
+            x += p.width + GAP;
+        }
+        y += LABEL + pictures.iter().map(|f| f.height).max().unwrap_or(0) + GAP;
+    }
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
+
 #[test]
 #[ignore = "writes the owner's sheet of Quick Launch sizes to BEVEL95_SHEET; run it on request"]
 fn draw_quick_launch_size_sheet() {

@@ -3293,6 +3293,22 @@ mod tests {
         // Esc gives the place's address back.
         w.key(Key::Escape, Mods::default());
         assert_eq!(w.field.text, "My Computer");
+        // Brief 95: Ctrl+C copies the selected address for the clipboard; from the icons Ctrl+L
+        // selects the field whole; Ctrl+V asks for the clipboard; the right button opens its menu.
+        let ctrl = Mods { ctrl: true, shift: false };
+        assert_eq!(w.key(Key::Other(u16::from(b'C')), ctrl), Some(vec![Effect::Copy]));
+        assert_eq!(w.take_copy().as_deref(), Some("My Computer"));
+        w.key(Key::Tab, Mods::default());
+        assert!(!w.field.focused);
+        w.key(Key::Other(VK_L), ctrl);
+        assert!(w.field.focused && w.field.all_selected(), "Ctrl+L: the field selected whole");
+        assert_eq!(w.key(Key::Other(u16::from(b'V')), ctrl), Some(vec![Effect::Paste]));
+        w.paste("C:\\WINDOWS\r\nsecond line");
+        assert_eq!(w.field.text, "C:\\WINDOWS");
+        assert_eq!(w.button(Button::Right, true, 200, 100), Vec::new());
+        assert_eq!(w.button(Button::Right, false, 200, 100), vec![Effect::FieldMenu]);
+        assert!(w.field_menu(true).is_some_and(|m| !m.entries[0].disabled), "Undo is there after the paste");
+        w.key(Key::Escape, Mods::default());
         // The list: its rows take clicks, the arrows move the highlight.
         w.set_list(Some((vec![ListRow { level: 0, icon: Icon { width: 16, height: 16, pixels: vec![0; 256] }, name: "Desktop".into() }], None)));
         assert_eq!(w.hit(80, 120), Some(Part::ListRow(0)));
