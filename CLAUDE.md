@@ -22,8 +22,12 @@ pixels and their sources in [docs/theme-spec.md](docs/theme-spec.md), what is no
   Run entry ("Start with Windows") and the installed-apps entry.
 - Rendering: paint at 1x first. A whole size is enlarged by a whole number nearest-neighbour and
   copied 1:1, with no smoothing; a size between whole numbers (quarter steps) is the person's own
-  choice, drawn the way they chose (`scaling`), and is not pixel-exact. Per-monitor-v2 DPI aware. Text from glyph atlases filled by GDI at 96 DPI, not antialiased:
-  MS Sans Serif 8pt (95, 98), Tahoma 8pt (2000).
+  choice, drawn the way they chose (`scaling`), and is not pixel-exact. Per-monitor-v2 DPI aware.
+- Text: the letters are stored in the program as pixels (`art/assets/fonts/*.glyphs`, the way in
+  is `winkit::font::letters`), as Windows draws them at 96 DPI, not antialiased: MS Sans Serif
+  8pt (95, 98), Tahoma 8pt (2000), each with its bold. No program asks Windows for a font to
+  draw its windows, so a start cannot fail there: do not add such a call. `cargo regen-letters`
+  makes the files again, only for an intended change.
 - Each look stays pure: never mix one Windows' pictures or behaviour into another's look.
 - Log Win32 calls that can fail silently (`%LOCALAPPDATA%\Bevel95\bevel95.log`), but never
   text from outside Bevel95 (window titles, file names, tooltips): a test guards it.

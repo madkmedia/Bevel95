@@ -38,8 +38,9 @@ Windows did have (its own controls, its own icons), not something borrowed from 
 ## What pixel-exact means here, and how it is checked
 
 Every look is drawn at 1x into a picture and enlarged by a whole number, nearest neighbour; there
-is no smoothing anywhere. Text comes from glyph atlases filled by GDI at 96 DPI without
-antialiasing (MS Sans Serif 8pt for 95 and 98, Tahoma 8pt for 2000).
+is no smoothing anywhere. Text comes from letters stored in the program as pixels
+(`art/assets/fonts/*.glyphs`): what GDI draws at 96 DPI without antialiasing (MS Sans Serif 8pt
+for 95 and 98, Tahoma 8pt for 2000). No program asks Windows for a font to draw its windows.
 
 - **Golden pictures** (`core/tests/golden/*.png`) are fixed states drawn at 1x and compared pixel
   for pixel by `cargo test`. When one differs, the test writes `<name>.actual.png` and
