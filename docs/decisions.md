@@ -4163,6 +4163,77 @@ it, but write nothing).
     no virtual disk attached), the unlock window itself; the real try is the reporting user's.
     Windows' other entries on a drive (Format, Eject, sharing, turning BitLocker on) are not built
     (todo.md).
+- **Moved icons, Arrange Icons and Line up Icons** (2026-11-24, brief 103, GitHub issue 9: "By
+  mistake I dragged my D: partition out of place ... if I go into a partition and then go 'Up' or
+  'Back' to My Computer, the icon is no longer in line"; measured on the three Reference PCs:
+  `private/probes/folder-arrange/survey.md`, captures `vm/<pc>-truecolor-arrange-*`).
+  - **Before**: every icon's place of a folder was kept in folders.txt (`places` lines) as soon
+    as one was dragged, for good in every look; going to List or Details and back put the
+    icons back in rows (the person's place lost, every place frozen again); there was no Line up
+    Icons in folder windows, and My Computer had no Arrange Icons.
+  - **A dropped icon lies exactly where it is dropped** (no grid; the survey: 98's C: moved by
+    171,173), in Large and Small Icons, every look; going to List or Details and back moves
+    nothing (`Desktop::set_mode` keeps the places aside meanwhile: `stash`; no original moved an
+    icon at that step: `*-arrange-mc-c-moved-then-details`, `-details-back-to-large`).
+  - **Only the icons really moved are kept** (`Desktop::moved`, `moved_places`, `load_moved`): by
+    the item's id (its path) within its folder, in 1x pixels of the view, in the order moved;
+    the others stand in order around them. folders.txt: `moved<TAB>folder<TAB>x y id...` and (98
+    with its web view) `last<TAB>folder<TAB>id...`; at most 500 icons a folder (the last moved)
+    and 200 folders (`MOST_ARRANGED`, as the other per-folder records), the one changed longest ago
+    going first (`Saved::arranged`, kept in the file's order). A record is rewritten only when
+    the person changes it (a drop, Line up, Auto Arrange, Arrange by, F5's packing), from the
+    icons there now, so ids gone from the folder drop out then; a folder that is gone keeps its
+    record until it is the oldest beyond 200. A line `places` of an older Bevel95 (every icon of
+    a folder) is read no more: those folders open in order once. Written through
+    `winkit::state_file` as before: a folders.txt that cannot be read is kept and never replaced.
+  - **How long a place is kept, per look** (`saved::kept`, the survey's part 2): **95** for good
+    (this window, F5, a window opened again); **98 with "as Web Page" on** (its default; Bevel95's
+    98 look has the switch per folder): My Computer keeps the place while its window stays open
+    (F5, Back, Up: this window's own record, `FolderHost::session`; F5 PROVISIONAL, seen once)
+    and is packed in order with the moved icon LAST when its window is opened again; an ordinary
+    folder is packed so already at F5, Back and Up (`98 fa-fig-moved-after-f5`,
+    `98 mc-c-moved-closed-reopened`): what is kept is the order (`Desktop::pack_moved_last`,
+    `last`), not the place; **98 with it off** for good; **2000** for good, but its F5 with the
+    web view on puts every icon back in its order (`2000 fa-fig-moved-after-f5`); with classic
+    folders for good. 2000's shift of every icon by 9 or 13 pixels after Up or a reopen is not
+    copied (its fault).
+  - **Line up Icons** in the View menu and the empty area's menu, in My Computer and folders (95
+    "Lin&e up Icons", 98 and 2000 "Line &Up Icons"), grey in List and Details: each icon off the
+    grid goes to the nearest grid place (75 by 75 in Large Icons from the first icon's place),
+    not back into its order; icons on the grid stay (the desktop's `line_up`, its grid reaching
+    below the lowest icon in a window).
+  - **Arrange Icons**: My Computer's by Drive Letter, by Type, by Size, by Free Space (the
+    drives' facts the window already has for Details, `spaces`: a drive without them counts as
+    0, so an empty floppy comes first as in `2000 mc-after-arrange-by-free-space`; the other
+    places after the drives in their own order; nothing read on the window's thread), a folder's
+    by Name, by Type, by Size, by Date; then Auto Arrange with its check mark while on, grey in
+    List and Details; no "by ..." entry is marked. Arrange by ... puts every icon back in order and
+    forgets moved places and the order with moved icons last; the choice is the folder's view
+    (`views` in folders.txt), remembered for that folder only (My Computer is a folder of its own).
+    The status bar's words: Windows 95's shell32 strings (4656 to 4659; 5973 "Sorts items by
+    available free space"; 4401, 4402 "Arranges icons in a grid."); by Drive Letter's "Sorts items
+    alphabetically by name." is the captures' own (the entry highlighted in every
+    `*-menu-view-arrange`); the other entries' words in 98 and 2000 were not captured (95's,
+    PROVISIONAL).
+  - **Auto Arrange** switched on packs the icons in their present order, a dragged icon counting
+    as last (`*-mc-auto-arrange-on`); an icon dropped between two others takes that place in the
+    order, beyond the last it becomes the last (the order by place, as before); switched off,
+    they stay. A dropped icon's place in that order is not kept when the window is opened again
+    (the order is: `last`).
+  - **The desktop** is unchanged: every new rule is for a window (`Host::Window`).
+  - **Proof**: `folder::arrange_tests` (each rule per look with the survey's numbers; the record
+    read, written and pruned), `folder::menus` tests (the menus' rows, marks and grey states
+    per view), nine comparison cases of the Arrange submenus against the survey's captures, all
+    exact (`arrange_menu_cases`; whole windows left out, the reason written there), golden
+    pictures `win{95,98,2000}-folder-arrange-mc-view`, `-rmenu`, `-lined`. Live (a scratch copy
+    of the installed folders.exe, a scratch folder of twelve made-up files, the program's test
+    command `TEST_MOVE` moving one by the survey's 171,173; `private/probes/folder-arrange/try.ps1`,
+    photographed by PrintWindow): 98 (its web view on): the file stays where moved through
+    Details and back, F5 packs with it last, the window opened again shows it last; 95: it
+    stays through Details and back and F5, and the window opened again keeps it where it was
+    (the first try found it put back in rows: a window opened small packed its icons again for
+    its scroll bar; now `Desktop::repack` keeps the moved ones). My Computer was not tried live
+    (it shows the owner's drives): its rules are the core's tests.
 
 ## Dragging files (2026-11-16, the owner: "Fine to work on remaining faults and dragging files")
 - **Measured first** on the three Reference PCs by a measuring helper (snapshot mode, each PC

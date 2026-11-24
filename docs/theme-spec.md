@@ -1437,6 +1437,16 @@ list's inside corner unless said.
   arrow, 2000's gray 848484 (its image list's 5 bits). Not measured: 2000's Thumbnails
   (left out); the menu titles 2000 grays in a window without the keyboard (not built); one pixel at
   the lower left of 98's hot Views arrow (masked in its case).
+- Arrange Icons and Line up Icons (measured 2026-11-24, `private/probes/folder-arrange/survey.md`,
+  `vm/<pc>-truecolor-arrange-*`): the View menu's group is "Arrange &Icons >", "Lin&e up Icons"
+  (95) or "Line &Up Icons" (98, 2000) between lines, in My Computer too; the empty area's menu:
+  View > | Arrange Icons >, Line up Icons | (98: a line,) Refresh (98, 2000) | Paste ...
+  (2000: Refresh right under Line Up Icons). The submenu: My Computer "by &Drive Letter", "by
+  &Type", "by &Size", "by &Free Space"; a folder "by &Name", "by &Type", "by Si&ze", "by &Date";
+  a line; "&Auto Arrange" (a check mark while on). Line up Icons and Auto Arrange grey in List
+  and Details. The submenus compared whole and exact in nine cases (95 and 98 from the View menu
+  and the empty area's menu, 2000's My Computer from the View menu). The grid Line up uses: 75
+  by 75 in Large Icons from the first icon's place; a dropped icon is not put on it.
 ## The web view panel (Windows 98 and 2000 folder windows)
 
 Measured on the Reference PCs, 2026-11-15 (`private/reference/refs/vm/<era>-truecolor-web-*`, notes in
