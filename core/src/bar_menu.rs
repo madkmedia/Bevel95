@@ -51,12 +51,15 @@ pub enum BarCommand {
     QuickLaunchClose,
     /// The Quick Launch folder read again (the band's Refresh).
     QuickLaunchRefresh,
+    /// The latest release page in the person's browser (`about::UPDATES_URL`; About Bevel95's
+    /// Check for updates, Quick Search). Bevel95 asks nothing itself (brief 100).
+    CheckForUpdates,
 }
 
 impl BarCommand {
     /// In the order of their codes: new commands join the end, so the codes that scripts and
     /// tests send to the bar stay what they were.
-    const ALL: [BarCommand; 19] = [
+    const ALL: [BarCommand; 20] = [
         BarCommand::SwitchToWindowsTaskbar,
         BarCommand::Properties,
         BarCommand::Restart,
@@ -76,6 +79,7 @@ impl BarCommand {
         BarCommand::QuickLaunchOpen,
         BarCommand::QuickLaunchClose,
         BarCommand::QuickLaunchRefresh,
+        BarCommand::CheckForUpdates,
     ];
 
     /// A number standing for the command in a window message (`from_code` reads it back).

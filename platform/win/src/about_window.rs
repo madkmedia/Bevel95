@@ -4,7 +4,7 @@
 //! Bevel95... asks Windows to open the one fixed page `about::SUPPORT_URL` in the person's
 //! browser and leaves the window open; nothing else in Bevel95 ever asks for it.
 
-use bevel_core::about::{AboutWindow, Part, SUPPORT_URL, SupportAsks};
+use bevel_core::about::{AboutWindow, Part, SupportAsks};
 
 use crate::bar::with_app;
 use crate::kit::{self, Hosted};
@@ -26,15 +26,16 @@ impl Hosted for AboutHost {
     fn activate(part: Part) {
         match part {
             Part::Ok | Part::Close => close(),
-            Part::Support => open_support_page(),
+            Part::Support | Part::Updates => open_page(part),
         }
     }
 }
 
-/// The Support button: Windows opens the page in the person's browser (Bevel95 itself uses no
-/// network). The window stays open. At most once a second (`SupportAsks`): a held key's repeats
-/// are left out.
-fn open_support_page() {
+/// The Support and Check for updates buttons: Windows opens the button's one fixed page
+/// (`about::page_of`) in the person's browser (Bevel95 itself uses no network). The window stays
+/// open. At most once a second (`SupportAsks`): a held key's repeats are left out.
+pub fn open_page(part: Part) {
+    let Some(page) = bevel_core::about::page_of(part) else { return };
     thread_local! {
         static ASKS: std::cell::Cell<(std::time::Instant, SupportAsks)> =
             std::cell::Cell::new((std::time::Instant::now(), SupportAsks::default()));
@@ -49,9 +50,10 @@ fn open_support_page() {
     if !may {
         return;
     }
-    log("About Bevel95: the support page was asked for");
-    if !crate::window_list::start(SUPPORT_URL) {
-        log("About Bevel95: Windows could not open the support page");
+    let what = if part == Part::Updates { "the latest release page" } else { "the support page" };
+    log(&format!("About Bevel95: {what} was asked for"));
+    if !crate::window_list::start(page) {
+        log(&format!("About Bevel95: Windows could not open {what}"));
     }
 }
 

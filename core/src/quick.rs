@@ -97,6 +97,8 @@ pub fn commands() -> Vec<Command> {
         bar("Restart Bevel95", &["restart", "reload"], Restart, "restart"),
         bar("Exit Bevel95", &["exit", "quit", "close"], Exit, "exit"),
         bar(concat!("About ", crate::product_name!()), &["about", "version", "build", "help", "licence", "license"], About, "about"),
+        // Opens the latest release page in the browser (brief 100); Bevel95 asks nothing itself.
+        bar("Check for updates", &["update", "updates", "check for updates", "new version", "release", "download"], CheckForUpdates, "check-for-updates"),
     ]);
     out
 }
@@ -160,6 +162,7 @@ mod tests {
                 "Restart Bevel95",
                 "Exit Bevel95",
                 "About Bevel95",
+                "Check for updates",
             ]
         );
         // Names and keys are unique; keys are never a file.

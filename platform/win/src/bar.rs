@@ -2610,6 +2610,11 @@ fn run_command(bar: HWND, code: usize, shift: bool) {
             popup::close(false);
             about_window::open();
         }
+        // The latest release page in the person's browser, as About's button opens it (brief 100).
+        BarCommand::CheckForUpdates => {
+            popup::close(false);
+            about_window::open_page(bevel_core::about::Part::Updates);
+        }
         BarCommand::QuickLaunch => {
             let on = with_app(|app| app.quick_launch_on()).unwrap_or(false);
             set_quick_launch(!on);

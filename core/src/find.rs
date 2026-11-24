@@ -1161,7 +1161,7 @@ mod tests {
         assert!(rows(&w).iter().all(|(_, f)| f == "Bevel95"));
         assert_eq!(rows(&w)[0].0, "Bevel95 Settings", "its name begins with it");
         assert_eq!(w.selected().unwrap().command, Some(Action::Bar(crate::bar_menu::BarCommand::Settings)));
-        assert_eq!(status(w.found.len()), "32 item(s) found");
+        assert_eq!(status(w.found.len()), "33 item(s) found", "with Check for updates (brief 100)");
     }
 
     #[test]

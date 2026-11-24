@@ -45,6 +45,24 @@ pub const SUPPORT_URL: &str = "https://github.com/madkmedia/Bevel95#supporting-b
 /// The About window's button that opens `SUPPORT_URL` (PROVISIONAL words).
 pub const SUPPORT_LABEL: &str = concat!("&Support ", product_name!(), "...");
 
+/// The page of the latest release (brief 100): the About window's "Check for updates" button and
+/// Quick Search's entry ask Windows to open it in the person's own browser, so that the person can
+/// compare its version with the window's. Nothing in Bevel95 asks the internet anything itself: no
+/// request, no download, no file, no timer, nothing at startup (the main session's decision,
+/// 2026-11-24). One fixed address, never built from anything read.
+pub const UPDATES_URL: &str = "https://github.com/madkmedia/Bevel95/releases/latest";
+/// The About window's button that opens `UPDATES_URL`.
+pub const UPDATES_LABEL: &str = "Check for &updates";
+
+/// The page a button of the About window asks Windows to open (`None`: the button opens none).
+pub fn page_of(part: Part) -> Option<&'static str> {
+    match part {
+        Part::Support => Some(SUPPORT_URL),
+        Part::Updates => Some(UPDATES_URL),
+        Part::Ok | Part::Close => None,
+    }
+}
+
 /// The support page is asked for at most once within this time, whatever is held down: a held
 /// Enter, Space or Alt+S repeats about 30 times a second (the review before 0.1.3, B7).
 pub const SUPPORT_AGAIN_AFTER_MS: u64 = 1_000;
@@ -82,6 +100,8 @@ pub enum Part {
     Ok,
     /// Support Bevel95...: opens `SUPPORT_URL`; the window stays open.
     Support,
+    /// Check for updates: opens `UPDATES_URL`; the window stays open (brief 100).
+    Updates,
     Close,
 }
 
@@ -106,6 +126,8 @@ pub struct AboutWindow {
     /// The Support button's width: its label plus 12 on each side, at least Windows' usual 75
     /// (as Date/Time Properties' wide button; measured in the look's font by `layout`).
     support_w: i32,
+    /// The Check for updates button's width, the same rule.
+    updates_w: i32,
     /// The button with the keyboard: OK when it opens, Support after Tab or a click on it.
     focus: Part,
     pressed: Option<Part>,
@@ -121,6 +143,7 @@ impl AboutWindow {
             version: version_line(build),
             notice: Vec::new(),
             support_w: BUTTON.0,
+            updates_w: BUTTON.0,
             focus: Part::Ok,
             pressed: None,
             active: true,
@@ -128,9 +151,15 @@ impl AboutWindow {
         }
     }
 
-    /// The etched line between what it is and the notice.
+    /// Check for updates: right under the three lines, at the text's left edge, so that the version
+    /// stands just above it (brief 100).
+    fn updates_button(&self) -> Rect {
+        Rect::new(TEXT_X, FIRST_Y + 3 * LINE + 6, self.updates_w, BUTTON.1)
+    }
+
+    /// The etched line between what it is (and its update button) and the notice.
     fn separator_y(&self) -> i32 {
-        FIRST_Y + 3 * LINE + 10
+        self.updates_button().bottom() + 10
     }
 
     fn notice_y(&self) -> i32 {
@@ -161,6 +190,7 @@ impl Form for AboutWindow {
     fn layout(&mut self, fonts: &Fonts) {
         self.notice = dialog::wrap(fonts.regular, NOTICE, WIDTH - TEXT_X - window::FRAME - 11);
         self.support_w = (fonts.regular.measure_label(SUPPORT_LABEL) + 24).max(BUTTON.0);
+        self.updates_w = (fonts.regular.measure_label(UPDATES_LABEL) + 24).max(BUTTON.0);
     }
     fn paint(&self, fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts) {
         let c = &theme.colors;
@@ -182,7 +212,11 @@ impl Form for AboutWindow {
             font.draw(fb, TEXT_X, self.notice_y() + LINE * i as i32, line, c.text);
         }
         // The focused button has the default frame (Windows' rule; OK when the window opens).
-        for (part, rect, label) in [(Part::Support, self.support_button(), SUPPORT_LABEL), (Part::Ok, self.button(), "OK")] {
+        for (part, rect, label) in [
+            (Part::Updates, self.updates_button(), UPDATES_LABEL),
+            (Part::Support, self.support_button(), SUPPORT_LABEL),
+            (Part::Ok, self.button(), "OK"),
+        ] {
             dialog::push_button(
                 fb,
                 theme,
@@ -201,11 +235,12 @@ impl Form for AboutWindow {
         Some(match part {
             Part::Ok => self.button(),
             Part::Support => self.support_button(),
+            Part::Updates => self.updates_button(),
             Part::Close => window::title_button_rect(self.size().0, TitleButton::Close),
         })
     }
     fn hit(&self, x: i32, y: i32) -> Option<Part> {
-        [Part::Ok, Part::Support, Part::Close].into_iter().find(|&p| self.rect(p).is_some_and(|r| r.contains(x, y)))
+        [Part::Ok, Part::Support, Part::Updates, Part::Close].into_iter().find(|&p| self.rect(p).is_some_and(|r| r.contains(x, y)))
     }
     fn enabled(&self, _: Part) -> bool {
         true
@@ -218,9 +253,9 @@ impl Form for AboutWindow {
             self.focus = part;
         }
     }
-    /// Left to right, as the buttons stand.
+    /// Top to bottom, left to right, as the buttons stand.
     fn tab_stops(&self) -> Vec<Part> {
-        vec![Part::Support, Part::Ok]
+        vec![Part::Updates, Part::Support, Part::Ok]
     }
     fn set_pressed(&mut self, part: Option<Part>) {
         self.pressed = part;
@@ -238,9 +273,13 @@ impl Form for AboutWindow {
     fn escape(&self) -> Part {
         Part::Close
     }
-    /// Alt+S: Support Bevel95... (OK has no access key).
+    /// Alt+S: Support Bevel95...; Alt+U: Check for updates (OK has no access key).
     fn access(&mut self, ch: char) -> Vec<Effect<Part>> {
-        if ch.eq_ignore_ascii_case(&'s') { vec![Effect::Activate(Part::Support)] } else { Vec::new() }
+        match ch.to_ascii_lowercase() {
+            's' => vec![Effect::Activate(Part::Support)],
+            'u' => vec![Effect::Activate(Part::Updates)],
+            _ => Vec::new(),
+        }
     }
     fn space(&mut self) -> Vec<Effect<Part>> {
         vec![Effect::Activate(self.focus)]
@@ -324,7 +363,29 @@ mod tests {
             assert_eq!(support.right() + BUTTON_GAP, ok.x, "{era:?}: left of OK");
             assert!(support.w > 75 && support.x > window::FRAME, "{era:?}: wider for its words, inside the window");
             assert_eq!(w.hit(support.x + 2, support.y + 2), Some(Part::Support), "{era:?}");
-            assert_eq!(w.tab_stops(), [Part::Support, Part::Ok]);
+            assert_eq!(w.tab_stops(), [Part::Updates, Part::Support, Part::Ok]);
+        }
+    }
+
+    /// Brief 100: Check for updates stands under the version line, opens exactly the latest
+    /// release page (and only that), and asks nothing itself.
+    #[test]
+    fn check_for_updates_opens_the_latest_release_page() {
+        use crate::kit::Controller;
+        assert_eq!(UPDATES_URL, "https://github.com/madkmedia/Bevel95/releases/latest");
+        assert_eq!(page_of(Part::Updates), Some(UPDATES_URL));
+        assert_eq!(page_of(Part::Support), Some(SUPPORT_URL));
+        assert_eq!((page_of(Part::Ok), page_of(Part::Close)), (None, None));
+        for era in Era::ALL {
+            let mut w = laid_out(era);
+            let r = w.updates_button();
+            assert_eq!(r.x, TEXT_X, "{era:?}: at the text's left edge");
+            assert!(r.y > FIRST_Y + LINE && r.y < FIRST_Y + 4 * LINE, "{era:?}: just under the version line");
+            assert!(r.bottom() < w.separator_y() && r.w > 75, "{era:?}");
+            let mut c = Controller::default();
+            assert_eq!(c.access(&mut w, 'u'), [Effect::Activate(Part::Updates)], "{era:?}");
+            assert_eq!(c.mouse_down(&mut w, r.x + 5, r.y + 5), [Effect::Capture]);
+            assert_eq!(c.mouse_up(&mut w, r.x + 5, r.y + 5), [Effect::Release, Effect::Activate(Part::Updates)]);
         }
     }
 
@@ -349,8 +410,10 @@ mod tests {
             assert_eq!(c.mouse_up(&mut w, r.x + 5, r.y + 5), [Effect::Release, Effect::Activate(Part::Support)]);
             // Escape still closes after it.
             assert_eq!(c.key(&mut w, Key::Escape, Mods::default()), [Effect::Activate(Part::Close)]);
-            // Tab goes between the two buttons.
+            // Tab goes round the three buttons (OK, Check for updates, Support).
             let mut w = laid_out(era);
+            c.key(&mut w, Key::Tab, Mods::default());
+            assert_eq!(w.focus(), Part::Updates);
             c.key(&mut w, Key::Tab, Mods::default());
             assert_eq!(w.focus(), Part::Support);
             assert_eq!(c.key(&mut w, Key::Space, Mods::default()), [Effect::Activate(Part::Support)]);
