@@ -199,12 +199,10 @@ impl Desktop {
                     return;
                 }
                 if self.era != Era::Win2000 {
-                    let (old_w, old_h) = self.cell_size_of(was);
-                    let (new_w, new_h) = self.cell_size();
-                    let moved: HashMap<String, (i32, i32)> = places
-                        .into_iter()
-                        .map(|(id, (x, y))| (id, (x * new_w / old_w.max(1), y * new_h / old_h.max(1))))
-                        .collect();
+                    // As the view's own step moves an icon (below; brief 105, 1).
+                    let (old, new) = (self.cell_size_of(was), self.cell_size());
+                    let moved: HashMap<String, (i32, i32)> =
+                        places.into_iter().map(|(id, at)| (id, super::view_step(at, old, new))).collect();
                     self.places = Some(moved);
                     self.relayout();
                     return;
@@ -216,8 +214,8 @@ impl Desktop {
         // 95's three columns of large icons became three columns of small ones (`v1-small-open`).
         // Windows 2000 put them into rows as wide as the window again (`-view-v1-small-open`).
         if before.arranged_freely() && mode.arranged_freely() && self.places.is_some() && self.era != Era::Win2000 {
-            let (new_w, new_h) = self.cell_size();
-            let cells: Vec<(i32, i32)> = self.cells.iter().map(|&(x, y)| (x.div_euclid(old_w.max(1)) * new_w, y.div_euclid(old_h.max(1)) * new_h)).collect();
+            let new = self.cell_size();
+            let cells: Vec<(i32, i32)> = self.cells.iter().map(|&c| super::view_step(c, (old_w, old_h), new)).collect();
             self.cells = cells;
             self.places = Some(HashMap::new());
             self.store_cells();
@@ -246,7 +244,12 @@ impl Desktop {
         if (small, list) != (self.small_w, self.list_w) {
             self.small_w = small;
             self.list_w = list;
-            if self.mode != ViewMode::Large && self.mode != ViewMode::Details {
+            if self.mode == ViewMode::Small && self.host == Host::Window && self.places.is_some() && !self.moved.is_empty() {
+                // The icons the person moved stay where they were left, the others at their own
+                // slots in the new columns (found by the live try of brief 105: a window opened
+                // again in Small Icons put its moved icon back in order at its first measuring).
+                self.repack();
+            } else if self.mode != ViewMode::Large && self.mode != ViewMode::Details {
                 self.places = None;
                 self.relayout();
                 if self.mode == ViewMode::Small && self.host == Host::Window && !self.items.is_empty() {

@@ -328,8 +328,9 @@ struct FolderHost {
     /// What is known of the place shown (`read_facts`, off the window's thread).
     facts: Facts,
     /// The places of the icons the person moved in each folder this window has shown, while it
-    /// stays open (Windows 98 with its web view keeps My Computer's so: brief 103), by folder key.
-    session: HashMap<String, Vec<(i32, i32, String)>>,
+    /// stays open (Windows 98 with its web view keeps My Computer's so: brief 103), by folder key,
+    /// with the view they were made in (brief 105, 1).
+    session: HashMap<String, bevel_core::folder::saved::MovedRecord>,
 }
 
 thread_local! {
@@ -1732,7 +1733,9 @@ fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
         state.arrange = w.arrange;
     }
     host.form.apply_view_state(&state);
-    load_places(&mut host, Relaid::Reopened);
+    if load_places(&mut host, Relaid::Reopened) {
+        save();
+    }
     host.form.list_fixed = era == Era::Win95 && state.mode == bevel_core::desktop_icons::ViewMode::List;
     let place = |w: i32, h: i32| match &remembered {
         Some(r) => on_screen((r.x, r.y), w, h),
@@ -1854,7 +1857,9 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
             state.mode = mode_before;
         }
         h.form.apply_view_state(&state);
-        load_places(h, Relaid::Returned);
+        if load_places(h, Relaid::Returned) {
+            save();
+        }
         // 2000 showed the focus frame in a window that went to another place.
         h.form.view.keys_used = true;
         h.settle = None;
@@ -2449,11 +2454,14 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
         }
         if reposition {
             if let Some((items, from)) = own {
+                let mut changed = false;
                 kit::update::<FolderHost>(|h| {
                     h.form.view.move_ids(&items, (x - from.0, y - from.1));
-                    remember_places(h);
+                    changed = remember_places(h);
                 });
-                save();
+                if changed {
+                    save();
+                }
             }
             return Some(Effect::Move);
         }
@@ -3336,6 +3344,8 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
             kit::update::<FolderHost>(|h| {
                 h.form.set_view_mode(mode);
                 remember_view(h);
+                // The moved icons' places as the window now has them, in its view (brief 105, 1).
+                remember_places(h);
             });
             save();
         }
@@ -3473,12 +3483,13 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
                     remember_view(h);
                     // Arranged: the places dragged to, and an order with moved icons last, are
                     // forgotten (the choice itself is the folder's view: `remember_view`).
-                    let key = h.shows.key();
+                    let (era, key) = (h.form.era, h.shows.key());
                     h.session.remove(&key);
+                    let view = h.form.view.moved_view();
                     SAVED.with(|s| {
                         let mut s = s.borrow_mut();
-                        s.remember_places(&key, Vec::new());
-                        s.remember_last(&key, Vec::new());
+                        s.remember_places(era, &key, view, Vec::new());
+                        s.remember_last(era, &key, Vec::new());
                     });
                 });
                 save();
@@ -3493,17 +3504,23 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
             }
             // Line up Icons (brief 103): each icon off the grid onto the nearest grid place.
             D::LineUp => {
+                let mut changed = false;
                 kit::update::<FolderHost>(|h| {
                     h.form.line_up();
-                    remember_places(h);
+                    changed = remember_places(h);
                 });
-                save();
+                if changed {
+                    save();
+                }
             }
             D::Refresh => {
                 // What the look does with the moved icons at F5 (brief 103), then a new reader:
                 // everything read afresh.
-                kit::update::<FolderHost>(refresh_places);
-                save();
+                let mut changed = false;
+                kit::update::<FolderHost>(|h| changed = refresh_places(h));
+                if changed {
+                    save();
+                }
                 kit::with::<FolderHost, _>(|h| {
                     h.stop.store(true, Ordering::SeqCst);
                     h.stop = Arc::new(AtomicBool::new(false));
@@ -3538,91 +3555,133 @@ fn order_with_moved_last(h: &FolderHost) -> Vec<String> {
 /// Arrange; "State persists"): only those icons, by id (brief 103). While the window stays open
 /// their places (`session`); for good, their places where the look keeps places when the
 /// window is opened again, else (Windows 98 with its web view) the order with them last.
-fn remember_places(h: &mut FolderHost) {
+///
+/// Each record belongs to the look (`era`) and the view (Large or Small Icons) it was made in
+/// (brief 105, 1 and 8); names no longer in the folder are left out whenever it is rewritten
+/// (brief 105, 6). True if folders.txt's record changed (then the caller saves).
+fn remember_places(h: &mut FolderHost) -> bool {
+    let era = h.form.era;
     let key = h.shows.key();
-    let places = h.form.view.moved_places();
+    if h.form.view.items.is_empty() {
+        // Not read yet (or empty): nothing to say about its icons; the record stays as it is.
+        return false;
+    }
+    let here: std::collections::HashSet<&str> = h.form.view.items.iter().map(|i| i.id.as_str()).collect();
+    let places: Vec<(i32, i32, String)> =
+        h.form.view.moved_places().into_iter().filter(|(_, _, id)| here.contains(id.as_str())).collect();
+    let view = h.form.view.moved_view();
+    let kept_how = kept_for(h, Relaid::Reopened);
+    let last: Vec<String> = match kept_how {
+        Kept::Places => h.form.view.last_order().to_vec(),
+        Kept::MovedLast | Kept::InOrder => order_with_moved_last(h),
+    };
+    let last: Vec<String> = last.into_iter().filter(|id| here.contains(id.as_str())).collect();
+    drop(here);
     if places.is_empty() {
         h.session.remove(&key);
     } else {
-        h.session.insert(key.clone(), places.clone());
+        h.session.insert(key.clone(), (view, places.clone()));
     }
-    match kept_for(h, Relaid::Reopened) {
-        Kept::Places => {
-            let last = h.form.view.last_order().to_vec();
-            SAVED.with(|s| {
-                let mut s = s.borrow_mut();
-                s.remember_places(&key, places);
-                s.remember_last(&key, last);
-            });
+    SAVED.with(|s| {
+        let mut s = s.borrow_mut();
+        match kept_how {
+            Kept::Places => {
+                let a = s.remember_places(era, &key, view, places);
+                let b = s.remember_last(era, &key, last);
+                a || b
+            }
+            Kept::MovedLast | Kept::InOrder => {
+                let a = s.remember_places(era, &key, view, Vec::new());
+                let b = s.remember_last(era, &key, last);
+                a || b
+            }
         }
-        Kept::MovedLast | Kept::InOrder => {
-            let order = order_with_moved_last(h);
-            SAVED.with(|s| {
-                let mut s = s.borrow_mut();
-                s.remember_places(&key, Vec::new());
-                s.remember_last(&key, order);
-            });
-        }
-    }
+    })
 }
 
 /// Lays a window's icons out as its look keeps them when the window opens (`Reopened`) or goes
 /// back to a folder (`Returned`): the moved icons where they were left (this window's own record
 /// first, then the folder's), or packed with the moved ones last (Windows 98 with its web view).
-fn load_places(h: &mut FolderHost, when: Relaid) {
+/// Only this look's record is used (brief 105, 8). Places made in the other free view are moved
+/// as the view's own step moves an icon (95, 98); 2000's own step puts the icons back in order,
+/// so there the record goes (brief 105, 1). True if folders.txt's record changed.
+fn load_places(h: &mut FolderHost, when: Relaid) -> bool {
+    let era = h.form.era;
     let key = h.shows.key();
     let (places, last) = SAVED.with(|s| {
         let s = s.borrow();
-        (s.places_of(&key), s.last_of(&key))
+        (s.places_of(era, &key), s.last_of(era, &key))
     });
     match kept_for(h, when) {
         Kept::Places => {
             if !last.is_empty() {
                 h.form.view.pack_moved_last(&last);
             }
-            let places = match h.session.get(&key) {
-                Some(mine) if when == Relaid::Returned => mine.clone(),
-                _ => places,
+            let mine = match h.session.get(&key) {
+                Some(mine) if when == Relaid::Returned => Some(mine.clone()),
+                _ => None,
             };
-            h.form.view.load_moved(&places);
+            let Some((made_in, list)) = mine.or(places) else { return false };
+            if h.form.view.load_moved(&list, made_in) {
+                return false;
+            }
+            // Windows 2000 in the other view: the places are not used and go, the window's own
+            // and the folder's record when it is of another view than the one shown.
+            h.session.remove(&key);
+            let shown = h.form.view.mode();
+            let stale = SAVED.with(|s| s.borrow().places_of(era, &key)).is_some_and(|(v, _)| v != shown);
+            stale && SAVED.with(|s| s.borrow_mut().remember_places(era, &key, made_in, Vec::new()))
         }
         Kept::MovedLast => {
             let mut order = last;
             // Moved in this window and not packed yet (My Computer kept them while it stayed open).
-            if let Some(mine) = h.session.remove(&key) {
+            if let Some((_, mine)) = h.session.remove(&key) {
                 for (_, _, id) in mine {
                     order.retain(|o| *o != id);
                     order.push(id);
                 }
             }
             h.form.view.pack_moved_last(&order);
+            false
         }
-        Kept::InOrder => {}
+        Kept::InOrder => false,
     }
 }
 
 /// F5 (View > Refresh): what the look does with the moved icons before the folder is read
 /// again (brief 103): kept; packed with the moved ones last (98 with its web view, an ordinary
-/// folder); or every icon back in its order (2000 with its web view).
-fn refresh_places(h: &mut FolderHost) {
+/// folder); or every icon back in its order, a kept "moved last" order included (2000 with its
+/// web view, brief 105, 9). True if folders.txt's record changed (brief 105, 7: only then is it
+/// written).
+fn refresh_places(h: &mut FolderHost) -> bool {
+    let era = h.form.era;
     let key = h.shows.key();
     match kept_for(h, Relaid::Refresh) {
-        Kept::Places => {}
+        Kept::Places => false,
         Kept::MovedLast => {
-            let order = order_with_moved_last(h);
+            let here: std::collections::HashSet<&str> = h.form.view.items.iter().map(|i| i.id.as_str()).collect();
+            let order: Vec<String> = order_with_moved_last(h).into_iter().filter(|id| here.contains(id.as_str())).collect();
+            drop(here);
             h.form.view.pack_moved_last(&order);
             h.session.remove(&key);
+            let view = h.form.view.moved_view();
             SAVED.with(|s| {
                 let mut s = s.borrow_mut();
-                s.remember_places(&key, Vec::new());
-                s.remember_last(&key, order);
-            });
+                let a = s.remember_places(era, &key, view, Vec::new());
+                let b = s.remember_last(era, &key, order);
+                a || b
+            })
         }
         Kept::InOrder => {
-            let by = h.form.view.arrangement();
-            h.form.view.set_arrange(by);
+            h.form.view.back_in_order();
             h.session.remove(&key);
-            SAVED.with(|s| s.borrow_mut().remember_places(&key, Vec::new()));
+            let view = h.form.view.moved_view();
+            SAVED.with(|s| {
+                let mut s = s.borrow_mut();
+                let a = s.remember_places(era, &key, view, Vec::new());
+                let b = s.remember_last(era, &key, Vec::new());
+                a || b
+            })
         }
     }
 }
@@ -4065,7 +4124,21 @@ fn pending_work() {
     for (w, old, new, name) in renamed {
         let hwnd = w as HWND;
         if kit::windows::<FolderHost>().contains(&hwnd) {
-            kit::scope::<FolderHost, _>(hwnd, || kit::update::<FolderHost>(|h| h.form.view.renamed(&old, &new, &name)));
+            let mut changed = false;
+            kit::scope::<FolderHost, _>(hwnd, || {
+                kit::update::<FolderHost>(|h| {
+                    let kept = h.form.view.items.iter().any(|i| i.id == old)
+                        && (h.form.view.moved_ids().contains(&old) || h.form.view.last_order().contains(&old));
+                    h.form.view.renamed(&old, &new, &name);
+                    // A moved icon's place goes along with its new name (brief 105, 10).
+                    if kept {
+                        changed = remember_places(h);
+                    }
+                })
+            });
+            if changed {
+                save();
+            }
         }
     }
 }
@@ -4513,6 +4586,25 @@ fn test_drop(text: &str) -> u32 {
     told
 }
 
+/// A test folder's window: a folder named "Bevel95 test ..." (never My Computer or the Desktop).
+fn is_test_folder(shows: &Shows) -> bool {
+    match shows {
+        Shows::Folder(p) => p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Bevel95 test")),
+        Shows::MyComputer | Shows::Desktop => false,
+    }
+}
+
+/// Whether a live test's command `code` may select an item and act on it: a test item
+/// ("Bevel95 test ..."); outside a test folder (My Computer, the Desktop place) any item, but
+/// only to open a menu on it (codes from `TEST_MENU`). `TEST_MOVE` changes the remembered
+/// layout, so it acts on a test item in a test folder's window only (brief 105, 5).
+fn test_item_allowed(code: usize, test_folder: bool, test_item: bool) -> bool {
+    if code == TEST_MOVE {
+        return test_folder && test_item;
+    }
+    test_item || (!test_folder && code >= TEST_MENU)
+}
+
 /// A live test's command (`WM_TEST_COMMAND`), only on test items in test folders.
 fn test_command(window: HWND, l: u64) {
     if !kit::windows::<FolderHost>().contains(&window) {
@@ -4521,10 +4613,7 @@ fn test_command(window: HWND, l: u64) {
     let (code, item) = ((l & 0xFFFF) as usize, (l >> 32) as u32);
     kit::scope::<FolderHost, _>(window, || {
         let ok = kit::with::<FolderHost, _>(|h| {
-            let test_folder = match &h.shows {
-                Shows::Folder(p) => p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Bevel95 test")),
-                Shows::MyComputer | Shows::Desktop => false,
-            };
+            let test_folder = is_test_folder(&h.shows);
             let v = &mut h.form.view;
             if item == 0 {
                 v.select_only(None);
@@ -4534,8 +4623,7 @@ fn test_command(window: HWND, l: u64) {
                 return false;
             }
             match v.items.iter().position(|i| id_code(&i.id) == item) {
-                // My Computer's drives may be selected (only to open menus on them).
-                Some(i) if v.items[i].name.starts_with("Bevel95 test") || (!test_folder && code >= TEST_MENU) => {
+                Some(i) if test_item_allowed(code, test_folder, v.items[i].name.starts_with("Bevel95 test")) => {
                     v.select_only(Some(i));
                     let r = v.icon_rect(i);
                     h.form.menu_at = (r.x + r.w / 2, r.y + r.h / 2);
@@ -4956,6 +5044,28 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// `TEST_MOVE` changes the remembered layout: it is refused in My Computer, in the Desktop
+    /// place and in an ordinary folder, on any item, and taken only on a test item in a test
+    /// folder (brief 105, 5). Menus on My Computer's drives stay possible.
+    #[test]
+    fn a_test_move_reaches_only_a_test_item_in_a_test_folder() {
+        use super::{Shows, TEST_ITEM_MENU, TEST_MOVE, is_test_folder, test_item_allowed};
+        use std::path::PathBuf;
+        let ordinary = Shows::Folder(PathBuf::from(r"C:\Some folder"));
+        let test = Shows::Folder(PathBuf::from(r"C:\Bevel95 test folder"));
+        for shows in [Shows::MyComputer, Shows::Desktop, ordinary] {
+            let folder = is_test_folder(&shows);
+            assert!(!folder);
+            for item in [false, true] {
+                assert!(!test_item_allowed(TEST_MOVE, folder, item));
+            }
+        }
+        assert!(is_test_folder(&test));
+        assert!(test_item_allowed(TEST_MOVE, true, true));
+        assert!(!test_item_allowed(TEST_MOVE, true, false));
+        assert!(test_item_allowed(TEST_ITEM_MENU, is_test_folder(&Shows::MyComputer), false));
+    }
+
     /// A window's reader started again because the look changed never tells that its drive cannot
     /// be read (no message, no unlock window); the person's own doing tells it once.
     #[test]

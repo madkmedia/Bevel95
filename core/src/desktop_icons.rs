@@ -386,6 +386,12 @@ pub struct Desktop {
 /// Icons' places by id (their cell's top-left, from the area's top-left).
 type Places = HashMap<String, (i32, i32)>;
 
+/// Where a place in a view of cells `old` lands in a view of cells `new`: on the same column and
+/// row of the new grid (95's and 98's step between Large and Small Icons: `v1-small-open`).
+fn view_step((x, y): (i32, i32), old: (i32, i32), new: (i32, i32)) -> (i32, i32) {
+    (x.div_euclid(old.0.max(1)) * new.0, y.div_euclid(old.1.max(1)) * new.1)
+}
+
 /// A label's measured size (width with its box, lines), collapsed and in full.
 type LabelSizes = [Option<(i32, i32)>; 2];
 
@@ -1091,21 +1097,39 @@ impl Desktop {
     /// stay where they were left (brief 103: a reopened window kept them). The desktop: as
     /// `set_arrange` with the arrangement in use.
     pub fn repack(&mut self) {
-        if self.host != Host::Window || !self.mode.arranged_freely() || self.places.is_none() {
+        if self.host != Host::Window || self.places.is_none() && self.stash.is_none() {
             let by = self.arrange;
             self.set_arrange(by);
+            return;
+        }
+        // List or Details: their own rows; the places kept for the way back stay as they are
+        // (brief 105, 2).
+        if !self.mode.arranged_freely() {
+            self.relayout();
+            return;
+        }
+        // Auto Arrange: packed for the new width in the order they stand (brief 105, 3).
+        if self.auto_arrange {
+            self.relayout();
             return;
         }
         let keep: Places = self.moved_places().into_iter().map(|(x, y, id)| (id, (x, y))).collect();
         self.places = Some(keep);
         self.relayout();
-        self.store_cells();
         self.changed = true;
     }
 
     /// The icons that go last in the order (`pack_moved_last`), in that order.
     pub fn last_order(&self) -> &[String] {
         &self.last
+    }
+
+    /// Every icon back in the order of Arrange Icons as in use, none last and none where it was
+    /// dragged (Windows 2000's F5 with its web view; brief 105, 9).
+    pub fn back_in_order(&mut self) {
+        self.last.clear();
+        let by = self.arrange;
+        self.set_arrange(by);
     }
 
     /// Puts the items named by `last` at the end of `files`, in `last`'s order.
@@ -1252,13 +1276,42 @@ impl Desktop {
             // from the top; icons without a place last, in item order.
             // (A window: row by row, the row an icon's top edge is in, then from the left.)
             let mut order: Vec<usize> = (0..n).collect();
-            let window = self.host == Host::Window;
-            let key = |i: usize| match places.get(&self.items[i].id) {
-                Some(&(x, y)) if window => (0, y.div_euclid(ch), x, i),
-                Some(&(x, y)) => (0, x.div_euclid(cw), y, i),
-                None => (1, 0, 0, i),
-            };
-            order.sort_by_key(|&i| key(i));
+            if self.host == Host::Window {
+                // A window: a placed icon's place says where in the order it stands (the k-th
+                // cell, row by row); the icons without a place fill the other cells in item order,
+                // so that an icon dropped between two others stays between them when only the
+                // moved icons' places were kept (brief 105, 3).
+                let (cols, _) = self.grid();
+                let mut placed: Vec<(i32, i32, usize)> = (0..n)
+                    .filter_map(|i| {
+                        let &(x, y) = places.get(&self.items[i].id)?;
+                        Some(((y.div_euclid(ch) * cols + x.div_euclid(cw).min(cols - 1)).max(0), x, i))
+                    })
+                    .collect();
+                placed.sort();
+                let mut placed = placed.into_iter().peekable();
+                let mut rest = (0..n).filter(|&i| !places.contains_key(&self.items[i].id));
+                order.clear();
+                for k in 0..n as i32 {
+                    let next = match placed.peek() {
+                        Some(&(rank, _, i)) if rank <= k => {
+                            placed.next();
+                            Some(i)
+                        }
+                        _ => rest.next(),
+                    };
+                    match next.or_else(|| placed.next().map(|p| p.2)) {
+                        Some(i) => order.push(i),
+                        None => break,
+                    }
+                }
+            } else {
+                let key = |i: usize| match places.get(&self.items[i].id) {
+                    Some(&(x, y)) => (0, x.div_euclid(cw), y, i),
+                    None => (1, 0, 0, i),
+                };
+                order.sort_by_key(|&i| key(i));
+            }
             let mut cells = vec![(0, 0); n];
             for (k, &i) in order.iter().enumerate() {
                 cells[i] = self.slot(k as i32);
@@ -1306,9 +1359,34 @@ impl Desktop {
             }
         }
         let mut next = 0;
-        for i in 0..n {
-            if cells[i].is_some() {
-                continue;
+        let window = self.host == Host::Window;
+        // A window: each icon without a place stands at its own slot in the order, so the cell a
+        // moved icon left stays empty and the others do not close up (the Reference PCs, brief
+        // 105, 4: "The other icons do not move"); first every one whose slot is free, then each
+        // one whose slot is covered takes the next free cell after it. The desktop: the first free
+        // cell, as always.
+        let mut rest: Vec<usize> = (0..n).filter(|&i| cells[i].is_none()).collect();
+        if window {
+            rest.retain(|&i| {
+                let own = i as i32;
+                if own >= cols * rows || taken.contains(&self.slot(own)) {
+                    return true;
+                }
+                let c = self.slot(own);
+                cells[i] = Some(c);
+                block(&mut taken, c);
+                if !places.contains_key(&self.items[i].id) {
+                    new_places.push((self.items[i].id.clone(), c));
+                }
+                false
+            });
+        }
+        for i in rest {
+            if window {
+                next = (i as i32).min(cols * rows);
+                if !(next..cols * rows).any(|k| !taken.contains(&self.slot(k))) {
+                    next = 0;
+                }
             }
             while next < cols * rows && taken.contains(&self.slot(next)) {
                 next += 1;
@@ -1791,42 +1869,55 @@ impl Desktop {
     /// of Large or Small Icons as now, then the id), in the order they were moved: what is kept
     /// for the folder (brief 103: only icons really moved, never every icon of a big folder).
     pub fn moved_places(&self) -> Vec<(i32, i32, String)> {
-        let Some(places) = self.places.as_ref() else { return Vec::new() };
         if !self.mode.arranged_freely() {
             // In List or Details: the places kept for the way back.
             let Some((_, stash)) = &self.stash else { return Vec::new() };
             return self.moved.iter().filter_map(|id| stash.get(id).map(|&(x, y)| (x, y, id.clone()))).collect();
         }
+        let Some(places) = self.places.as_ref() else { return Vec::new() };
         self.moved.iter().filter_map(|id| places.get(id).map(|&(x, y)| (x, y, id.clone()))).collect()
     }
 
-    /// A folder window opened or gone back to: the icons the person moved there before lie
-    /// where they were left (`moved_places`), the others in order around them.
-    pub fn load_moved(&mut self, list: &[(i32, i32, String)]) {
-        if self.host != Host::Window || list.is_empty() {
-            return;
+    /// The view the moved icons' places are in (`moved_places`): the view shown when it is Large
+    /// or Small Icons, else the one they wait for in List or Details (brief 105, 1).
+    pub fn moved_view(&self) -> ViewMode {
+        if self.mode.arranged_freely() {
+            return self.mode;
         }
+        self.stash.as_ref().map_or(ViewMode::Large, |(m, _)| *m)
+    }
+
+    /// A folder window opened or gone back to: the icons the person moved there before lie
+    /// where they were left (`moved_places`, made in view `made_in`), each other icon at its own
+    /// slot in the order, the cells the moved ones left empty (brief 105, 4). Made in the other
+    /// free view: moved as the view's own step moves an icon (95, 98: onto the new grid's cell);
+    /// in 2000, whose own step puts every icon back in order, not used: false then (the record
+    /// is to go). In List or Details they wait for the way back.
+    pub fn load_moved(&mut self, list: &[(i32, i32, String)], made_in: ViewMode) -> bool {
+        if self.host != Host::Window || list.is_empty() || !made_in.arranged_freely() {
+            return true;
+        }
+        let target = if self.mode.arranged_freely() { self.mode } else { made_in };
+        if target != made_in && self.era == Era::Win2000 {
+            return false;
+        }
+        let (old, new) = (self.cell_size_of(made_in), self.cell_size_of(target));
         let mut places = HashMap::new();
         self.moved.clear();
         for (x, y, id) in list {
-            places.insert(id.clone(), (*x, *y));
+            let at = if target == made_in { (*x, *y) } else { view_step((*x, *y), old, new) };
+            places.insert(id.clone(), at);
             self.moved.retain(|m| m != id);
             self.moved.push(id.clone());
         }
         if self.mode.arranged_freely() {
             self.places = Some(places);
             self.relayout();
-            // Every other icon keeps the place it got (a wider window does not repack them).
-            self.store_cells();
             self.changed = false;
         } else {
-            self.stash = Some((self.mode_for_stash(), places));
+            self.stash = Some((target, places));
         }
-    }
-
-    /// The free view a stash is for when it is made in List or Details (Large Icons).
-    fn mode_for_stash(&self) -> ViewMode {
-        ViewMode::Large
+        true
     }
 
     /// The icon a drop at (x, y) would land on (its picture or label), if it takes dropped

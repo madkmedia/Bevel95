@@ -95,12 +95,41 @@ fn only_moved_icons_are_kept_and_put_back_when_the_window_opens_again() {
     let apple = at(&w, &id("apple"));
     // Opened again: a new window of the same folder.
     let mut again = window(Era::Win95, true, fa());
-    again.view.load_moved(&kept);
+    assert!(again.view.load_moved(&kept, ViewMode::Large));
     assert_eq!((at(&again, &id("fig")), at(&again, &id("apple"))), (fig, apple));
     assert_eq!(again.view.moved_ids(), [id("fig"), id("apple")]);
-    // The others stand in order in the free places: berry where apple was.
+    // Brief 105, 4: the others stand where they stood, each at its own slot in the order, and the
+    // cells apple and fig left stay empty (`95 mc-c-moved-closed-reopened-2`: "The other icons do
+    // not move"); berry is NOT where apple was.
     let fresh = window(Era::Win95, true, fa());
-    assert_eq!(at(&again, &id("berry")), at(&fresh, &id("apple")));
+    for n in FA.iter().filter(|n| !["apple", "fig"].contains(n)) {
+        assert_eq!(at(&again, &id(n)), at(&fresh, &id(n)), "{n} where it stood");
+    }
+    let shown = all(&again);
+    for gone in ["apple", "fig"] {
+        assert!(!shown.contains(&at(&fresh, &id(gone))), "{gone}'s cell stays empty");
+    }
+}
+
+/// Brief 105, 4: an icon whose own slot a moved icon now covers takes the next free cell; the
+/// others still stand at their own slots.
+#[test]
+fn an_icon_whose_slot_is_covered_takes_the_next_free_cell() {
+    let mut w = window(Era::Win95, true, fa());
+    let fresh = all(&w);
+    // lemon (the last) dropped exactly on berry's slot.
+    let (berry, lemon) = (at(&w, &id("berry")), at(&w, &id("lemon")));
+    w.view.move_ids(&[id("lemon")], (berry.0 - lemon.0, berry.1 - lemon.1));
+    let kept = w.view.moved_places();
+    let mut again = window(Era::Win95, true, fa());
+    assert!(again.view.load_moved(&kept, ViewMode::Large));
+    assert_eq!(at(&again, &id("lemon")), berry);
+    // berry's slot is covered: it takes the first free cell from there on (lemon's old one, the
+    // only free one), every other icon at its own slot.
+    assert_eq!(at(&again, &id("berry")), fresh[11]);
+    for (k, n) in FA.iter().enumerate().filter(|(_, n)| !["berry", "lemon"].contains(n)) {
+        assert_eq!(at(&again, &id(n)), fresh[k], "{n}");
+    }
 }
 
 /// A window opened again is laid out before its items come, and a small one then gets a scroll
@@ -116,7 +145,7 @@ fn a_moved_icon_stays_when_a_small_window_gets_its_scroll_bar() {
     let kept = w.view.moved_places();
     let mut again = FolderWindow::new(Era::Win95, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (340, 290));
     again.layout(&Fonts { regular: &r, bold: &b });
-    again.view.load_moved(&kept);
+    assert!(again.view.load_moved(&kept, ViewMode::Large));
     again.set_items(fa());
     assert_eq!(again.view.moved_places(), kept);
     assert_eq!(names(&again)[2], "cherry", "still in its order, only its place is its own");
@@ -179,18 +208,24 @@ fn windows_98_packs_with_the_moved_icon_last() {
     assert!(w.view.last_order().is_empty());
 }
 
-/// 2000's F5 with its web view: every icon back in its order (not "moved one last").
+/// 2000's F5 with its web view: every icon back in its order (not "moved one last"), a kept
+/// "moved last" order included (brief 105, 9).
 #[test]
 fn windows_2000_refresh_puts_icons_back_in_order() {
     let mut w = window(Era::Win2000, true, fa());
     let packed = all(&w);
     w.view.move_ids(&[id("fig")], (60, 192));
     assert_ne!(all(&w), packed);
-    let by = w.view.arrangement();
-    w.view.set_arrange(by);
+    w.view.back_in_order();
     assert_eq!(all(&w), packed);
     assert_eq!(names(&w), FA, "in order, fig in its own place");
     assert!(w.view.moved_places().is_empty());
+    // An order with fig last (kept from another step): back in order too.
+    w.view.pack_moved_last(&[id("fig")]);
+    assert_eq!(names(&w).last().map(String::as_str), Some("fig"));
+    w.view.back_in_order();
+    assert_eq!(names(&w), FA);
+    assert!(w.view.last_order().is_empty());
 }
 
 /// Decision 4: Line up Icons moves an icon off the grid onto the nearest grid place (75 x 75 from
@@ -298,35 +333,240 @@ fn my_computer_arranges_by_drive_letter_and_free_space() {
 /// the oldest folders going beyond the limit, an older file's every-icon line read no more.
 #[test]
 fn the_record_is_read_written_and_pruned() {
+    use saved::arranged_key;
+    let e = Era::Win95;
     let mut s = Saved::default();
-    s.remember_places("c:\\fa", vec![(446, 332, "C:\\fa\\fig.txt".into())]);
-    s.remember_last("c:\\fb", vec!["C:\\fb\\win.com".into()]);
+    assert!(s.remember_places(e, "c:\\fa", ViewMode::Large, vec![(446, 332, "C:\\fa\\fig.txt".into())]));
+    assert!(s.remember_last(e, "c:\\fb", vec!["C:\\fb\\win.com".into()]));
     let back = Saved::parse(&s.text());
-    assert_eq!(back.places_of("c:\\fa"), [(446, 332, "C:\\fa\\fig.txt".to_string())]);
-    assert_eq!(back.last_of("c:\\fb"), ["C:\\fb\\win.com"]);
-    assert_eq!(back.arranged, ["c:\\fa", "c:\\fb"]);
+    assert_eq!(back.places_of(e, "c:\\fa"), Some((ViewMode::Large, vec![(446, 332, "C:\\fa\\fig.txt".to_string())])));
+    assert_eq!(back.last_of(e, "c:\\fb"), ["C:\\fb\\win.com"]);
+    assert_eq!(back.arranged, [arranged_key(e, "c:\\fa"), arranged_key(e, "c:\\fb")]);
+    // Brief 105, 7: the same again is no change (nothing to write).
+    let mut same = back.clone();
+    assert!(!same.remember_places(e, "c:\\fa", ViewMode::Large, vec![(446, 332, "C:\\fa\\fig.txt".into())]));
+    assert!(!same.remember_last(e, "c:\\fb", vec!["C:\\fb\\win.com".into()]));
+    assert!(!same.remember_last(e, "c:\\nothing", Vec::new()));
+    // The view is part of the record: the same places in another view are a change.
+    assert!(same.remember_places(e, "c:\\fa", ViewMode::Small, vec![(446, 332, "C:\\fa\\fig.txt".into())]));
     // An empty list forgets.
     let mut t = back.clone();
-    t.remember_places("c:\\fa", Vec::new());
-    assert!(t.places_of("c:\\fa").is_empty() && t.arranged == ["c:\\fb"]);
+    assert!(t.remember_places(e, "c:\\fa", ViewMode::Large, Vec::new()));
+    assert!(t.places_of(e, "c:\\fa").is_none() && t.arranged == [arranged_key(e, "c:\\fb")]);
     // At most MOST_ARRANGED folders: the one changed longest ago goes; a change makes it new.
     let mut u = Saved::default();
     for k in 0..saved::MOST_ARRANGED + 5 {
-        u.remember_places(&format!("c:\\f{k}"), vec![(0, 0, "x".into())]);
+        u.remember_places(e, &format!("c:\\f{k}"), ViewMode::Large, vec![(0, 0, "x".into())]);
         if k == 10 {
-            u.remember_last("c:\\f0", vec!["y".into()]);
+            u.remember_last(e, "c:\\f0", vec!["y".into()]);
         }
     }
     assert_eq!(u.arranged.len(), saved::MOST_ARRANGED);
-    assert!(u.places_of("c:\\f1").is_empty() && u.places_of("c:\\f3").is_empty(), "the oldest went");
-    assert_eq!(u.last_of("c:\\f0"), ["y"], "changed later: kept");
+    assert!(u.places_of(e, "c:\\f1").is_none() && u.places_of(e, "c:\\f3").is_none(), "the oldest went");
+    assert_eq!(u.last_of(e, "c:\\f0"), ["y"], "changed later: kept");
     let reread = Saved::parse(&u.text());
     assert_eq!(reread.arranged, u.arranged, "the age survives the file");
     // At most MOST_MOVED icons for one folder: the last moved.
     let mut v = Saved::default();
-    v.remember_places("c:\\big", (0..saved::MOST_MOVED as i32 + 10).map(|i| (i, i, format!("{i}"))).collect());
-    assert_eq!(v.places_of("c:\\big").len(), saved::MOST_MOVED);
-    assert_eq!(v.places_of("c:\\big")[0].2, "10");
-    // A line of before brief 103 (every icon's place) is read no more.
+    v.remember_places(e, "c:\\big", ViewMode::Large, (0..saved::MOST_MOVED as i32 + 10).map(|i| (i, i, format!("{i}"))).collect());
+    let (_, big) = v.places_of(e, "c:\\big").unwrap();
+    assert_eq!(big.len(), saved::MOST_MOVED);
+    assert_eq!(big[0].2, "10");
+    // A line of before brief 103 (every icon's place) is read no more, nor brief 103's own lines
+    // without a look and a view (brief 105, 8: dropped; those folders open in order once).
     assert!(Saved::parse("places\tc:\\old\t1 2 a\t3 4 b\n").places.is_empty());
+    let old = Saved::parse("moved\tc:\\fa\t446 332 C:\\fa\\fig.txt\nlast\tc:\\fb\tC:\\fb\\win.com\n");
+    assert!(old.places.is_empty() && old.last.is_empty() && old.arranged.is_empty());
+}
+
+/// Brief 105, 6: the limits hold for a file as it is read too: at most MOST_MOVED icons a folder
+/// (the last moved), MOST_ARRANGED folders (the last written), no id or folder longer than
+/// LONGEST, no view but Large or Small Icons.
+#[test]
+fn the_limits_hold_when_the_file_is_read() {
+    let word = Era::Win98.setting();
+    let mut text = String::new();
+    // A folder with 100 moved icons.
+    text += &format!("moved\t{word}\tlarge\tc:\\big");
+    for i in 0..100 {
+        text += &format!("\t{i} {i} id{i}");
+    }
+    text += "\n";
+    // 250 more folders.
+    for k in 0..250 {
+        text += &format!("moved\t{word}\tsmall\tc:\\f{k}\t1 2 a\n");
+    }
+    let s = Saved::parse(&text);
+    assert_eq!(s.arranged.len(), saved::MOST_ARRANGED);
+    assert!(s.places_of(Era::Win98, "c:\\big").is_none(), "the oldest went");
+    assert!(s.places_of(Era::Win98, "c:\\f249").is_some());
+    let one = Saved::parse(text.lines().next().unwrap());
+    let (view, big) = one.places_of(Era::Win98, "c:\\big").unwrap();
+    assert_eq!(view, ViewMode::Large);
+    assert_eq!(big.len(), saved::MOST_MOVED);
+    assert_eq!(big[0].2, "id36", "the last moved");
+    // Too long, or a view that holds no places.
+    let long = "x".repeat(saved::LONGEST + 1);
+    let odd = Saved::parse(&format!(
+        "moved\t{word}\tlarge\tc:\\{long}\t1 2 a\nmoved\t{word}\tlarge\tc:\\fa\t1 2 {long}\nmoved\t{word}\tdetails\tc:\\fb\t1 2 a\nlast\t{word}\tc:\\fc\t{long}\n"
+    ));
+    assert!(odd.places.is_empty() && odd.last.is_empty() && odd.arranged.is_empty());
+}
+
+/// Brief 105, 8: a record belongs to the look it was made in; another look never sees it.
+#[test]
+fn a_record_belongs_to_its_look() {
+    let mut s = Saved::default();
+    s.remember_places(Era::Win95, "c:\\fa", ViewMode::Large, vec![(446, 332, id("fig"))]);
+    s.remember_last(Era::Win98, "c:\\fa", vec![id("fig")]);
+    let back = Saved::parse(&s.text());
+    assert!(back.places_of(Era::Win95, "c:\\fa").is_some());
+    assert!(back.places_of(Era::Win98, "c:\\fa").is_none() && back.places_of(Era::Win2000, "c:\\fa").is_none());
+    assert_eq!(back.last_of(Era::Win98, "c:\\fa"), [id("fig")]);
+    assert!(back.last_of(Era::Win95, "c:\\fa").is_empty() && back.last_of(Era::Win2000, "c:\\fa").is_empty());
+    // Forgetting one look's record leaves the other's.
+    let mut t = back.clone();
+    t.remember_places(Era::Win95, "c:\\fa", ViewMode::Large, Vec::new());
+    assert_eq!(t.last_of(Era::Win98, "c:\\fa"), [id("fig")]);
+    assert_eq!(t.arranged, [saved::arranged_key(Era::Win98, "c:\\fa")]);
+}
+
+/// Brief 105, 1: a place belongs to the view it was made in. A change of view moves the moved
+/// icon as the view's own step does, and what is kept then is in the new view; a window opened in
+/// the other view than the record's: 95 and 98 move it as that step does, 2000 does not use it
+/// (its own step puts the icons back in order).
+#[test]
+fn a_place_belongs_to_the_view_it_was_made_in() {
+    for era in Era::ALL {
+        let mut w = window(era, true, fa());
+        w.view.move_ids(&[id("fig")], (171, 173));
+        let large = w.view.moved_places();
+        assert_eq!(w.view.moved_view(), ViewMode::Large);
+        // Large to Small in the window itself.
+        w.set_view_mode(ViewMode::Small);
+        if era == Era::Win2000 {
+            assert!(w.view.moved_places().is_empty(), "2000: back in order");
+        } else {
+            let small = w.view.moved_places();
+            assert_eq!(w.view.moved_view(), ViewMode::Small);
+            assert_eq!(small.len(), 1);
+            assert_ne!((small[0].0, small[0].1), (large[0].0, large[0].1), "{era:?}: stepped");
+            // Opened again in Small Icons from the Small record: the same place.
+            let mut again = window(era, true, fa());
+            again.set_view_mode(ViewMode::Small);
+            assert!(again.view.load_moved(&small, ViewMode::Small));
+            assert_eq!(again.view.moved_places(), small);
+        }
+        // Opened in Small Icons from a Large record.
+        let mut other = window(era, true, fa());
+        other.set_view_mode(ViewMode::Small);
+        let used = other.view.load_moved(&large, ViewMode::Large);
+        if era == Era::Win2000 {
+            assert!(!used, "2000: not used, the record goes");
+            assert!(other.view.moved_places().is_empty());
+        } else {
+            assert!(used);
+            let mut stepped = window(era, true, fa());
+            stepped.view.move_ids(&[id("fig")], (171, 173));
+            stepped.set_view_mode(ViewMode::Small);
+            assert_eq!(other.view.moved_places(), stepped.view.moved_places(), "{era:?}: as the view's own step");
+            assert_eq!(other.view.moved_view(), ViewMode::Small);
+        }
+        // Opened in Details from a Large record: kept for the way back to Large, in Large.
+        for list in [ViewMode::Details, ViewMode::List] {
+            let mut d = window(era, true, fa());
+            d.set_view_mode(list);
+            assert!(d.view.load_moved(&large, ViewMode::Large));
+            assert_eq!(d.view.moved_view(), ViewMode::Large, "{era:?} {list:?}");
+            assert_eq!(d.view.moved_places(), large);
+            d.set_view_mode(ViewMode::Large);
+            assert_eq!(d.view.moved_places(), large, "{era:?} {list:?}: back where it was left");
+        }
+    }
+}
+
+/// A window opened again in Small Icons is laid out before its items come; their first measuring
+/// (the columns' width) then must not put the moved icon back in order (found by the live try of
+/// brief 105, `try-win95-7-small-reopened`).
+#[test]
+fn a_moved_icon_stays_when_a_small_icons_window_measures_its_items() {
+    let (r, b) = fonts();
+    for era in Era::ALL {
+        let mut w = window(era, true, fa());
+        w.set_view_mode(ViewMode::Small);
+        let c = at(&w, &id("cherry"));
+        w.view.move_ids(&[id("cherry")], (448 - c.0, 34 - c.1));
+        let kept = w.view.moved_places();
+        let mut again = FolderWindow::new(era, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (640, 420));
+        again.layout(&Fonts { regular: &r, bold: &b });
+        again.set_view_mode(ViewMode::Small);
+        assert!(again.view.load_moved(&kept, ViewMode::Small));
+        again.set_items(fa());
+        assert_eq!(again.view.moved_places(), kept, "{era:?}");
+        assert_eq!(at(&again, &id("cherry")), at(&w, &id("cherry")), "{era:?}");
+    }
+}
+
+/// Brief 105, 2: in List or Details, showing or hiding the tree (any repack) leaves the kept
+/// places alone.
+#[test]
+fn the_tree_shown_in_details_leaves_the_places_alone() {
+    for era in Era::ALL {
+        let mut w = window(era, true, fa());
+        w.view.move_ids(&[id("fig")], (171, 173));
+        let large = w.view.moved_places();
+        let everything = all(&w);
+        w.set_view_mode(ViewMode::Details);
+        w.view.repack();
+        w.view.repack();
+        assert_eq!(w.view.moved_places(), large, "{era:?}");
+        w.set_view_mode(ViewMode::Large);
+        assert_eq!(all(&w), everything, "{era:?}: nothing moved");
+    }
+}
+
+/// Brief 105, 3: with Auto Arrange on, the order is what is kept: an icon dropped between two
+/// others is still between them after the window is opened again and after a repack.
+#[test]
+fn auto_arrange_keeps_the_order_after_a_reopen() {
+    let mut w = window(Era::Win95, true, fa());
+    w.set_auto_arrange(true);
+    let (fig, grape) = (at(&w, &id("fig")), at(&w, &id("grape")));
+    let apple = at(&w, &id("apple"));
+    let between = ((fig.0 + grape.0) / 2 + 2, fig.1);
+    w.view.move_ids(&[id("apple")], (between.0 - apple.0, between.1 - apple.1));
+    let order = |w: &FolderWindow| {
+        let mut v: Vec<(i32, i32, String)> = FA.iter().map(|n| (at(w, &id(n)).1, at(w, &id(n)).0, n.to_string())).collect();
+        v.sort();
+        v.into_iter().map(|t| t.2).collect::<Vec<_>>()
+    };
+    let shown = order(&w);
+    let k = shown.iter().position(|n| n == "apple").unwrap();
+    assert_eq!((shown[k - 1].as_str(), shown[k + 1].as_str()), ("fig", "grape"));
+    let kept = w.view.moved_places();
+    let mut again = window(Era::Win95, true, fa());
+    again.set_auto_arrange(true);
+    assert!(again.view.load_moved(&kept, ViewMode::Large));
+    assert_eq!(order(&again), shown, "after a reopen");
+    again.view.repack();
+    assert_eq!(order(&again), shown, "after a repack");
+}
+
+/// Brief 105, 10: a rename carries the icon's place along (what is kept names it by its new
+/// name, in the window and for a reopen).
+#[test]
+fn a_rename_carries_the_place_along() {
+    let mut w = window(Era::Win95, true, fa());
+    w.view.move_ids(&[id("fig")], (171, 173));
+    let before = w.view.moved_places();
+    let fig = at(&w, &id("fig"));
+    w.view.renamed(&id("fig"), &id("figs"), "figs.txt");
+    let after = w.view.moved_places();
+    assert_eq!(after, vec![(before[0].0, before[0].1, id("figs"))]);
+    assert_eq!(at(&w, &id("figs")), fig);
+    assert_eq!(w.view.moved_ids(), [id("figs")]);
+    // Also while waiting in Details.
+    w.set_view_mode(ViewMode::Details);
+    w.view.renamed(&id("figs"), &id("fig"), "fig.txt");
+    assert_eq!(w.view.moved_places(), vec![(before[0].0, before[0].1, id("fig"))]);
 }

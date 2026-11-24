@@ -75,24 +75,41 @@ pub struct Saved {
     /// Windows 2000: the system folders whose "Show Files" was clicked (2000 remembered it).
     pub shown_files: std::collections::BTreeSet<String>,
     /// Where the icons the person dragged in a folder's window were left (Large and Small Icons;
-    /// brief 103: only icons really moved): by folder (keys as `windows`), (x, y, item id) in the
-    /// order they were moved, as the icon view's `moved_places` gives them.
-    pub places: BTreeMap<String, Vec<(i32, i32, String)>>,
+    /// brief 103: only icons really moved): by look and folder (`arranged_key`: each look keeps
+    /// its own, brief 105), the view they were made in, and (x, y, item id) in the order they
+    /// were moved, as the icon view's `moved_places` gives them.
+    pub places: BTreeMap<String, MovedRecord>,
     /// Windows 98 with its web view: the icons that go last in a folder's order (a dragged icon
-    /// counts as moved to the end), by folder, in that order (brief 103).
+    /// counts as moved to the end), by look and folder, in that order (brief 103).
     pub last: BTreeMap<String, Vec<String>>,
-    /// The folders of `places` and `last`, the one changed longest ago first: beyond
-    /// `MOST_ARRANGED` the oldest go.
+    /// The records of `places` and `last` (`arranged_key`), the one changed longest ago first:
+    /// beyond `MOST_ARRANGED` the oldest go.
     pub arranged: Vec<String>,
 }
 
-/// How many folders' moved icons are kept at most (`places` and `last`): as many as the other
-/// records of folders keep (`MOST`); each record holds only the icons really moved, so the file
-/// stays small. The one changed longest ago goes first.
+/// How many records of moved icons are kept at most (`places` and `last`, a look and a folder
+/// each): as many as the other records of folders keep (`MOST`). The one changed longest ago
+/// goes first.
 pub const MOST_ARRANGED: usize = MOST;
-/// How many moved icons one folder keeps at most (a drag of every icon of a folder of thousands
-/// keeps the last moved of them).
-pub const MOST_MOVED: usize = 500;
+/// How many moved icons one record keeps at most (brief 105: the last moved).
+pub const MOST_MOVED: usize = 64;
+/// The longest item id or folder kept (MAX_PATH): a longer one is not kept (brief 105, 6: so
+/// the file has a bound).
+pub const LONGEST: usize = 260;
+
+/// A record of moved icons: the view (Large or Small Icons) their places are in, and (x, y,
+/// item id) in the order they were moved (brief 105, 1).
+pub type MovedRecord = (ViewMode, Vec<(i32, i32, String)>);
+
+/// The look a record's word names (`Era::setting`).
+fn era_of(word: &str) -> Option<Era> {
+    Era::ALL.into_iter().find(|e| e.setting() == word)
+}
+
+/// The key of a look's record of a folder (`places`, `last`): the look's word, a tab, the folder.
+pub fn arranged_key(era: Era, folder: &str) -> String {
+    format!("{}\t{folder}", era.setting())
+}
 
 /// When a folder window's icons are laid out again (brief 103, the survey's table).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,33 +221,36 @@ impl Saved {
                 }
                 continue;
             }
-            // moved<TAB>folder<TAB>x y id<TAB>x y id... (no file name holds a tab). Before brief
-            // 103 a line "places" held every icon's place of a folder: it is read no more (those
-            // folders open in order once), so no folder keeps more than the icons really moved.
+            // moved<TAB>look<TAB>view<TAB>folder<TAB>x y id<TAB>x y id... (no file name holds a
+            // tab). Before brief 103 a line "places" held every icon's place of a folder, and for a
+            // few hours of brief 103 "moved" had no look and no view: neither is read any more
+            // (those folders open in order once). The limits hold for what is read too.
             if let Some(rest) = line.strip_prefix("moved\t") {
                 let mut fields = rest.split('\t');
-                let Some(key) = fields.next().filter(|k| !k.is_empty()) else { continue };
+                let (Some(look), Some(view), Some(folder)) = (fields.next(), fields.next(), fields.next()) else { continue };
+                let (Some(era), Some(view)) = (era_of(look), ViewMode::from_word(view)) else { continue };
+                if folder.is_empty() || folder.len() > LONGEST || !view.arranged_freely() {
+                    continue;
+                }
                 let list: Vec<(i32, i32, String)> = fields
                     .filter_map(|f| {
                         let mut p = f.splitn(3, ' ');
-                        Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next().filter(|s| !s.is_empty())?.to_string()))
+                        Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next().filter(|s| !s.is_empty() && s.len() <= LONGEST)?.to_string()))
                     })
                     .collect();
-                if !list.is_empty() {
-                    saved.places.insert(key.to_string(), list);
-                    saved.touch(key);
-                }
+                saved.remember_places(era, folder, view, list);
                 continue;
             }
-            // last<TAB>folder<TAB>id<TAB>id...
+            // last<TAB>look<TAB>folder<TAB>id<TAB>id...
             if let Some(rest) = line.strip_prefix("last\t") {
                 let mut fields = rest.split('\t');
-                let Some(key) = fields.next().filter(|k| !k.is_empty()) else { continue };
-                let list: Vec<String> = fields.filter(|f| !f.is_empty()).map(str::to_string).collect();
-                if !list.is_empty() {
-                    saved.last.insert(key.to_string(), list);
-                    saved.touch(key);
+                let (Some(look), Some(folder)) = (fields.next(), fields.next()) else { continue };
+                let Some(era) = era_of(look) else { continue };
+                if folder.is_empty() || folder.len() > LONGEST {
+                    continue;
                 }
+                let list: Vec<String> = fields.filter(|f| !f.is_empty() && f.len() <= LONGEST).map(str::to_string).collect();
+                saved.remember_last(era, folder, list);
                 continue;
             }
             if let Some(key) = line.strip_prefix("shown_files ") {
@@ -316,8 +336,10 @@ impl Saved {
             }
         }
         for key in keys {
-            if let Some(list) = self.places.get(key) {
-                out += &format!("moved\t{key}");
+            if let Some((view, list)) = self.places.get(key) {
+                // The key is "look<TAB>folder": the view goes between them.
+                let (look, folder) = key.split_once('\t').unwrap_or(("", key));
+                out += &format!("moved\t{look}\t{}\t{folder}", view.word());
                 for (x, y, id) in list {
                     out += &format!("\t{x} {y} {id}");
                 }
@@ -361,47 +383,61 @@ impl Saved {
         }
     }
 
-    /// Remembers where the icons the person moved in a folder lie (at most `MOST_MOVED`, the last
-    /// moved; at most `MOST_ARRANGED` folders, the one changed longest ago going); an empty list
-    /// forgets.
-    pub fn remember_places(&mut self, key: &str, mut list: Vec<(i32, i32, String)>) {
-        if list.is_empty() {
-            self.places.remove(key);
-            self.untouch(key);
-            return;
-        }
+    /// Remembers where the icons the person moved in a folder lie in look `era`, in view `view`
+    /// (at most `MOST_MOVED`, the last moved; ids and folders longer than `LONGEST` not kept; at
+    /// most `MOST_ARRANGED` records, the one changed longest ago going); an empty list forgets.
+    /// True if the record changed.
+    pub fn remember_places(&mut self, era: Era, folder: &str, view: ViewMode, mut list: Vec<(i32, i32, String)>) -> bool {
+        let key = arranged_key(era, folder);
+        list.retain(|(_, _, id)| id.len() <= LONGEST);
         if list.len() > MOST_MOVED {
             list.drain(..list.len() - MOST_MOVED);
         }
-        self.places.insert(key.to_string(), list);
-        self.touch(key);
+        if list.is_empty() || folder.len() > LONGEST {
+            let had = self.places.remove(&key).is_some();
+            self.untouch(&key);
+            return had;
+        }
+        let record = (view, list);
+        if self.places.get(&key) == Some(&record) {
+            return false;
+        }
+        self.places.insert(key.clone(), record);
+        self.touch(&key);
         self.prune();
+        true
     }
 
-    /// Remembers the icons that go last in a folder's order (Windows 98 with its web view), as
-    /// `remember_places` does; an empty list forgets.
-    pub fn remember_last(&mut self, key: &str, mut list: Vec<String>) {
-        if list.is_empty() {
-            self.last.remove(key);
-            self.untouch(key);
-            return;
-        }
+    /// Remembers the icons that go last in a folder's order in look `era` (Windows 98 with its web
+    /// view), as `remember_places` does; an empty list forgets. True if the record changed.
+    pub fn remember_last(&mut self, era: Era, folder: &str, mut list: Vec<String>) -> bool {
+        let key = arranged_key(era, folder);
+        list.retain(|id| id.len() <= LONGEST);
         if list.len() > MOST_MOVED {
             list.drain(..list.len() - MOST_MOVED);
         }
-        self.last.insert(key.to_string(), list);
-        self.touch(key);
+        if list.is_empty() || folder.len() > LONGEST {
+            let had = self.last.remove(&key).is_some();
+            self.untouch(&key);
+            return had;
+        }
+        if self.last.get(&key) == Some(&list) {
+            return false;
+        }
+        self.last.insert(key.clone(), list);
+        self.touch(&key);
         self.prune();
+        true
     }
 
-    /// A folder's moved icons' places (`remember_places`).
-    pub fn places_of(&self, key: &str) -> Vec<(i32, i32, String)> {
-        self.places.get(key).cloned().unwrap_or_default()
+    /// A folder's moved icons' places in look `era`, and the view they were made in.
+    pub fn places_of(&self, era: Era, folder: &str) -> Option<MovedRecord> {
+        self.places.get(&arranged_key(era, folder)).cloned()
     }
 
-    /// The icons that go last in a folder's order (`remember_last`).
-    pub fn last_of(&self, key: &str) -> Vec<String> {
-        self.last.get(key).cloned().unwrap_or_default()
+    /// The icons that go last in a folder's order in look `era` (`remember_last`).
+    pub fn last_of(&self, era: Era, folder: &str) -> Vec<String> {
+        self.last.get(&arranged_key(era, folder)).cloned().unwrap_or_default()
     }
 
     /// `key` was changed just now: it goes to the end of `arranged`.
