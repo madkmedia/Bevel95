@@ -49,6 +49,8 @@ Website: https://madkmedia.github.io/Bevel95/
   pixels like everything else; Bevel95 remembers where the file is and does not copy it.
 - **Minesweeper, Solitaire and the Calculator**, each in the look you use, with their Help.
 - **Quick Search**: press the Windows key, type a few letters of a program's name, press Enter.
+- **Monitor Lines** (right-click the taskbar, then **Bevel95**): the faint dark lines of an old
+  monitor over the whole screen, Light, Medium or Strong, at sizes 2× and up. Off unless you choose it.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 
