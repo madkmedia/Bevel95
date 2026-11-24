@@ -799,8 +799,8 @@ impl FolderWindow {
                 && self.view.extent(font).1 > inside.h
             {
                 self.view.set_area(Rect::new(inside.x, inside.y, inside.w - BAR, inside.h));
-                let by = self.view.arrangement();
-                self.view.set_arrange(by);
+                // In rows for the narrower list; icons the person moved stay (brief 103).
+                self.view.repack();
             }
         }
         self.fit();
@@ -911,10 +911,9 @@ impl FolderWindow {
             self.split_drag = None;
         }
         self.fit();
-        if let Some(font) = self.font.clone() {
-            let by = self.view.arrangement();
-            let _ = font;
-            self.view.set_arrange(by);
+        if self.font.is_some() {
+            // In rows for the new width; icons the person moved stay (brief 103).
+            self.view.repack();
         }
         self.fit();
     }

@@ -133,6 +133,11 @@ const TEST_FOLDER_OPTIONS: usize = 254;
 /// `SLOW_READING_MS` late, past the patience (a slow drive, for the live try of a late reading;
 /// only from a test folder's window).
 const TEST_SLOW_READING: usize = 255;
+/// Brief 103: the selected test item moved within its window by `TEST_MOVE_BY` (the survey's drag
+/// of C: on 98), as a drag dropped in the same window moves it (`move_ids`, then kept as the look
+/// keeps it). Only on a test item in a test folder's window.
+const TEST_MOVE: usize = 256;
+const TEST_MOVE_BY: (i32, i32) = (171, 173);
 const SLOW_READING_MS: u64 = 1500;
 static SLOW_READING: AtomicBool = AtomicBool::new(false);
 /// A tree reader has rows for a window's tree.
@@ -4626,6 +4631,18 @@ fn test_command(window: HWND, l: u64) {
             TEST_SLOW_READING => {
                 SLOW_READING.store(true, Ordering::SeqCst);
                 log("folders: a test made test folders' readings slow");
+            }
+            TEST_MOVE => {
+                kit::update::<FolderHost>(|h| {
+                    let selected = h.form.view.selection();
+                    let ids = h.form.view.ids_of(&selected);
+                    if ids.is_empty() {
+                        return;
+                    }
+                    h.form.view.move_ids(&ids, TEST_MOVE_BY);
+                    remember_places(h);
+                });
+                save();
             }
             TEST_BACK => run(window, Command::Back, true),
             TEST_FORWARD => run(window, Command::Forward, true),

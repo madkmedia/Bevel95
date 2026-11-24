@@ -103,6 +103,25 @@ fn only_moved_icons_are_kept_and_put_back_when_the_window_opens_again() {
     assert_eq!(at(&again, &id("berry")), at(&fresh, &id("apple")));
 }
 
+/// A window opened again is laid out before its items come, and a small one then gets a scroll
+/// bar and puts its icons in rows for the narrower list: the moved icon still stays where it was
+/// left (found by the live try on a scratch folder, `try-win95-5-reopened`).
+#[test]
+fn a_moved_icon_stays_when_a_small_window_gets_its_scroll_bar() {
+    let (r, b) = fonts();
+    let mut w = FolderWindow::new(Era::Win95, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (340, 290));
+    w.layout(&Fonts { regular: &r, bold: &b });
+    w.set_items(fa());
+    w.view.move_ids(&[id("cherry")], (171, 173));
+    let kept = w.view.moved_places();
+    let mut again = FolderWindow::new(Era::Win95, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (340, 290));
+    again.layout(&Fonts { regular: &r, bold: &b });
+    again.view.load_moved(&kept);
+    again.set_items(fa());
+    assert_eq!(again.view.moved_places(), kept);
+    assert_eq!(names(&again)[2], "cherry", "still in its order, only its place is its own");
+}
+
 /// Decision 2, the survey's table of steps per look.
 #[test]
 fn each_look_keeps_a_moved_icon_as_measured() {

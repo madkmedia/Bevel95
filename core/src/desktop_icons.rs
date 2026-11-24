@@ -1086,6 +1086,23 @@ impl Desktop {
         self.changed = true;
     }
 
+    /// A folder window's list changed its width (a scroll bar came, the tree was shown): the
+    /// icons not moved by the person are put in rows for the new width in their order, those moved
+    /// stay where they were left (brief 103: a reopened window kept them). The desktop: as
+    /// `set_arrange` with the arrangement in use.
+    pub fn repack(&mut self) {
+        if self.host != Host::Window || !self.mode.arranged_freely() || self.places.is_none() {
+            let by = self.arrange;
+            self.set_arrange(by);
+            return;
+        }
+        let keep: Places = self.moved_places().into_iter().map(|(x, y, id)| (id, (x, y))).collect();
+        self.places = Some(keep);
+        self.relayout();
+        self.store_cells();
+        self.changed = true;
+    }
+
     /// The icons that go last in the order (`pack_moved_last`), in that order.
     pub fn last_order(&self) -> &[String] {
         &self.last
