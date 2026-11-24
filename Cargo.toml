@@ -9,7 +9,7 @@ resolver = "3"
 members = ["art", "core", "platform/winkit", "platform/win", "programs/minefield", "programs/help", "programs/solitaire", "programs/calculator", "programs/folders"]
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 publish = false
 # Bevel95's own code and writing; not the pictures and sounds in art/ (README.md, "License").

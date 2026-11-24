@@ -5386,7 +5386,7 @@ Three small changes before strangers run Bevel95, report problems and send their
     back. Ctrl+Win+T brings the bar back with the desktop as it was.
   - PROVISIONAL: the entry's two wordings and the key.
 - **About Bevel95, with a version.** One version for the whole project, the workspace's (`version =
-  "0.1.5"` in Cargo.toml's `[workspace.package]`, which every crate takes); the build is the commit
+  "0.1.6"` in Cargo.toml's `[workspace.package]`, which every crate takes); the build is the commit
   it was made from, asked of git by `platform/winkit/build.rs` (`git rev-parse --short=7 HEAD`,
   asked again when HEAD or the index changes, i.e. at every commit) and kept as
   `bevel_winkit::BUILD`; a build without git (or outside the repository) says "unknown". No new
@@ -5403,7 +5403,7 @@ Three small changes before strangers run Bevel95, report problems and send their
     "About Bevel95" (found by "about", "version", "build", "help", "licence", "license"; shown also
     for "p" in the golden Quick Search picture, by "help"). Built like the programs' About boxes
     (the shell's About): the look's frame, title bar and font, the silver B at the left, the name,
-    "Version 0.1.5 (build 1a2b3c4)", what it is ("A Windows 95, 98 and 2000 look for today's
+    "Version 0.1.6 (build 1a2b3c4)", what it is ("A Windows 95, 98 and 2000 look for today's
     Windows"), an etched line, the notice ("Not affiliated with Microsoft. Windows is a trademark of
     Microsoft Corporation; the pictures of its user interface belong to Microsoft.", wrapped to the
     window) and OK. 380 wide (the shell's About is 348; the line of what it is needs a little
@@ -5431,7 +5431,7 @@ Three small changes before strangers run Bevel95, report problems and send their
   - Decided differently from the look's own manner: Windows 2000's About boxes carried Microsoft's
     Windows 2000 banner; Bevel95's does not (it is not Microsoft's product), so the three looks
     share the 95 and 98 layout in their own frame and font.
-  - **The log's first line** at every start: `Bevel95 0.1.5 (build 1a2b3c4): bevel95.exe starting`
+  - **The log's first line** at every start: `Bevel95 0.1.6 (build 1a2b3c4): bevel95.exe starting`
     (`winkit::log::started`), written by the bar when it starts (after Setup, so a cancelled first
     run still leaves nothing behind), by `--restore` and the `--list-...` diagnoses, and by each
     program (Minesweeper, Solitaire, Calculator, the folder windows, the Help viewer) first thing.
@@ -6847,7 +6847,7 @@ sharable").
 - **Proof**: `file_kinds` tests (a `.url` is `OwnOrLook` with the look's Type name; `names_own_picture` with an `IconFile`, without the line, with an empty one); no golden picture or comparison case changed. Live (`private/probes/text-fields/urltry.ps1`, a scratch copy of the installed folders.exe, hash compared): two made-up Internet Shortcuts in a scratch folder, the one naming a red picture of the folder shows it, the other the old Internet Shortcut picture (`private/probes/text-fields/urltry-98.png`).
 - **Only a file on a drive of this PC (the review before 0.1.6, W4; brief 108)**: an `IconFile` counts as the shortcut's own picture only when it is a whole path on a drive letter (`X:\...` or `X:/...`, no other colon: `file_kinds::local_drive_path`), and the platform adds that the letter is one of this PC's own drives (`GetDriveTypeW`: removable, fixed, CD, RAM disk; never a network drive or a letter with no drive). A share (`\\server\...`, `//server/...`, `\\?\...`), a web address or anything with a scheme (`http:`, `https:`, `ftp:`, `file:` ...) or a path without a drive shows the look's Internet Shortcut picture, and Windows is not asked for that file's picture: a shortcut someone sends a person cannot make Bevel95 reach out to another computer. A Steam game's shortcut (a path on a drive) keeps its picture. Tests in `file_kinds` (a drive path, forward slashes, upper case, a share both ways, `\\?\`, web and file addresses, a stream, no drive).
 ## Check for updates: a link, not a request (2026-11-24, brief 100)
-- **What it is**: About Bevel95 has a button **"Check for updates"** (access key U), right under the three lines of what it is, at the text's left edge, so the version line ("Version 0.1.5 (build ...)") stands just above it; the separator and the notice move down by the button's row. It asks Windows to open one fixed page in the person's own browser, `about::UPDATES_URL` = `https://github.com/madkmedia/Bevel95/releases/latest`, through the same call the Support button already uses (`window_list::start`; `about::page_of` gives each button its page), at most once a second; the window stays open, and the person compares the page's version with the window's. Quick Search offers the same ("Check for updates", found by "update", "check for updates", "new version", "release", "download"; `BarCommand::CheckForUpdates`, code 19).
+- **What it is**: About Bevel95 has a button **"Check for updates"** (access key U), right under the three lines of what it is, at the text's left edge, so the version line ("Version 0.1.6 (build ...)") stands just above it; the separator and the notice move down by the button's row. It asks Windows to open one fixed page in the person's own browser, `about::UPDATES_URL` = `https://github.com/madkmedia/Bevel95/releases/latest`, through the same call the Support button already uses (`window_list::start`; `about::page_of` gives each button its page), at most once a second; the window stays open, and the person compares the page's version with the window's. Quick Search offers the same ("Check for updates", found by "update", "check for updates", "new version", "release", "download"; `BarCommand::CheckForUpdates`, code 19).
 - **Why it asks nothing itself** (the main session's decision): Bevel95 makes no request to the internet from any of its programs: no request, no download, no file written, no timer, nothing at startup. A security program had just flagged the released file by its behaviour, and a program that also talks to the network would look worse to such programs, not better. The README's "It does not connect to the internet" stays true: the browser does. Asking for the latest version itself is kept for later (todo).
 - **Proof**: `about` tests (the constant is exactly that address; `page_of` gives it to the button and the Support page to Support, nothing to OK; the button stands under the version line in every look, Alt+U and a click carry it out; Tab goes round the three buttons); Quick Search's table and count. Golden pictures changed on purpose: `win{95,98,2000}-about` and their `-16-` and `-256-` pictures (the button, the window 29 pixels taller), and `win{95,98,2000}-find-programs` (the scene types "p", which now finds "Check for updates" too: one more row and the count 33). Not tried live: it would open the owner's browser (the owner's checklist).
 ## Monitor Lines (2026-11-24, brief 102; the owner, after a try-out: "Lines only looks like a decent starting point for most people as it's not too dark or strong")
