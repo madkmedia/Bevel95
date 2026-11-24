@@ -6776,7 +6776,8 @@ sharable").
   Kaspersky's own scanner found nothing in either. Which behaviour set the watcher off is not
   known. The project made no report to Kaspersky (its form starts from a scan result, which is
   clean); the affected person can report it from their own product. Code signing stays off (the
-  owner's rule). From 0.1.5 on each release's files are uploaded to VirusTotal. The README says
+  owner's rule). No upload is promised for later releases (the owner, 2026-11-24): the README
+  tells people how to have a file checked there themselves. The README says
   what to do ("An antivirus program may warn too", under Download and install), naming the
   behaviours such programs watch for and why Bevel95 has each.
 

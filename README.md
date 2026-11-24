@@ -88,10 +88,10 @@ each for a plain reason: the one file unpacks its companion programs; it can add
 programs that start with Windows (if you tick that); it listens for the Windows key, to open its
 Start menu or Quick Search; and it hides Windows' taskbar and puts its own in its place. A program
 that judges by behaviour may therefore stop Bevel95 while it runs, even though its scan of the
-file finds nothing (one user reports that from Kaspersky). Each release's files are uploaded to
-VirusTotal, where about seventy scanners look at them: look a file up there by the SHA-256
-fingerprint published beside it. If your antivirus stops Bevel95, you can report a false alarm to
-its maker, and please tell us too (see "The log, and reporting a problem" below).
+file finds nothing (one user reports that from Kaspersky). You can have a release's file checked
+on VirusTotal, where about seventy scanners look at it: upload it there, and compare its SHA-256
+fingerprint with the one published beside it. If your antivirus stops Bevel95, you can report a
+false alarm to its maker, and please tell us too (see "The log, and reporting a problem" below).
 
 Double-click the file. **Bevel95 Setup** asks how you want to use it:
 
