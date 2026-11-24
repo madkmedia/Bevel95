@@ -1161,7 +1161,12 @@ mod tests {
         assert!(rows(&w).iter().all(|(_, f)| f == "Bevel95"));
         assert_eq!(rows(&w)[0].0, "Bevel95 Settings", "its name begins with it");
         assert_eq!(w.selected().unwrap().command, Some(Action::Bar(crate::bar_menu::BarCommand::Settings)));
-        assert_eq!(status(w.found.len()), "33 item(s) found", "with Check for updates (brief 100)");
+        assert_eq!(status(w.found.len()), "37 item(s) found", "with Check for updates (brief 100) and Monitor Lines (brief 102)");
+        // Monitor Lines by its other words (brief 102), its four by their names' order.
+        let lines = ["Monitor Lines Light", "Monitor Lines Medium", "Monitor Lines Off", "Monitor Lines Strong"];
+        for word in ["crt", "scanlines", "lines", "monitor lines"] {
+            assert_eq!(names(&typed(Era::Win98, word)), lines, "{word}");
+        }
     }
 
     #[test]

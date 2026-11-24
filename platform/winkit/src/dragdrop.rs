@@ -1054,6 +1054,8 @@ impl Ghost {
                     self.shown.set(true);
                 }
                 SetWindowPos(self.hwnd, HWND_TOPMOST, at.x, at.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+                // Under the bar's Monitor Lines (`on_top`; brief 102).
+                crate::on_top::shown();
             } else if self.shown.get() {
                 ShowWindow(self.hwnd, SW_HIDE);
                 self.shown.set(false);

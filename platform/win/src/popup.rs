@@ -68,6 +68,9 @@ pub enum Kind {
     Colors,
     /// The Size submenu: entry i is size `bar_menu::size_at(i)`.
     Size,
+    /// The Monitor Lines submenu (the bar's and the desktop's Bevel95 menus): entry i is
+    /// `bar_menu::monitor_lines_at(i)`.
+    MonitorLines,
     /// An app's windows: entry i brings window i to the front.
     Windows(Vec<u64>),
     /// A task button's right-click menu for its one window: entries are `window_menu` ones.
@@ -551,6 +554,12 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
             Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::Size) => {
                 Want::Ready(Kind::Size, bar_menu::size_menu(app.scale), MenuStyle::Popup)
             }
+            Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::MonitorLines) => {
+                Want::Ready(Kind::MonitorLines, bar_menu::monitor_lines_menu(app.monitor_lines, app.scale), MenuStyle::Popup)
+            }
+            Kind::DesktopOwn if bevel_core::desktop::own_entry(index) == Some(bevel_core::desktop::OwnEntry::MonitorLines) => {
+                Want::Ready(Kind::MonitorLines, bar_menu::monitor_lines_menu(app.monitor_lines, app.scale), MenuStyle::Popup)
+            }
             Kind::Desktop => match bevel_core::desktop::entry_at_with_undo(app.era, DESKTOP_UNDO.load(std::sync::atomic::Ordering::SeqCst), index)? {
                 bevel_core::desktop::Entry::ArrangeIcons => {
                     Want::Ready(Kind::DesktopArrange, bevel_core::desktop::arrange_menu(crate::desktop::auto_arrange()), MenuStyle::Popup)
@@ -688,6 +697,8 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
     }
     // SAFETY: our own window, shown without taking the focus from the root menu.
     unsafe { ShowWindow(hwnd, SW_SHOWNA) };
+    // Under the Monitor Lines at once (brief 102).
+    crate::monitor_lines::raise();
 }
 
 /// Which of the Start menu's long menus `kind` is (`start::long_rule`).
@@ -873,6 +884,8 @@ enum Action {
     Theme(Era),
     Colors(usize),
     Size(Scale),
+    /// The Monitor Lines submenu's entry, by its index.
+    MonitorLines(usize),
     Window(u64),
     WindowCommand(u64, WindowCommand),
     GroupCommand(Vec<u64>, GroupCommand),
@@ -933,6 +946,10 @@ fn choose(level: usize, index: usize) {
         },
         Kind::Size => match bar_menu::size_at(index) {
             Some(scale) => Action::Size(scale),
+            None => return,
+        },
+        Kind::MonitorLines => match bar_menu::monitor_lines_at(index) {
+            Some(_) => Action::MonitorLines(index),
             None => return,
         },
         Kind::Windows(windows) => match windows.get(index) {
@@ -1057,6 +1074,11 @@ fn choose(level: usize, index: usize) {
             close(true);
             // SAFETY: posting to our own bar window.
             unsafe { PostMessageW(bar, WM_BAR_COLORS.id(), index, 0) };
+        }
+        Action::MonitorLines(index) => {
+            close(true);
+            // SAFETY: posting to our own bar window.
+            unsafe { PostMessageW(bar, crate::bar::WM_BAR_MONITOR_LINES.id(), index, 0) };
         }
         Action::Size(scale) => {
             close(true);

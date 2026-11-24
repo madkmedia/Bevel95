@@ -5,6 +5,7 @@
 //! submenus inside it.
 
 use crate::config::MENU_SCALES;
+use crate::monitor_lines::Strength;
 use crate::paint::{Mark, Menu, MenuEntry};
 use crate::scale::Scale;
 use crate::theme::{Depth, Era};
@@ -102,6 +103,8 @@ pub enum BarEntry {
     Colors,
     /// Opens the Size submenu (`size_menu`).
     Size,
+    /// Opens the Monitor Lines submenu (`monitor_lines_menu`).
+    MonitorLines,
     /// Opens the Bevel95 submenu (`own_menu`).
     Bevel95,
     /// Opens the Toolbars submenu (`toolbars_menu`; 98 and 2000).
@@ -143,12 +146,14 @@ fn desktop_entry(own: Own) -> Entry {
 
 /// The Bevel95 submenu: everything of Bevel95's own that the menu held before it, nothing lost
 /// (PROVISIONAL: the order and the wording).
-fn own_entries(own: Own) -> [Entry; 13] {
+fn own_entries(own: Own) -> [Entry; 14] {
     [
         Some(("Bevel95 Settings", BarEntry::Command(BarCommand::Settings))),
         Some(("Theme", BarEntry::Theme)),
         Some(("Colors", BarEntry::Colors)),
         Some(("Size", BarEntry::Size)),
+        // Brief 102 (PROVISIONAL: the name).
+        Some(("Monitor Lines", BarEntry::MonitorLines)),
         Some(("Quick Search", BarEntry::Command(BarCommand::Find))),
         None,
         Some(("Switch back to Windows\tCtrl+Win+T", BarEntry::Command(BarCommand::SwitchToWindowsTaskbar))),
@@ -165,7 +170,10 @@ fn own_entries(own: Own) -> [Entry; 13] {
 fn menu_of<'a>(entries: impl Iterator<Item = &'a Entry>) -> Menu {
     let entries = entries
         .map(|e| match e {
-            Some((label, BarEntry::Theme | BarEntry::Colors | BarEntry::Size | BarEntry::Bevel95 | BarEntry::Toolbars)) => {
+            Some((
+                label,
+                BarEntry::Theme | BarEntry::Colors | BarEntry::Size | BarEntry::MonitorLines | BarEntry::Bevel95 | BarEntry::Toolbars,
+            )) => {
                 MenuEntry::submenu(label, None)
             }
             Some((label, _)) => MenuEntry::item(label, None),
@@ -274,6 +282,24 @@ pub fn colors_menu(current: Depth) -> Menu {
 /// The colors chosen by entry `index` of `colors_menu`.
 pub fn colors_at(index: usize) -> Option<Depth> {
     Depth::ALL.get(index).copied()
+}
+
+/// The Monitor Lines submenu (brief 102, PROVISIONAL wording): Off, Light, Medium, Strong, a bullet
+/// on the setting. At a size where the lines cannot show (1×, and every size between whole
+/// numbers: `monitor_lines::possible`) every entry is grey, the bullet still on the setting, which
+/// is kept for when the size is whole again. The bar's and the desktop's Bevel95 menus share it.
+pub fn monitor_lines_menu(current: Strength, scale: Scale) -> Menu {
+    let mut menu = choices(Strength::ALL.iter().map(|&s| (s.title().to_string(), s == current)));
+    let possible = crate::monitor_lines::possible(scale);
+    for entry in &mut menu.entries {
+        entry.disabled = !possible;
+    }
+    menu
+}
+
+/// The strength chosen by entry `index` of `monitor_lines_menu`.
+pub fn monitor_lines_at(index: usize) -> Option<Strength> {
+    Strength::ALL.get(index).copied()
 }
 
 /// The Size submenu: "1×" to "4×", with a bullet on the size in use; the whole sizes in bold
@@ -424,6 +450,7 @@ mod tests {
                 "Theme>",
                 "Colors>",
                 "Size>",
+                "Monitor Lines>",
                 "Quick Search",
                 "-",
                 "Switch back to Windows\tCtrl+Win+T",
@@ -438,7 +465,7 @@ mod tests {
         for (i, e) in m.entries.iter().enumerate() {
             assert_eq!(e.kind == EntryKind::Separator, own_entry(on, i).is_none(), "entry {i}");
         }
-        for submenu in [BarEntry::Theme, BarEntry::Colors, BarEntry::Size] {
+        for submenu in [BarEntry::Theme, BarEntry::Colors, BarEntry::Size, BarEntry::MonitorLines] {
             let i = own_index_of(on, submenu).unwrap();
             assert_eq!(m.entries[i].kind, EntryKind::Submenu);
             assert_eq!(own_entry(on, i), Some(submenu));
@@ -553,6 +580,37 @@ mod tests {
         assert_eq!(colors_at(1), Some(Depth::TwoFiftySix));
         assert_eq!(colors_at(2), Some(Depth::TrueColor));
         assert_eq!(colors_at(3), None);
+    }
+
+    /// Brief 102: a bullet on the setting; every entry grey at 1× and between whole sizes (1.75),
+    /// where the lines cannot show, the bullet kept.
+    #[test]
+    fn the_monitor_lines_menu_marks_the_setting_and_greys_where_it_cannot_show() {
+        for strength in Strength::ALL {
+            for (scale, open) in [
+                (Scale::whole(2), true),
+                (Scale::whole(3), true),
+                (Scale::whole(4), true),
+                (Scale::whole(1), false),
+                (Scale::from_quarters(7), false),
+                (Scale::from_quarters(9), false),
+            ] {
+                let m = monitor_lines_menu(strength, scale);
+                let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
+                assert_eq!(labels, ["Off", "Light", "Medium", "Strong"]);
+                let marked: Vec<bool> = m.entries.iter().map(|e| e.mark == Some(Mark::Bullet)).collect();
+                assert_eq!(marked, Strength::ALL.map(|s| s == strength), "{strength:?} at {scale}");
+                assert!(m.entries.iter().all(|e| e.choosable() == open), "{strength:?} at {scale}");
+            }
+        }
+        assert_eq!(monitor_lines_at(0), Some(Strength::Off));
+        assert_eq!(monitor_lines_at(2), Some(Strength::Medium));
+        assert_eq!(monitor_lines_at(4), None);
+        // The submenu's entry stands under Size in the Bevel95 menu, open at every size.
+        let own = Own::default();
+        let size = own_index_of(own, BarEntry::Size).unwrap();
+        assert_eq!(own_entry(own, size + 1), Some(BarEntry::MonitorLines));
+        assert!(own_menu(own).entries[size + 1].choosable());
     }
 
     #[test]

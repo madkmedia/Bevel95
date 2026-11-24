@@ -152,13 +152,22 @@ fn entries(era: Era) -> Vec<Option<(&'static str, Entry)>> {
     out
 }
 
+/// An entry of the desktop's Bevel95 submenu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnEntry {
+    Command(DesktopCommand),
+    /// Opens the Monitor Lines submenu (`bar_menu::monitor_lines_menu`, the bar's own: brief 102).
+    MonitorLines,
+}
+
 /// The Bevel95 submenu (`None` a separator), in the bar's Bevel95 submenu's order (PROVISIONAL:
 /// the order and the wording).
-const OWN: [Option<(&str, DesktopCommand)>; 4] = [
-    Some(("Bevel95 Settings", DesktopCommand::Settings)),
-    Some(("Quick Search", DesktopCommand::QuickSearch)),
+const OWN: [Option<(&str, OwnEntry)>; 5] = [
+    Some(("Bevel95 Settings", OwnEntry::Command(DesktopCommand::Settings))),
+    Some(("Monitor Lines", OwnEntry::MonitorLines)),
+    Some(("Quick Search", OwnEntry::Command(DesktopCommand::QuickSearch))),
     None,
-    Some(("Switch to Windows desktop", DesktopCommand::SwitchToWindowsDesktop)),
+    Some(("Switch to Windows desktop", OwnEntry::Command(DesktopCommand::SwitchToWindowsDesktop))),
 ];
 
 /// The desktop menu's Bevel95 submenu, nothing highlighted; `desktop_key`: the bar registered
@@ -167,9 +176,10 @@ pub fn own_menu(desktop_key: bool) -> Menu {
     Menu::new(
         OWN.iter()
             .map(|e| match e {
-                Some((label, DesktopCommand::SwitchToWindowsDesktop)) if desktop_key => {
+                Some((label, OwnEntry::Command(DesktopCommand::SwitchToWindowsDesktop))) if desktop_key => {
                     MenuEntry::item(&format!("{label}\t{}", crate::bar_menu::DESKTOP_KEY), None)
                 }
+                Some((label, OwnEntry::MonitorLines)) => MenuEntry::submenu(label, None),
                 Some((label, _)) => MenuEntry::item(label, None),
                 None => MenuEntry::separator(),
             })
@@ -177,9 +187,17 @@ pub fn own_menu(desktop_key: bool) -> Menu {
     )
 }
 
-/// What entry `index` of `own_menu` does.
+/// What entry `index` of `own_menu` does (a command; the Monitor Lines submenu is `own_entry`'s).
 pub fn own_at(index: usize) -> Option<DesktopCommand> {
-    OWN.get(index).copied().flatten().map(|(_, c)| c)
+    match own_entry(index)? {
+        OwnEntry::Command(c) => Some(c),
+        OwnEntry::MonitorLines => None,
+    }
+}
+
+/// Entry `index` of `own_menu` (`None` for a separator).
+pub fn own_entry(index: usize) -> Option<OwnEntry> {
+    OWN.get(index).copied().flatten().map(|(_, e)| e)
 }
 
 /// The desktop's right-click menu in `era`, nothing highlighted. Paste and Paste Shortcut are
@@ -488,15 +506,19 @@ mod tests {
     fn the_bevel95_submenu_holds_our_own() {
         let m = own_menu(false);
         let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["Bevel95 Settings", "Quick Search", "", "Switch to Windows desktop"]);
+        assert_eq!(labels, ["Bevel95 Settings", "Monitor Lines", "Quick Search", "", "Switch to Windows desktop"]);
         // With the bar's key registered, it shows beside the entry, as in the bar's submenu.
-        assert_eq!(own_menu(true).entries[3].label, "Switch to Windows desktop\tCtrl+Win+W");
-        assert_eq!(m.entries[2].kind, EntryKind::Separator);
+        assert_eq!(own_menu(true).entries[4].label, "Switch to Windows desktop\tCtrl+Win+W");
+        assert_eq!(m.entries[3].kind, EntryKind::Separator);
+        // Monitor Lines opens the bar's own submenu (brief 102).
+        assert_eq!(m.entries[1].kind, EntryKind::Submenu);
+        assert_eq!(own_entry(1), Some(OwnEntry::MonitorLines));
         assert_eq!(own_at(0), Some(DesktopCommand::Settings));
-        assert_eq!(own_at(1), Some(DesktopCommand::QuickSearch));
-        assert_eq!(own_at(2), None);
-        assert_eq!(own_at(3), Some(DesktopCommand::SwitchToWindowsDesktop));
-        assert_eq!(own_at(4), None);
+        assert_eq!(own_at(1), None);
+        assert_eq!(own_at(2), Some(DesktopCommand::QuickSearch));
+        assert_eq!(own_at(3), None);
+        assert_eq!(own_at(4), Some(DesktopCommand::SwitchToWindowsDesktop));
+        assert_eq!(own_at(5), None);
         // With Undo in the menu, Bevel95's entry is still the last.
         for era in Era::ALL {
             let n = menu(era, false).entries.len() + 1;

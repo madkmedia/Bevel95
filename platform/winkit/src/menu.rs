@@ -789,6 +789,8 @@ fn show_still(look: &Look, owner: HWND, menu: &Menu, style: MenuStyle, rect: REC
     STILLS.with(|s| s.borrow_mut().push((hwnd, big)));
     // SAFETY: our own window, shown without taking the keyboard.
     unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+    // Under the bar's Monitor Lines (`on_top`; brief 102).
+    crate::on_top::shown();
     hwnd
 }
 

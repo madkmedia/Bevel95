@@ -379,6 +379,7 @@ fn run_command(action: Action) {
             (WM_BAR_SIZE.id(), wparam, lparam)
         }
         Action::Colors(depth) => (WM_BAR_COLORS.id(), Depth::ALL.iter().position(|&d| d == depth).unwrap_or(Depth::ALL.len() - 1), 0),
+        Action::MonitorLines(strength) => (crate::bar::WM_BAR_MONITOR_LINES.id(), strength.index(), 0),
     };
     // SAFETY: posting to our own bar window.
     unsafe { PostMessageW(bar, msg, wparam, lparam) };

@@ -145,6 +145,8 @@ fn dim_screen(screen: Rect, scale: bevel_core::scale::Scale) -> Option<(HWND, Fr
     }
     // SAFETY: our own window.
     unsafe { ShowWindow(hwnd, SW_SHOWNA) };
+    // Under the Monitor Lines at once (brief 102).
+    crate::monitor_lines::raise();
     Some((hwnd, shot))
 }
 /// The screen's pixels, read through GDI.

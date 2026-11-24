@@ -40,6 +40,7 @@ pub mod icons;
 pub mod kit;
 pub mod layout;
 pub mod minefield;
+pub mod monitor_lines;
 pub mod package;
 pub mod paint;
 pub mod programs;

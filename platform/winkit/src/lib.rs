@@ -41,6 +41,7 @@ pub mod kit;
 pub mod log;
 pub mod look;
 pub mod menu;
+pub mod on_top;
 pub mod panic;
 pub mod pointer;
 pub mod quiet;

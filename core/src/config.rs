@@ -50,6 +50,11 @@ pub struct Config {
     /// Bevel95's Display Properties (Bevel95 Settings, Desktop page). Off unless switched on; the
     /// name it had for a day in 2026-11-19 (the same meaning), written only when it changes.
     pub windows_display_settings: bool,
+    /// Monitor Lines (the Bevel95 menu; Quick Search): the faint dark lines of an old monitor over
+    /// the bar's screen, at whole sizes from 2 up (`monitor_lines`). A file without the line: off.
+    /// Kept as it is at every size, also where the lines cannot show. Its line is written only
+    /// when it is changed.
+    pub monitor_lines: crate::monitor_lines::Strength,
 }
 
 impl Config {
@@ -187,6 +192,7 @@ impl Default for Config {
             battery_percent: false,
             quick_launch: None,
             windows_display_settings: false,
+            monitor_lines: crate::monitor_lines::Strength::Off,
         }
     }
 }
@@ -277,6 +283,10 @@ quick_search = programs
 # with a battery).
 battery_percent = no
 
+# Monitor Lines: the faint dark lines of an old monitor over the screen, every second row at size
+# 2 (every third at 3, ...): off, light, medium or strong. They show only at a whole size from 2 up.
+monitor_lines = off
+
 # Quick Launch, the small icons right of the Start button: quick_launch = yes or no. Without such
 # a line each look decides (Windows 98 and 2000 yes, Windows 95 no).
 ";
@@ -340,6 +350,10 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             "colors" => match Depth::from_setting(&value) {
                 Some(depth) => config.colors = depth,
                 None => warn("colors must be true, 256 or 16"),
+            },
+            "monitor_lines" => match crate::monitor_lines::Strength::from_setting(&value) {
+                Some(strength) => config.monitor_lines = strength,
+                None => warn("monitor_lines must be off, light, medium or strong"),
             },
             "clock_offset" => match value.parse::<i64>() {
                 Ok(seconds) => config.clock_offset = seconds,
@@ -512,6 +526,33 @@ mod tests {
         for depth in Depth::ALL {
             assert_eq!(parse(&with_setting(DEFAULT_FILE, "colors", depth.setting())).0.colors, depth);
         }
+    }
+
+    /// Monitor Lines (brief 102): read, written and kept through a change of size, also to a size
+    /// where the lines cannot show.
+    #[test]
+    fn reads_the_monitor_lines() {
+        use crate::monitor_lines::Strength;
+        // A settings file from before the setting existed: off.
+        assert_eq!(parse("era = win98\n").0.monitor_lines, Strength::Off);
+        assert_eq!(Config::default().monitor_lines, Strength::Off);
+        assert_eq!(parse("Monitor_Lines = Medium  # the owner's\n").0.monitor_lines, Strength::Medium);
+        let (c, w) = parse("monitor_lines = 0.23\nera = win2000\n");
+        assert_eq!((c.monitor_lines, c.era, w.len()), (Strength::Off, Era::Win2000, 1));
+        for s in Strength::ALL {
+            let text = with_setting(DEFAULT_FILE, "monitor_lines", s.setting());
+            assert_eq!(parse(&text), (Config { monitor_lines: s, ..Config::default() }, vec![]));
+            // A new size (1.75, 1, 3) leaves the line as it was.
+            for size in ["1.75", "1", "3"] {
+                let resized = with_setting(&text, "scale", size);
+                assert_eq!(parse(&resized).0.monitor_lines, s, "{size}");
+                assert_eq!(parse(&resized).0.scale.map(|x| x.label()), Some(size.to_string()));
+            }
+        }
+        // Saving the yes/no settings never writes its line.
+        assert!(flag_settings(&Config { monitor_lines: Strength::Strong, ..Config::default() })
+            .iter()
+            .all(|(key, _)| *key != "monitor_lines"));
     }
 
     #[test]

@@ -11,6 +11,7 @@
 use crate::bar_menu::BarCommand;
 use crate::config::MENU_SCALES;
 use crate::fb::Icon;
+use crate::monitor_lines::Strength;
 use crate::start::{StartEntry, Target};
 use crate::theme::{Depth, Era};
 use crate::window_icons::{self, ClassicWindow};
@@ -26,6 +27,9 @@ pub enum Action {
     Size(crate::scale::Scale),
     /// The Colors menu's choice: True Color or 16 Colors.
     Colors(Depth),
+    /// The Monitor Lines menu's choice (brief 102). At a size where the lines cannot show it is
+    /// still saved, and shows once the size is whole again.
+    MonitorLines(Strength),
 }
 
 /// One thing Quick Search can do.
@@ -46,6 +50,7 @@ pub const FOLDER: &str = "Bevel95";
 const LOOK_WORDS: &[&str] = &["theme", "look", "style", "classic", "era"];
 const SIZE_WORDS: &[&str] = &["size", "scale", "zoom", "bigger", "smaller", "dpi"];
 const COLORS_WORDS: &[&str] = &["color", "colors", "colour", "colours", "vga"];
+const MONITOR_LINES_WORDS: &[&str] = &["monitor lines", "monitor", "lines", "crt", "scanlines", "scan lines"];
 
 /// Every command, in the table's order (the list ranks them; this order only matters as the
 /// last tie-break, which never comes: no two have the same name).
@@ -84,6 +89,14 @@ pub fn commands() -> Vec<Command> {
             words: COLORS_WORDS,
             action: Action::Colors(depth),
             key: format!("bevel95:colors-{}", depth.setting()),
+        });
+    }
+    for strength in Strength::ALL {
+        out.push(Command {
+            name: format!("Monitor Lines {}", strength.title()),
+            words: MONITOR_LINES_WORDS,
+            action: Action::MonitorLines(strength),
+            key: format!("bevel95:monitor-lines-{}", strength.setting()),
         });
     }
     out.extend([
@@ -152,6 +165,10 @@ mod tests {
                 "16 Colors",
                 "256 Colors",
                 "True Color",
+                "Monitor Lines Off",
+                "Monitor Lines Light",
+                "Monitor Lines Medium",
+                "Monitor Lines Strong",
                 "Switch back to Windows",
                 "Show the classic desktop",
                 "Switch to Windows desktop",
@@ -180,6 +197,13 @@ mod tests {
         }
         for d in Depth::ALL {
             assert!(all.iter().any(|c| c.action == Action::Colors(d) && c.words.contains(&"color") && c.words.contains(&"colors")));
+        }
+        // Monitor Lines' four, found by its other words too (brief 102).
+        for s in Strength::ALL {
+            let c = all.iter().find(|c| c.action == Action::MonitorLines(s)).expect("each strength");
+            for word in ["crt", "scanlines", "lines", "monitor lines"] {
+                assert!(c.words.contains(&word), "{word}");
+            }
         }
         assert!(all.iter().all(|c| c.words.iter().all(|w| *w == w.to_lowercase())));
         // Every command has a picture in every look.

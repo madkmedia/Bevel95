@@ -1221,6 +1221,11 @@ pub unsafe extern "system" fn kit_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpa
     if msg == WM_NCCALCSIZE && unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32 & WS_THICKFRAME != 0 {
         return 0;
     }
+    // Come forward among the windows (a click, a dialog shown): the bar's Monitor Lines go back
+    // above it (`on_top`; brief 102). Handled on as before.
+    if msg == windows_sys::Win32::UI::WindowsAndMessaging::WM_WINDOWPOSCHANGED {
+        crate::on_top::pos_changed(lparam);
+    }
     let kind = WINDOWS.with(|w| w.borrow().iter().find(|s| s.hwnd == hwnd).map(|s| s.kind));
     let known = kind.and_then(|id| {
         KINDS.with(|k| k.borrow().iter().find(|kind| kind.id == id).map(|kind| (kind.message, kind.look_changed)))

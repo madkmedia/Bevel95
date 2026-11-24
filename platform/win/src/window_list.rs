@@ -59,10 +59,10 @@ unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
     1
 }
 
-fn belongs_on_taskbar(hwnd: HWND) -> bool {
+pub(crate) fn belongs_on_taskbar(hwnd: HWND) -> bool {
     // The classic desktop never does, and asking it for its title would wait for its thread,
-    // which Explorer's can hold up (`desktop.rs`).
-    if crate::desktop::is_ours(hwnd) {
+    // which Explorer's can hold up (`desktop.rs`); nor do the Monitor Lines (brief 102).
+    if crate::desktop::is_ours(hwnd) || crate::monitor_lines::is_ours(hwnd) {
         return false;
     }
     // SAFETY: read-only queries; all accept any window handle.

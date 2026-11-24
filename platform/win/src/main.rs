@@ -34,6 +34,7 @@ mod fullscreen;
 mod install;
 mod keys;
 mod kit;
+mod monitor_lines;
 mod own_icon;
 mod picture_file;
 mod pictures;

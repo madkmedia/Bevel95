@@ -102,6 +102,8 @@ fn show_placed(owner: HWND, text: &str, place: &Placer) {
         SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         InvalidateRect(hwnd, null(), 0);
     }
+    // Under the Monitor Lines at once (brief 102).
+    crate::monitor_lines::raise();
 }
 
 /// Hides the tooltip (if one is showing).

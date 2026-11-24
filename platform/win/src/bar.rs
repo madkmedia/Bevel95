@@ -160,6 +160,15 @@ pub static WM_DISPLAY: Private = Private::new("Bevel95.Bar.Display");
 /// nothing: choosing one closes the menu and writes a line to the log. A test command for test
 /// items only (`popup::open_test_long_menu`); it had no `WM_APP` number before.
 pub static WM_TEST_LONG_MENU: Private = Private::new("Bevel95.Bar.TestLongMenu");
+/// Monitor Lines chosen (the Bevel95 menus' Monitor Lines, Quick Search): wParam its index in
+/// `monitor_lines::Strength::ALL` (0 Off, 1 Light, 2 Medium, 3 Strong), put on and saved.
+pub static WM_BAR_MONITOR_LINES: Private = Private::new("Bevel95.Bar.MonitorLines");
+/// A live test's Monitor Lines (brief 102, `private\probes\monitor-lines\live.ps1`): wParam 1 to 3
+/// shows Light, Medium or Strong for at most `MONITOR_LINES_TEST_SECS` seconds WITHOUT saving
+/// anything (settings.txt is not touched); 0 ends it at once. Answers the lines' window (0: none).
+pub static WM_TEST_MONITOR_LINES: Private = Private::new("Bevel95.Bar.TestMonitorLines");
+/// A live test's lines end by themselves after this long, should the test not end them.
+const MONITOR_LINES_TEST_SECS: u64 = 20;
 
 /// Every message of the bar registered by name, with the `WM_APP + n` it was before (the names
 /// `tools\dev\postbar.ps1` knows and decisions.md lists).
@@ -190,6 +199,8 @@ fn register_messages() {
     crate::pictures::WM_PICTURE_AGAIN.id();
     crate::wallpaper_browse::WM_BROWSED.id();
     WM_TEST_LONG_MENU.id();
+    WM_BAR_MONITOR_LINES.id();
+    WM_TEST_MONITOR_LINES.id();
 }
 /// The timer that slides an auto-hiding bar in and out, and its step.
 const SLIDE: usize = 2;
@@ -376,6 +387,10 @@ pub struct App {
     /// Windows asked whether the session may end (sign-out, restart, shut down): the Windows
     /// taskbar is back and must stay so until Windows says the session goes on after all.
     ending: bool,
+    /// Monitor Lines as settings.txt has them (`monitor_lines`; brief 102), and a live test's
+    /// strength in force for a few seconds instead, never saved (`WM_TEST_MONITOR_LINES`).
+    pub monitor_lines: bevel_core::monitor_lines::Strength,
+    monitor_lines_test: Option<(bevel_core::monitor_lines::Strength, Instant)>,
 }
 
 impl App {
@@ -699,8 +714,13 @@ pub fn run() -> u32 {
             clock_dst: settings.clock_dst,
             clock_clicked: None,
             ending: false,
+            monitor_lines: settings.monitor_lines,
+            monitor_lines_test: None,
         });
     });
+    // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
+    // Lines back above them as they come up (brief 102).
+    bevel_winkit::on_top::set(crate::monitor_lines::raise);
     let scale = settings.scale.map_or_else(|| "auto".to_string(), |s| s.label());
     log(&format!("started: {} look in {}, scale setting {scale}, {:?}", theme.slug, settings.colors.title(), settings.options));
 
@@ -942,6 +962,7 @@ fn show_ours(bar: HWND) {
         tray::start(bar, placed);
     }
     sync_desktop();
+    sync_lines();
 }
 
 /// Whether the classic desktop shows (switched on, and the bar is Bevel95's): `sync_desktop`'s
@@ -2055,6 +2076,8 @@ fn show_windows_taskbar(bar: HWND) {
         app.ours = false;
         app.stand_in = None;
     });
+    // The Monitor Lines go with the bar.
+    crate::monitor_lines::set(None);
     // Windows' own desktop comes back with its taskbar.
     desktop::hide();
     keys::set_active(false);
@@ -2152,6 +2175,10 @@ fn reposition(bar: HWND) {
     }
     // The desktop's icons follow the scale and the screen's free area.
     sync_desktop();
+    // The Monitor Lines follow the screen and the size at once, and stay above the bar just
+    // put on top.
+    sync_lines();
+    crate::monitor_lines::raise();
 }
 
 /// Where the bar goes among the windows: behind a fullscreen app; else above every window
@@ -2375,6 +2402,19 @@ fn tick(bar: HWND) {
     }) else {
         return;
     };
+    // A live test's Monitor Lines end by themselves; the lines follow what decides them (they go
+    // while the bar does not show: `sync_lines`).
+    let test_over = with_app(|app| {
+        let over = app.monitor_lines_test.is_some_and(|(_, at)| at.elapsed().as_secs() >= MONITOR_LINES_TEST_SECS);
+        if over {
+            app.monitor_lines_test = None;
+        }
+        over
+    });
+    if test_over == Some(true) {
+        log("monitor lines: the live test's lines ended by themselves");
+    }
+    sync_lines();
     // While the session may be ending, the Windows taskbar stays as it was put back; so it does
     // after a panic, until the bar's window closes (`main::install_panic_hook`).
     if !ours || ending || bevel_winkit::panic::happened() {
@@ -2433,10 +2473,14 @@ fn tick(bar: HWND) {
         unsafe {
             SetWindowPos(bar, z_order(fullscreen, options), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
         };
+        // The Monitor Lines go and come back with the bar, at the same moment.
+        sync_lines();
     }
     if options.auto_hide && !fullscreen {
         auto_hide_tick(bar);
     }
+    // A window come above the Monitor Lines goes back under them (`monitor_lines::keep_on_top`).
+    crate::monitor_lines::keep_on_top();
 }
 
 /// Reads the connection (and every 2 s the battery) afresh; true if an icon's picture changed.
@@ -2876,6 +2920,70 @@ fn set_colors(bar: HWND, depth: Depth) {
     crate::display_window::look_changed();
 }
 
+/// Monitor Lines as they should be now (brief 102): shown while the bar is Bevel95's and showing
+/// (not switched to Windows' taskbar, not stepped behind a full-screen program, the session not
+/// ending, no panic), at a whole size from 2 up, with a strength other than Off (a live test's,
+/// while it lasts, else the setting's). Called wherever one of these may change and on every tick;
+/// it changes nothing when nothing changed. A busy state changes nothing either.
+pub fn sync_lines() {
+    use bevel_core::monitor_lines::{self as lines, Strength};
+    let Some(wanted) = with_app(|app| {
+        let strength = app.monitor_lines_test.map_or(app.monitor_lines, |(s, _)| s);
+        let shows = app.ours && !app.ending && !app.fullscreen.is_behind() && !bevel_winkit::panic::happened();
+        let period = lines::period(app.scale)?;
+        let m = app.monitor;
+        (shows && strength != Strength::Off && rect_w(&m) > 0 && rect_h(&m) > 0).then_some(crate::monitor_lines::Wanted {
+            left: m.left,
+            top: m.top,
+            width: rect_w(&m),
+            height: rect_h(&m),
+            period,
+            strength,
+        })
+    }) else {
+        return;
+    };
+    crate::monitor_lines::set(wanted);
+}
+
+/// The Monitor Lines menus and Quick Search: the lines put on (where they can show) and saved.
+fn set_monitor_lines(strength: bevel_core::monitor_lines::Strength) {
+    let Some(changed) = with_app(|app| {
+        // A choice ends a live test's lines too.
+        let test = app.monitor_lines_test.take().is_some();
+        std::mem::replace(&mut app.monitor_lines, strength) != strength || test
+    }) else {
+        return;
+    };
+    if changed {
+        save_setting("monitor_lines", strength.setting());
+        let possible = with_app(|app| bevel_core::monitor_lines::possible(app.scale)).unwrap_or(false);
+        log(&format!(
+            "monitor lines: set to {}{}",
+            strength.setting(),
+            if possible { "" } else { " (they show once the size is a whole number from 2 up)" }
+        ));
+    }
+    sync_lines();
+}
+
+/// `WM_TEST_MONITOR_LINES`: a live test's lines on (wParam 1 to 3) or off (0), never saved; answers
+/// the lines' window, if one shows.
+fn test_monitor_lines(wparam: usize) -> LRESULT {
+    use bevel_core::monitor_lines::Strength;
+    let strength = match wparam {
+        1..=3 => Strength::ALL.get(wparam).copied(),
+        _ => None,
+    };
+    with_app(|app| app.monitor_lines_test = strength.map(|s| (s, Instant::now())));
+    log(&match strength {
+        Some(s) => format!("monitor lines: a live test's {} for at most {MONITOR_LINES_TEST_SECS} s (not saved)", s.setting()),
+        None => "monitor lines: the live test's lines ended".to_string(),
+    });
+    sync_lines();
+    crate::monitor_lines::window() as LRESULT
+}
+
 /// Ends this bar and starts a fresh one: through the watchdog if it is running (it restores
 /// the Windows taskbar, then starts the new bar), else directly.
 fn restart(bar: HWND) {
@@ -2898,6 +3006,9 @@ fn restart(bar: HWND) {
 fn on_destroy(bar: HWND) {
     // The buttons' order (as dragged) for the bar that starts next (a restart, an update).
     save_task_order();
+    // The Monitor Lines go first, for good: nothing of them outlives the bar's window (a file job
+    // may keep the process a while).
+    crate::monitor_lines::end();
     popup::close(false);
     volume_popup::close(false);
     dialogs::close();
@@ -3439,6 +3550,13 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             return 0;
         }
+        m if m == WM_BAR_MONITOR_LINES.id() => {
+            if let Some(strength) = bar_menu::monitor_lines_at(wparam) {
+                set_monitor_lines(strength);
+            }
+            return 0;
+        }
+        m if m == WM_TEST_MONITOR_LINES.id() => return test_monitor_lines(wparam),
         m if m == WM_START_ACTION.id() => {
             start_action(wparam);
             return 0;
@@ -3498,6 +3616,8 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             log("the session may end: restoring the Windows taskbar");
             with_app(|app| app.ending = true);
             explorer::restore();
+            // The Monitor Lines go with the bar (they come back if the session goes on).
+            sync_lines();
             return 1;
         }
         WM_ENDSESSION => {

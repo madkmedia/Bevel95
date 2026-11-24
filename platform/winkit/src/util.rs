@@ -41,6 +41,15 @@ pub enum Forward {
 /// when another program got the last input, or a Windows panel holds the front), the same
 /// again with our input joined to the front window's for one call, which Windows allows.
 pub fn bring_forward(hwnd: HWND) -> Forward {
+    let forward = bring_forward_only(hwnd);
+    // The window in front comes above the rest of its kind: the bar's Monitor Lines go back
+    // above it (`on_top`; nothing in the other programs).
+    crate::on_top::shown();
+    forward
+}
+
+/// `bring_forward` without `on_top`.
+fn bring_forward_only(hwnd: HWND) -> Forward {
     // SAFETY: plain Win32 calls; the input queues are joined only around one call.
     unsafe {
         let previous = GetForegroundWindow();
