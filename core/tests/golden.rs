@@ -486,6 +486,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         quick_search_all: false,
         battery_percent: false,
         windows_display: false,
+        monitor_lines: bevel_core::monitor_lines::Strength::Off,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -516,6 +517,7 @@ fn quarter_size_scene(theme: &Theme, era: Era, fonts: &Fonts, open: Option<prope
         quick_search_all: false,
         battery_percent: false,
         windows_display: false,
+        monitor_lines: bevel_core::monitor_lines::Strength::Off,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -630,6 +632,7 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         quick_search_all: false,
         battery_percent: false,
         windows_display: false,
+        monitor_lines: bevel_core::monitor_lines::Strength::Off,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -1254,6 +1257,10 @@ fn bar_submenu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: Option<BarEn
     let submenu = match which {
         BarEntry::Theme => bar_menu::theme_menu(era),
         BarEntry::Colors => bar_menu::colors_menu(theme.depth),
+        // The owner's sheet of brief 102 (no golden picture): Medium, at size 2.
+        BarEntry::MonitorLines => {
+            bar_menu::monitor_lines_menu(bevel_core::monitor_lines::Strength::Medium, bevel_core::scale::Scale::whole(2))
+        }
         _ => bar_menu::size_menu(bevel_core::scale::Scale::whole(2)),
     };
     let (sub, _) = menu_image(theme, fonts, &submenu, MenuStyle::Popup);
@@ -2777,6 +2784,54 @@ fn draw_long_menu_sheet() {
     let y = y + LABEL + 384 + GAP;
     bold.draw(&mut sheet, GAP, y, "640x360 scrolled to the end", rgb(0x000000));
     sheet.blit(&start_scrolls_scene(theme, &fonts, true), GAP, y + LABEL);
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
+
+/// The owner's sheet for brief 102 (Monitor Lines): per look the bar's Bevel95 menu with its Monitor
+/// Lines submenu open (Medium in force, size 2); then the core's picture laid over a golden scene
+/// at size 2 (the Windows 98 one, its middle enlarged twice), Light, Medium and Strong, as Windows
+/// lays the window over the screen (`monitor_lines::lay_over`). Drawn, not photographed.
+/// `BEVEL95_SHEET=<file> cargo test -p bevel-core --test golden -- --ignored --exact draw_monitor_lines_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of Monitor Lines to BEVEL95_SHEET; run it on request"]
+fn draw_monitor_lines_sheet() {
+    use bevel_core::monitor_lines::{self, Strength};
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const GAP: i32 = 12;
+    const LABEL: i32 = 18;
+    let bold = load_font(&WIN95, true);
+    let width = GAP + 3 * (WIDTH + GAP);
+    let height = GAP + 2 * (LABEL + SCREEN_H + GAP);
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    for (i, era) in Era::ALL.into_iter().enumerate() {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let x = GAP + i as i32 * (WIDTH + GAP);
+        bold.draw(&mut sheet, x, GAP, &format!("{}: Bevel95 > Monitor Lines", era.title()), rgb(0x000000));
+        sheet.blit(&bar_submenu_scene(theme, era, &fonts, Some(BarEntry::MonitorLines)), x, GAP + LABEL);
+    }
+    // The middle of 98's scene at 1x (its right half, the menus), enlarged twice: a 640x480 part of
+    // a screen at size 2, its top on an old pixel row's first screen row.
+    let theme = bevel_core::theme::theme_in(Era::Win98, Depth::TrueColor);
+    let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &boldf };
+    let scene = bar_submenu_scene(theme, Era::Win98, &fonts, Some(BarEntry::MonitorLines));
+    let mut part = Framebuffer::new(WIDTH / 2, SCREEN_H / 2, 0);
+    part.blit_part(&scene, Rect::new(WIDTH / 2, SCREEN_H / 2, WIDTH / 2, SCREEN_H / 2), 0, 0);
+    let big = bevel_core::scale::Scale::whole(2).enlarge(&part);
+    let y = GAP + LABEL + SCREEN_H + GAP;
+    for (i, strength) in [Strength::Light, Strength::Medium, Strength::Strong].into_iter().enumerate() {
+        let mut shown = big.clone();
+        monitor_lines::lay_over(&mut shown, 2, strength);
+        let x = GAP + i as i32 * (WIDTH + GAP);
+        let label = format!("{} ({} of 255) at size 2, every second row", strength.title(), strength.alpha());
+        bold.draw(&mut sheet, x, y, &label, rgb(0x000000));
+        sheet.blit(&shown, x, y + LABEL);
+    }
     write_png(Path::new(&path), &sheet);
     println!("wrote the sheet");
 }

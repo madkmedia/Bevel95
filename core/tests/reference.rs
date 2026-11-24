@@ -3664,6 +3664,7 @@ fn own_properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 quick_search_all: false,
                 battery_percent: false,
                 windows_display: false,
+                monitor_lines: bevel_core::monitor_lines::Strength::Off,
                 quick_launch: false,
                 group: true,
             };
@@ -4716,6 +4717,7 @@ fn properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             quick_search_all: false,
             battery_percent: false,
             windows_display: false,
+            monitor_lines: bevel_core::monitor_lines::Strength::Off,
             quick_launch: false,
             group: true,
         };

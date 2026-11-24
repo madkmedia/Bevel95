@@ -25,6 +25,7 @@ use crate::programs::{self, Row, RowKind, Shown, Tick};
 use crate::scale::{Scale, Way};
 use crate::scroll::ScrollBar;
 use crate::text::{Font, Fonts, split_access_key};
+use crate::monitor_lines::Strength;
 use crate::theme::{Colors, Depth, Era, Theme, rgb};
 use crate::tree::{self, TreeRow, TreeStyle, Zone};
 
@@ -62,6 +63,8 @@ pub struct Values {
     /// Properties on the classic desktop's menu opens Windows' own display settings instead of
     /// Bevel95's Display Properties (Bevel95 Settings, Desktop page; `windows_display_settings`).
     pub windows_display: bool,
+    /// Monitor Lines (Bevel95 Settings, Desktop page; `monitor_lines`; brief 102).
+    pub monitor_lines: Strength,
 }
 
 /// The check boxes.
@@ -202,6 +205,8 @@ pub enum Part {
     DropRow(usize),
     /// Bevel95 Settings: the option buttons of what the Windows key opens.
     WinKey(WindowsKey),
+    /// Bevel95 Settings, Desktop page: the option buttons of Monitor Lines (brief 102).
+    Lines(Strength),
     /// Start Menu Programs page (Advanced in Windows 2000).
     Add,
     Remove,
@@ -352,6 +357,17 @@ fn list_choices(list: Part, quarters: bool) -> Vec<String> {
     }
 }
 
+/// The Monitor Lines group's four choices (ours, PROVISIONAL; the menus' words). Their access keys
+/// keep clear of the page's S and O.
+fn lines_label(strength: Strength) -> &'static str {
+    match strength {
+        Strength::Off => "O&ff",
+        Strength::Light => "&Light",
+        Strength::Medium => "&Medium",
+        Strength::Strong => "St&rong",
+    }
+}
+
 /// The Programs page's three choices (ours; the last one's colon leads on to the list).
 fn shown_label(shown: Shown) -> &'static str {
     match shown {
@@ -385,6 +401,7 @@ fn label_of(era: Era, part: Part) -> Option<String> {
         Part::Look(e) => Some(look_label(e).to_string()),
         Part::Colors(d) => Some(colors_label(d).to_string()),
         Part::WinKey(k) => Some(windows_key_label(k).to_string()),
+        Part::Lines(s) => Some(lines_label(s).to_string()),
         Part::SizeList => Some(SIZE_LIST_LABEL.to_string()),
         Part::WayList => Some(WAY_LIST_LABEL.to_string()),
         Part::Shown(s) => Some(shown_label(s).to_string()),
@@ -752,6 +769,7 @@ impl Properties {
             Part::Look(era) => v.era = era,
             Part::Colors(depth) => v.colors = depth,
             Part::WinKey(key) => v.windows_key = key,
+            Part::Lines(strength) => v.monitor_lines = strength,
             Part::Shown(shown) => {
                 v.programs = shown;
                 // The list shows what the choice is about: the classic programs' folders open
@@ -816,6 +834,7 @@ impl Properties {
                 Part::Look(_) => Part::Look(self.values.era),
                 Part::Colors(_) => Part::Colors(self.values.colors),
                 Part::WinKey(_) => Part::WinKey(self.values.windows_key),
+                Part::Lines(_) => Part::Lines(self.values.monitor_lines),
                 Part::Shown(_) => Part::Shown(self.values.programs),
                 p => p,
             };
@@ -845,6 +864,7 @@ impl Properties {
             Part::Look(_) => Era::ALL.iter().map(|&e| Part::Look(e)).collect(),
             Part::Colors(_) => Depth::ALL.iter().map(|&d| Part::Colors(d)).collect(),
             Part::WinKey(_) => WindowsKey::ALL.iter().map(|&k| Part::WinKey(k)).collect(),
+            Part::Lines(_) => Strength::ALL.iter().map(|&s| Part::Lines(s)).collect(),
             Part::Shown(_) => Shown::ALL.iter().map(|&s| Part::Shown(s)).collect(),
             _ => return None,
         };
@@ -985,7 +1005,10 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
                 ])
                 .collect()
         }
-        Page::Desktop => vec![Part::Check(Check::Desktop), Part::Check(Check::WindowsDisplay)],
+        Page::Desktop => [Part::Check(Check::Desktop), Part::Check(Check::WindowsDisplay)]
+            .into_iter()
+            .chain(Strength::ALL.iter().map(|&s| Part::Lines(s)))
+            .collect(),
         Page::Programs => Shown::ALL.iter().map(|&s| Part::Shown(s)).chain([Part::Programs]).collect(),
     }
 }
@@ -1200,6 +1223,15 @@ const DESKTOP_TEXT: [&str; 3] = [
 const DISPLAY_GROUP: Rect = Rect::new(24, 164, 296, 68);
 const DISPLAY_CHECK: (i32, i32) = (36, 181);
 const DISPLAY_TEXT: &str = "Off: Bevel95's Display Properties (wallpapers).";
+/// Its third group (ours, PROVISIONAL; brief 102): Monitor Lines, its four option buttons in one
+/// row (as the Programs page's rows: the button 2px down, its label 17px right) and a line saying
+/// where they show, in the Properties group's manner. Every choice can be made at every size: the
+/// setting is kept for when the size is whole again.
+const LINES_GROUP: Rect = Rect::new(24, 240, 296, 68);
+const LINES_ROW_Y: i32 = 256;
+const LINES_ROWS: [(Strength, i32); 4] =
+    [(Strength::Off, 36), (Strength::Light, 100), (Strength::Medium, 164), (Strength::Strong, 238)];
+const LINES_TEXT: &str = "Shown at a whole size from 2\u{d7} up.";
 
 /// Bevel95 Settings' Programs page (ours): one group down to where the General page ends, the
 /// three option rows as the General page has its looks, and under them the list of programs,
@@ -1333,6 +1365,10 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
         Page::Desktop => {
             parts.push(check(Part::Check(Check::Desktop), DESKTOP_CHECK.0, DESKTOP_CHECK.1));
             parts.push(check(Part::Check(Check::WindowsDisplay), DISPLAY_CHECK.0, DISPLAY_CHECK.1));
+            for (strength, x) in LINES_ROWS {
+                let part = Part::Lines(strength);
+                parts.push((part, Rect::new(x, LINES_ROW_Y, 17 + label_w(part) + 1, 16)));
+            }
         }
         Page::Programs => {
             for (shown, x, y) in SHOWN_ROWS {
@@ -1718,6 +1754,11 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             group_box(fb, c, font, DISPLAY_GROUP, "Properties", false);
             check(fb, Part::Check(Check::WindowsDisplay), DISPLAY_CHECK.0, DISPLAY_CHECK.1);
             lines(fb, 36, DISPLAY_CHECK.1 + 22, &[DISPLAY_TEXT]);
+            group_box(fb, c, font, LINES_GROUP, "Monitor Lines", false);
+            for (strength, x) in LINES_ROWS {
+                option(fb, Part::Lines(strength), p.values.monitor_lines == strength, x, LINES_ROW_Y);
+            }
+            lines(fb, 36, LINES_ROW_Y + 22, &[LINES_TEXT]);
         }
         Page::Programs => {
             group_box(fb, c, font, PROGRAMS_GROUP, "The Programs menu shows", false);
@@ -1957,7 +1998,7 @@ impl kit::Form for PropertiesWindow {
     fn key(&mut self, key: Key, mods: Mods) -> Option<Vec<Effect<Part>>> {
         let p = &mut self.props;
         let (list, programs) = (p.focus == Part::List, p.focus == Part::Programs);
-        let options = matches!(p.focus, Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_));
+        let options = matches!(p.focus, Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_));
         let drop_list = matches!(p.focus, Part::SizeList | Part::WayList).then_some(p.focus);
         match key {
             // A drop-down list: Enter takes the highlighted entry and Esc leaves the choice as it
@@ -2061,7 +2102,7 @@ impl kit::Form for PropertiesWindow {
         // what the key reaches is not hidden under it and Enter and Esc mean OK and Cancel.
         p.drop = None;
         match p.access_key(ch) {
-            Some(part @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_))) => {
+            Some(part @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_))) => {
                 p.focus = part;
                 p.choose(part);
             }
@@ -2085,7 +2126,7 @@ impl kit::Form for PropertiesWindow {
             Part::Programs => {
                 p.choose(Part::ProgramRow(p.programs.sel));
             }
-            f @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_)) => {
+            f @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_)) => {
                 p.choose(f);
             }
             f if f.is_push_button() => return kit::activate(self, f),
@@ -2166,7 +2207,7 @@ impl kit::Form for PropertiesWindow {
     }
     fn release(&mut self, part: Part) -> Vec<Effect<Part>> {
         match part {
-            Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Shown(_) => {
+            Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_) => {
                 self.props.choose(part);
                 Vec::new()
             }
@@ -2245,6 +2286,7 @@ mod tests {
             battery_percent: false,
             windows_display: false,
             quick_launch: false,
+            monitor_lines: Strength::Off,
         }
     }
 
@@ -2691,6 +2733,35 @@ mod tests {
         assert_eq!((applied.era, applied.options.show_clock), (Era::Win98, false));
     }
 
+    /// Brief 102: the Desktop page's Monitor Lines group, one Tab stop (the choice in force), its
+    /// access keys, the arrows within it, and its value only Bevel95 Settings' to put into effect.
+    /// Every choice can be made at every size (the setting is kept for a whole size).
+    #[test]
+    fn the_desktop_page_chooses_the_monitor_lines() {
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win98, values());
+        p.show_page(2);
+        assert_eq!([p.access_key('f'), p.access_key('l'), p.access_key('m'), p.access_key('r')], Strength::ALL.map(|s| Some(Part::Lines(s))));
+        assert_eq!(p.arrow(Part::Lines(Strength::Off), true), Some(Part::Lines(Strength::Light)));
+        assert_eq!(p.arrow(Part::Lines(Strength::Strong), true), Some(Part::Lines(Strength::Strong)));
+        assert!(p.choose(Part::Lines(Strength::Medium)));
+        assert_eq!(p.values.monitor_lines, Strength::Medium);
+        assert!(p.enabled(Part::Apply));
+        assert!(p.tab_stops().contains(&Part::Lines(Strength::Medium)), "the stop is the choice in force");
+        assert_eq!(Sheet::Bevel95.merge(p.values, values()).monitor_lines, Strength::Medium);
+        assert_eq!(Sheet::Taskbar.merge(p.values, values()).monitor_lines, Strength::Off, "Windows' window leaves it");
+        // At 1.75 too: chosen and kept.
+        let mut q = Properties::new(Sheet::Bevel95, Era::Win98, Values { scale: Scale::from_quarters(7), ..values() });
+        q.show_page(2);
+        assert!(q.choose(Part::Lines(Strength::Strong)) && q.values.monitor_lines == Strength::Strong);
+        // Each option button where a click finds it.
+        let font = one_glyph_font();
+        let l = layout(&p, &Fonts { regular: &font, bold: &font });
+        for s in Strength::ALL {
+            let r = l.rect(Part::Lines(s)).expect("laid out");
+            assert_eq!(l.hit(r.x + 2, r.y + 8), Some(Part::Lines(s)));
+        }
+    }
+
     #[test]
     fn the_desktop_page_switches_the_desktop() {
         let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, values());
@@ -2699,7 +2770,14 @@ mod tests {
         assert_eq!(p.focus, Part::Check(Check::Desktop), "its first control");
         assert_eq!(
             p.tab_stops(),
-            [Part::Tab(2), Part::Check(Check::Desktop), Part::Check(Check::WindowsDisplay), Part::Ok, Part::Cancel]
+            [
+                Part::Tab(2),
+                Part::Check(Check::Desktop),
+                Part::Check(Check::WindowsDisplay),
+                Part::Lines(Strength::Off),
+                Part::Ok,
+                Part::Cancel
+            ]
         );
         assert_eq!(p.access_key('s'), Some(Part::Check(Check::Desktop)));
         // What the desktop's Properties opens: Bevel95's Display Properties unless ticked.

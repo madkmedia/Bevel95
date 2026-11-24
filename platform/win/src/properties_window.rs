@@ -113,6 +113,7 @@ fn current_values() -> Option<(Values, bevel_core::theme::Era)> {
             quick_search_all: app.quick_search == bevel_core::config::QuickSearch::Everything,
             battery_percent: app.battery_percent,
             windows_display: app.windows_display_settings,
+            monitor_lines: app.monitor_lines,
             quick_launch: app.quick_launch_on(),
         };
         (values, app.era)
@@ -381,5 +382,12 @@ pub fn desktop_changed(on: bool) {
 pub fn quick_launch_changed(on: bool) {
     kit::update::<PropertiesHost>(|h| h.form.props.values.quick_launch = on);
     kit::update::<SettingsHost>(|h| h.form.props.values.quick_launch = on);
+}
+
+/// Monitor Lines were chosen elsewhere (the Bevel95 menus, Quick Search): open windows show what
+/// holds now, so their OK or Apply does not put the old choice back (brief 102).
+pub fn monitor_lines_changed(strength: bevel_core::monitor_lines::Strength) {
+    kit::update::<PropertiesHost>(|h| h.form.props.values.monitor_lines = strength);
+    kit::update::<SettingsHost>(|h| h.form.props.values.monitor_lines = strength);
 }
 

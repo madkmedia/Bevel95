@@ -2372,6 +2372,10 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     if with_app(|app| app.clock_offset != values.clock_offset).unwrap_or(false) {
         set_clock_offset(values.clock_offset);
     }
+    // Monitor Lines (the Desktop page; brief 102): written only when changed.
+    if with_app(|app| app.monitor_lines != values.monitor_lines).unwrap_or(false) {
+        set_monitor_lines(values.monitor_lines, false);
+    }
     if with_app(|app| app.scaling != values.scale.way).unwrap_or(false) {
         set_scaling(bar, values.scale.way);
     }
@@ -2946,12 +2950,13 @@ pub fn sync_lines() {
     crate::monitor_lines::set(wanted);
 }
 
-/// The Monitor Lines menus and Quick Search: the lines put on (where they can show) and saved.
-fn set_monitor_lines(strength: bevel_core::monitor_lines::Strength) {
+/// The Monitor Lines menus and Quick Search (`from_menu`), or Bevel95 Settings: the lines put on
+/// (where they can show) and saved; an open settings window shows a menu's choice.
+fn set_monitor_lines(strength: bevel_core::monitor_lines::Strength, from_menu: bool) {
     let Some(changed) = with_app(|app| {
         // A choice ends a live test's lines too.
-        let test = app.monitor_lines_test.take().is_some();
-        std::mem::replace(&mut app.monitor_lines, strength) != strength || test
+        app.monitor_lines_test = None;
+        std::mem::replace(&mut app.monitor_lines, strength) != strength
     }) else {
         return;
     };
@@ -2963,6 +2968,9 @@ fn set_monitor_lines(strength: bevel_core::monitor_lines::Strength) {
             strength.setting(),
             if possible { "" } else { " (they show once the size is a whole number from 2 up)" }
         ));
+        if from_menu {
+            properties_window::monitor_lines_changed(strength);
+        }
     }
     sync_lines();
 }
@@ -3552,7 +3560,7 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         m if m == WM_BAR_MONITOR_LINES.id() => {
             if let Some(strength) = bar_menu::monitor_lines_at(wparam) {
-                set_monitor_lines(strength);
+                set_monitor_lines(strength, true);
             }
             return 0;
         }
