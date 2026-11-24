@@ -638,6 +638,7 @@ fn cases() -> Vec<Case> {
     explorer_toolbar_cases(&mut out, &f95, &f2k);
     explorer_undo_cases(&mut out, &f2k);
     explorer_menu_cases(&mut out, &f95, &f2k);
+    arrange_menu_cases(&mut out, &f95, &f2k);
     explorer_list_cases(&mut out, &f95, &f2k);
     explorer_tree_cases(&mut out, &f95, &f2k);
     folders_button_cases(&mut out, &f2k);
@@ -5807,6 +5808,48 @@ fn explorer_menu_cases(out: &mut Vec<Case>, f98: &Fonts, f2k: &Fonts) {
             regions.push(region((o.x - 3, o.y), Rect::new(at.0 + w.x - 3, at.1 + w.y, width, w.h)));
         }
         out.push(Case { name, file, regions, ours: sc.fb, masks: vec![], vga: false });
+    }
+}
+
+/// Brief 103: a folder window's Arrange Icons submenu, whole, against the survey's captures
+/// (`*-truecolor-arrange-*`, `private/probes/folder-arrange/survey.md` part 1): My Computer's (by
+/// Drive Letter, by Type, by Size, by Free Space) and a folder's, from the View menu and from the
+/// empty area's menu, its first entry highlighted as Windows had it. The menus' corners were found
+/// by `private/probes/folder-arrange/corners.ps1` (2000's by eye and a pixel probe). Left out:
+/// 2000's other three (their corners were not measured), and the View and empty area's menus
+/// around them, whose other rows (Toolbar, Customize this Folder, Folder Options) Bevel95 has not:
+/// their Arrange and Line up rows are in `folder_menu_cases` and `explorer_menu_cases`. Also left
+/// out: whole windows with a moved icon, after Line up and after 98's reopening. The survey's
+/// windows are laid out with the PCs' own pictures of drives and text files, 98's and 2000's web
+/// view panels (pie charts, the PC's own descriptions) and windows of sizes the PCs chose, and
+/// the moved icon's place is a drag of the survey's pointer: a scene built of Bevel95's pictures
+/// would differ in every picture and could only compare places, which the core's tests
+/// (`folder::arrange_tests`) prove with the survey's own numbers (the drag by 171,173; the grid of
+/// 75 from the first icon; the order with the moved icon last).
+fn arrange_menu_cases(out: &mut Vec<Case>, f98: &Fonts, f2k: &Fonts) {
+    use bevel_core::folder::menus::{self, State, Sub};
+    let state = |era: Era, files: bool| State { era, kinds: Vec::new(), files, can_paste: false, status_bar: true, auto_arrange: false, nav: Default::default(), tree: None, mode: Default::default(), web: None, undo: None };
+    type Shot = (&'static str, &'static str, Era, (i32, i32), bool);
+    let shots: [Shot; 9] = [
+        ("vm-win95-arrange-mc-view", "vm/win95-truecolor-arrange-mc-large-menu-view-arrange.png", Era::Win95, (166, 157), false),
+        ("vm-win95-arrange-fa-view", "vm/win95-truecolor-arrange-fa-large-menu-view-arrange.png", Era::Win95, (170, 161), true),
+        ("vm-win95-arrange-mc-rmenu", "vm/win95-truecolor-arrange-mc-large-rmenu-arrange.png", Era::Win95, (612, 426), false),
+        ("vm-win95-arrange-fa-rmenu", "vm/win95-truecolor-arrange-fa-large-rmenu-arrange.png", Era::Win95, (432, 366), true),
+        ("vm-win98-arrange-mc-view", "vm/win98-truecolor-arrange-mc-large-menu-view-arrange.png", Era::Win98, (222, 230), false),
+        ("vm-win98-arrange-fa-view", "vm/win98-truecolor-arrange-fa-large-menu-view-arrange.png", Era::Win98, (341, 344), true),
+        ("vm-win98-arrange-mc-rmenu", "vm/win98-truecolor-arrange-mc-large-rmenu-arrange.png", Era::Win98, (572, 406), false),
+        ("vm-win98-arrange-fa-rmenu", "vm/win98-truecolor-arrange-fa-large-rmenu-arrange.png", Era::Win98, (453, 339), true),
+        ("vm-win2000-arrange-mc-view", "vm/win2000-truecolor-arrange-mc-large-menu-view-arrange.png", Era::Win2000, (319, 314), false),
+    ];
+    for (name, file, era, at, files) in shots {
+        let fonts = if era == Era::Win2000 { f2k } else { f98 };
+        let theme = bevel_core::theme::theme(era);
+        let rows = menus::sub_rows(&state(era, files), Sub::Arrange);
+        // 2000's View menu was opened with the keys here: it underlines too.
+        let ours = Menu { hover: Some(0), show_keys: true, ..menus::menu(&rows) };
+        let mut sc = Screen::new(800, 600, theme.colors.desktop);
+        let (r, _) = sc.menu(theme, fonts, &ours, MenuStyle::Popup, |_, _| at);
+        out.push(Case { name, file, regions: vec![region(at, r)], ours: sc.fb, masks: vec![], vga: false });
     }
 }
 

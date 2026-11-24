@@ -369,7 +369,22 @@ pub struct Desktop {
     /// The classic desktop's wallpaper and pattern over its whole area (display::background), in
     /// its 1x pixels; None: the plain desktop color, drawn as it always was.
     background: Option<std::sync::Arc<Framebuffer>>,
+    /// A folder window: the icons the person moved (dragged), by id, in the order they were
+    /// moved, the last moved last (brief 103). Only their places are kept for the folder
+    /// (`moved_places`); the others stand where the order puts them.
+    moved: Vec<String>,
+    /// A folder window: the icons' places in Large or Small Icons while List or Details shows, so
+    /// that going there and back moves nothing (brief 103: no original did).
+    stash: Option<(ViewMode, Places)>,
+    /// A folder window: the icons that go last in the order (Windows 98 with its web view: a
+    /// dragged icon counts as moved to the end), in that order (`pack_moved_last`).
+    last: Vec<String>,
+    /// The order the items came in (`set_files`): My Computer's by drive letter (`keep_order`).
+    given: HashMap<String, usize>,
 }
+
+/// Icons' places by id (their cell's top-left, from the area's top-left).
+type Places = HashMap<String, (i32, i32)>;
 
 /// A label's measured size (width with its box, lines), collapsed and in full.
 type LabelSizes = [Option<(i32, i32)>; 2];
@@ -540,6 +555,10 @@ impl Desktop {
             right_press: false,
             ctrl_off: false,
             background: None,
+            moved: Vec::new(),
+            stash: None,
+            last: Vec::new(),
+            given: HashMap::new(),
         };
         d.selected = vec![false; d.items.len()];
         d.relayout();
@@ -576,9 +595,16 @@ impl Desktop {
         let pending_before = self.pending.len();
         self.pending.retain(|(id, _)| !files.iter().any(|f| &f.id == id));
         self.changed |= pending_before != self.pending.len();
+        // The order they came in (My Computer's: by drive letter), and the moved icons still there.
+        self.given = files.iter().enumerate().map(|(k, f)| (f.id.clone(), k)).collect();
+        if self.host == Host::Window {
+            let present: HashSet<&str> = files.iter().map(|f| f.id.as_str()).collect();
+            self.moved.retain(|id| present.contains(id.as_str()));
+        }
         if !self.keep_order {
             self.sort_files(&mut files, self.arrange);
         }
+        self.put_last(&mut files);
         let mut items: Vec<Item> = own_icons(self.host, self.era).iter().map(|&s| Item::system(s)).collect();
         items.extend(files);
         self.replace_items(items);
@@ -646,6 +672,16 @@ impl Desktop {
         }
         if self.cut.remove(old_id) {
             self.cut.insert(new_id.to_string());
+        }
+        for id in self.moved.iter_mut().chain(self.last.iter_mut()) {
+            if id == old_id {
+                *id = new_id.to_string();
+            }
+        }
+        if let Some((_, stash)) = self.stash.as_mut()
+            && let Some(c) = stash.remove(old_id)
+        {
+            stash.insert(new_id.to_string(), c);
         }
         if self.hidden.remove(old_id) {
             self.hidden.insert(new_id.to_string());
@@ -983,12 +1019,18 @@ impl Desktop {
         self.arrange = by;
         self.changed = true;
         let mut files = self.files();
-        self.sort_files(&mut files, by);
+        if !self.keep_order {
+            self.sort_files(&mut files, by);
+        }
+        self.put_last(&mut files);
         let mut items: Vec<Item> = own_icons(self.host, self.era).iter().map(|&s| Item::system(s)).collect();
         items.extend(files);
         if let Some(places) = self.places.as_mut() {
             places.clear();
         }
+        // Packed again: no icon lies where it was dragged any more.
+        self.moved.clear();
+        self.stash = None;
         self.replace_items(items);
         if self.places.is_some() && self.mode.arranged_freely() {
             // Columns in the new order (relayout gave every icon the first free cell in turn).
@@ -1008,8 +1050,57 @@ impl Desktop {
         if on != self.auto_arrange {
             self.auto_arrange = on;
             self.changed = true;
+            if on && self.host == Host::Window && self.mode.arranged_freely() {
+                // A folder window (the Reference PCs, brief 103): packed in the present order, a
+                // dragged icon counting as moved to the end (`*-arrange-mc-auto-arrange-on`).
+                let moved = std::mem::take(&mut self.moved);
+                self.pack_moved_last(&moved);
+                return;
+            }
             self.relayout();
         }
+    }
+
+    /// A folder window: every icon packed in order again, `ids` (those still there) last, in that
+    /// order, and they stay last when the folder is read again (`last`) until Arrange Icons by
+    /// ... (Windows 98 with its web view, brief 103: a dragged icon counts as moved to the end).
+    pub fn pack_moved_last(&mut self, ids: &[String]) {
+        for id in ids {
+            self.last.retain(|l| l != id);
+            self.last.push(id.clone());
+        }
+        self.moved.clear();
+        self.stash = None;
+        let mut files = self.files();
+        self.put_last(&mut files);
+        let mut items: Vec<Item> = own_icons(self.host, self.era).iter().map(|&s| Item::system(s)).collect();
+        items.extend(files);
+        if let Some(places) = self.places.as_mut() {
+            places.clear();
+        }
+        self.replace_items(items);
+        if self.places.is_some() && self.mode.arranged_freely() {
+            self.cells = self.column_cells();
+            self.store_cells();
+        }
+        self.changed = true;
+    }
+
+    /// The icons that go last in the order (`pack_moved_last`), in that order.
+    pub fn last_order(&self) -> &[String] {
+        &self.last
+    }
+
+    /// Puts the items named by `last` at the end of `files`, in `last`'s order.
+    fn put_last(&self, files: &mut Vec<Item>) {
+        if self.last.is_empty() {
+            return;
+        }
+        let rank: HashMap<&str, usize> = self.last.iter().enumerate().map(|(k, id)| (id.as_str(), k)).collect();
+        let (mut end, rest): (Vec<Item>, Vec<Item>) = std::mem::take(files).into_iter().partition(|f| rank.contains_key(f.id.as_str()));
+        end.sort_by_key(|f| rank[f.id.as_str()]);
+        *files = rest;
+        files.extend(end);
     }
 
     /// Line up Icons: every icon onto the nearest cell of the grid. One whose nearest cell is
@@ -1024,6 +1115,11 @@ impl Desktop {
         }
         let (cols, rows) = self.grid();
         let (cw, ch) = self.cell_size();
+        // A window's list scrolls down: its grid reaches below the lowest icon (brief 103).
+        let rows = match self.host {
+            Host::Window => rows.max(self.cells.iter().map(|c| c.1.div_euclid(ch)).max().unwrap_or(0) + 2),
+            Host::Desktop => rows,
+        };
         let mut taken: HashSet<(i32, i32)> = HashSet::new();
         let on_grid = |c: (i32, i32)| c.0 % cw == 0 && c.1 % ch == 0;
         // Icons already on the grid stay.
@@ -1053,7 +1149,12 @@ impl Desktop {
 
     /// A grid cell's size: 75 × 75 for large icons, Small Icons' width × one row.
     fn cell_size(&self) -> (i32, i32) {
-        match self.mode {
+        self.cell_size_of(self.mode)
+    }
+
+    /// A grid cell's size in view `mode`.
+    fn cell_size_of(&self, mode: ViewMode) -> (i32, i32) {
+        match mode {
             ViewMode::Large => (CELL, CELL),
             _ => (self.small_w.max(1), ROW_H),
         }
@@ -1643,10 +1744,72 @@ impl Desktop {
             let c = self.cells[i];
             self.cells[i] = self.clamp((c.0 + d.0, c.1 + d.1));
         }
+        self.note_moved(items);
         self.store_cells();
         if self.auto_arrange {
             self.relayout();
         }
+    }
+
+    /// A folder window: icons `items` were dragged by the person (the last moved last).
+    fn note_moved(&mut self, items: &[usize]) {
+        if self.host != Host::Window {
+            return;
+        }
+        for &i in items {
+            if let Some(item) = self.items.get(i) {
+                let id = item.id.clone();
+                self.moved.retain(|m| *m != id);
+                self.moved.push(id);
+            }
+        }
+    }
+
+    /// A folder window: the icons the person moved, in the order they were moved.
+    pub fn moved_ids(&self) -> &[String] {
+        &self.moved
+    }
+
+    /// A folder window: the places of the icons the person moved (x, y in the view's own pixels
+    /// of Large or Small Icons as now, then the id), in the order they were moved: what is kept
+    /// for the folder (brief 103: only icons really moved, never every icon of a big folder).
+    pub fn moved_places(&self) -> Vec<(i32, i32, String)> {
+        let Some(places) = self.places.as_ref() else { return Vec::new() };
+        if !self.mode.arranged_freely() {
+            // In List or Details: the places kept for the way back.
+            let Some((_, stash)) = &self.stash else { return Vec::new() };
+            return self.moved.iter().filter_map(|id| stash.get(id).map(|&(x, y)| (x, y, id.clone()))).collect();
+        }
+        self.moved.iter().filter_map(|id| places.get(id).map(|&(x, y)| (x, y, id.clone()))).collect()
+    }
+
+    /// A folder window opened or gone back to: the icons the person moved there before lie
+    /// where they were left (`moved_places`), the others in order around them.
+    pub fn load_moved(&mut self, list: &[(i32, i32, String)]) {
+        if self.host != Host::Window || list.is_empty() {
+            return;
+        }
+        let mut places = HashMap::new();
+        self.moved.clear();
+        for (x, y, id) in list {
+            places.insert(id.clone(), (*x, *y));
+            self.moved.retain(|m| m != id);
+            self.moved.push(id.clone());
+        }
+        if self.mode.arranged_freely() {
+            self.places = Some(places);
+            self.relayout();
+            // Every other icon keeps the place it got (a wider window does not repack them).
+            self.store_cells();
+            self.changed = false;
+        } else {
+            self.stash = Some((self.mode_for_stash(), places));
+        }
+    }
+
+    /// The free view a stash is for when it is made in List or Details (Large Icons).
+    fn mode_for_stash(&self) -> ViewMode {
+        ViewMode::Large
     }
 
     /// The icon a drop at (x, y) would land on (its picture or label), if it takes dropped

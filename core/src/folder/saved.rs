@@ -74,10 +74,64 @@ pub struct Saved {
     pub own_window: bool,
     /// Windows 2000: the system folders whose "Show Files" was clicked (2000 remembered it).
     pub shown_files: std::collections::BTreeSet<String>,
-    /// Where each icon was put by a drag in a folder's own window (Large and Small Icons; 98
-    /// remembered them): by folder (keys as `windows`), (x, y, item id) as the icon view's
-    /// `places_text` gives them.
+    /// Where the icons the person dragged in a folder's window were left (Large and Small Icons;
+    /// brief 103: only icons really moved): by folder (keys as `windows`), (x, y, item id) in the
+    /// order they were moved, as the icon view's `moved_places` gives them.
     pub places: BTreeMap<String, Vec<(i32, i32, String)>>,
+    /// Windows 98 with its web view: the icons that go last in a folder's order (a dragged icon
+    /// counts as moved to the end), by folder, in that order (brief 103).
+    pub last: BTreeMap<String, Vec<String>>,
+    /// The folders of `places` and `last`, the one changed longest ago first: beyond
+    /// `MOST_ARRANGED` the oldest go.
+    pub arranged: Vec<String>,
+}
+
+/// How many folders' moved icons are kept at most (`places` and `last`): as many as the other
+/// records of folders keep (`MOST`); each record holds only the icons really moved, so the file
+/// stays small. The one changed longest ago goes first.
+pub const MOST_ARRANGED: usize = MOST;
+/// How many moved icons one folder keeps at most (a drag of every icon of a folder of thousands
+/// keeps the last moved of them).
+pub const MOST_MOVED: usize = 500;
+
+/// When a folder window's icons are laid out again (brief 103, the survey's table).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Relaid {
+    /// F5, View > Refresh.
+    Refresh,
+    /// Gone back to in the same window (Back, Up; 95: brought forward by Backspace in a
+    /// window opened from it).
+    Returned,
+    /// Its window closed and opened again.
+    Reopened,
+}
+
+/// What becomes of the icons the person moved when the window lays them out again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kept {
+    /// They stay where they were left.
+    Places,
+    /// Packed in order again, the moved ones last (Windows 98 with its web view).
+    MovedLast,
+    /// Packed in their order again, the move forgotten (2000's F5 with its web view).
+    InOrder,
+}
+
+/// Each look as measured on the Reference PCs (`private/probes/folder-arrange/survey.md`, part
+/// 2): 95 keeps the places for good; 98 with its web view (View > as Web Page; its default)
+/// keeps My Computer's places while its window stays open (F5, Back, Up; PROVISIONAL: F5 seen
+/// once) and packs an ordinary folder at every step, the moved icons last, and packs My Computer
+/// so when its window is opened again; 98 without the web view keeps them for good; 2000 keeps
+/// them, but its F5 with the web view on puts every icon back in its order.
+pub fn kept(era: Era, web_view: bool, my_computer: bool, when: Relaid) -> Kept {
+    match era {
+        Era::Win95 => Kept::Places,
+        Era::Win98 if !web_view => Kept::Places,
+        Era::Win98 if my_computer && when != Relaid::Reopened => Kept::Places,
+        Era::Win98 => Kept::MovedLast,
+        Era::Win2000 if web_view && when == Relaid::Refresh => Kept::InOrder,
+        Era::Win2000 => Kept::Places,
+    }
 }
 
 impl Default for Saved {
@@ -95,6 +149,8 @@ impl Default for Saved {
             own_window: false,
             shown_files: Default::default(),
             places: BTreeMap::new(),
+            last: BTreeMap::new(),
+            arranged: Vec::new(),
         }
     }
 }
@@ -148,8 +204,10 @@ impl Saved {
                 }
                 continue;
             }
-            // places<TAB>folder<TAB>x y id<TAB>x y id... (no file name holds a tab)
-            if let Some(rest) = line.strip_prefix("places\t") {
+            // moved<TAB>folder<TAB>x y id<TAB>x y id... (no file name holds a tab). Before brief
+            // 103 a line "places" held every icon's place of a folder: it is read no more (those
+            // folders open in order once), so no folder keeps more than the icons really moved.
+            if let Some(rest) = line.strip_prefix("moved\t") {
                 let mut fields = rest.split('\t');
                 let Some(key) = fields.next().filter(|k| !k.is_empty()) else { continue };
                 let list: Vec<(i32, i32, String)> = fields
@@ -160,6 +218,18 @@ impl Saved {
                     .collect();
                 if !list.is_empty() {
                     saved.places.insert(key.to_string(), list);
+                    saved.touch(key);
+                }
+                continue;
+            }
+            // last<TAB>folder<TAB>id<TAB>id...
+            if let Some(rest) = line.strip_prefix("last\t") {
+                let mut fields = rest.split('\t');
+                let Some(key) = fields.next().filter(|k| !k.is_empty()) else { continue };
+                let list: Vec<String> = fields.filter(|f| !f.is_empty()).map(str::to_string).collect();
+                if !list.is_empty() {
+                    saved.last.insert(key.to_string(), list);
+                    saved.touch(key);
                 }
                 continue;
             }
@@ -238,12 +308,28 @@ impl Saved {
         for key in &self.shown_files {
             out += &format!("shown_files {key}\n");
         }
-        for (key, list) in &self.places {
-            out += &format!("places\t{key}");
-            for (x, y, id) in list {
-                out += &format!("\t{x} {y} {id}");
+        // The folders' moved icons, the one changed longest ago first.
+        let mut keys: Vec<&String> = self.arranged.iter().filter(|k| self.places.contains_key(*k) || self.last.contains_key(*k)).collect();
+        for k in self.places.keys().chain(self.last.keys()) {
+            if !keys.contains(&k) {
+                keys.push(k);
             }
-            out.push('\n');
+        }
+        for key in keys {
+            if let Some(list) = self.places.get(key) {
+                out += &format!("moved\t{key}");
+                for (x, y, id) in list {
+                    out += &format!("\t{x} {y} {id}");
+                }
+                out.push('\n');
+            }
+            if let Some(list) = self.last.get(key) {
+                out += &format!("last\t{key}");
+                for id in list {
+                    out += &format!("\t{id}");
+                }
+                out.push('\n');
+            }
         }
         for (key, v) in &self.views {
             let columns = if v.columns.is_empty() { "-".to_string() } else { v.columns.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",") };
@@ -275,25 +361,69 @@ impl Saved {
         }
     }
 
-    /// Remembers where a folder's icons lie (at most `MOST` folders); an empty list forgets.
-    pub fn remember_places(&mut self, key: &str, list: Vec<(i32, i32, String)>) {
+    /// Remembers where the icons the person moved in a folder lie (at most `MOST_MOVED`, the last
+    /// moved; at most `MOST_ARRANGED` folders, the one changed longest ago going); an empty list
+    /// forgets.
+    pub fn remember_places(&mut self, key: &str, mut list: Vec<(i32, i32, String)>) {
         if list.is_empty() {
             self.places.remove(key);
+            self.untouch(key);
             return;
         }
+        if list.len() > MOST_MOVED {
+            list.drain(..list.len() - MOST_MOVED);
+        }
         self.places.insert(key.to_string(), list);
-        while self.places.len() > MOST {
-            let first = self.places.keys().next().cloned();
-            if let Some(k) = first {
-                self.places.remove(&k);
-            }
+        self.touch(key);
+        self.prune();
+    }
+
+    /// Remembers the icons that go last in a folder's order (Windows 98 with its web view), as
+    /// `remember_places` does; an empty list forgets.
+    pub fn remember_last(&mut self, key: &str, mut list: Vec<String>) {
+        if list.is_empty() {
+            self.last.remove(key);
+            self.untouch(key);
+            return;
+        }
+        if list.len() > MOST_MOVED {
+            list.drain(..list.len() - MOST_MOVED);
+        }
+        self.last.insert(key.to_string(), list);
+        self.touch(key);
+        self.prune();
+    }
+
+    /// A folder's moved icons' places (`remember_places`).
+    pub fn places_of(&self, key: &str) -> Vec<(i32, i32, String)> {
+        self.places.get(key).cloned().unwrap_or_default()
+    }
+
+    /// The icons that go last in a folder's order (`remember_last`).
+    pub fn last_of(&self, key: &str) -> Vec<String> {
+        self.last.get(key).cloned().unwrap_or_default()
+    }
+
+    /// `key` was changed just now: it goes to the end of `arranged`.
+    fn touch(&mut self, key: &str) {
+        self.arranged.retain(|k| k != key);
+        self.arranged.push(key.to_string());
+    }
+
+    /// `key` holds nothing any more (neither places nor an order): it leaves `arranged`.
+    fn untouch(&mut self, key: &str) {
+        if !self.places.contains_key(key) && !self.last.contains_key(key) {
+            self.arranged.retain(|k| k != key);
         }
     }
 
-    /// A folder's remembered places as the icon view's `load_places` reads them.
-    pub fn places_text(&self, key: &str) -> Option<String> {
-        let list = self.places.get(key)?;
-        Some(list.iter().map(|(x, y, id)| format!("{x} {y} {id}\n")).collect())
+    /// Beyond `MOST_ARRANGED` folders the one changed longest ago goes.
+    fn prune(&mut self) {
+        while self.arranged.len() > MOST_ARRANGED {
+            let oldest = self.arranged.remove(0);
+            self.places.remove(&oldest);
+            self.last.remove(&oldest);
+        }
     }
 
     /// Remembers a folder's window (at most `MOST` folders).

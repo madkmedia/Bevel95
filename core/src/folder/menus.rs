@@ -6,7 +6,7 @@
 //! Limited to what works here (as the desktop's): left out, not grayed, are File's Find, Format,
 //! Print, Send To, Quick View, Backup, Sharing, Search and Work Offline, Edit's Undo, Copy To Folder
 //! and Move To Folder, View's Toolbar(s), Explorer Bar, as Web Page, Small Icons, List, Details,
-//! Thumbnails, Customize this Folder, Line up Icons and (Folder) Options, the Go menu's web pages
+//! Thumbnails, Customize this Folder and (Folder) Options, the Go menu's web pages
 //! and programs, the Favorites and Help menus, and 2000's Tools but for Folder Options. Entries Windows grayed for the selection
 //! stay grayed (Delete and Rename on a drive; everything about the selection while nothing is
 //! selected; Back, Forward and Up One Level where they cannot go). The menu on icons is the
@@ -313,10 +313,11 @@ fn view_rows(s: &State) -> Vec<Row> {
     rows.push(Row::separator());
     rows.extend(view_choices(s));
     rows.push(Row::separator());
-    if s.files {
-        rows.push(Row::sub("Arrange &Icons", Sub::Arrange, "Contains commands for arranging items in the window."));
-        rows.push(Row::separator());
-    }
+    // Arrange Icons and Line up Icons, in My Computer too (brief 103, the survey's part 1:
+    // `*-arrange-mc-large-menu-view-arrange`, `*-arrange-fa-large-menu-view-arrange`).
+    rows.push(Row::sub("Arrange &Icons", Sub::Arrange, "Contains commands for arranging items in the window."));
+    rows.push(line_up_row(s));
+    rows.push(Row::separator());
     let refresh = match s.era {
         Era::Win95 => "Refresh item information.",
         Era::Win98 => "Refresh the contents of the current page.",
@@ -327,6 +328,14 @@ fn view_rows(s: &State) -> Vec<Row> {
     }
     rows.push(Row::item("&Refresh", Command::Shared(D::Refresh), refresh));
     rows
+}
+
+/// Line up Icons (95: "Lin&e up Icons"; 98, 2000: "Line &Up Icons"), grey in List and Details
+/// (the survey's part 1). Its status bar words: Windows 95's shell32 string 4402 (98's and 2000's
+/// not captured: the same, PROVISIONAL).
+fn line_up_row(s: &State) -> Row {
+    let label = if s.era == Era::Win95 { "Lin&e up Icons" } else { "Line &Up Icons" };
+    Row::item(label, Command::Shared(D::LineUp), "Arranges icons in a grid.").grayed(!s.mode.arranged_freely())
 }
 
 /// The four views with the dot on the one shown (the View menu, the empty area's View, the Views
@@ -391,11 +400,13 @@ pub fn background_rows(s: &State) -> Vec<Row> {
     // holds; 98 and 2000 show nothing for the submenus and Refresh.
     let sub_help = |words: &'static str| if s.era == Era::Win95 { words } else { "" };
     let mut rows = vec![Row::sub("&View", Sub::Views, sub_help("Contains commands for customizing this window.")), Row::separator()];
-    if s.files {
-        rows.push(Row::sub("Arrange &Icons", Sub::Arrange, sub_help("Contains commands for arranging items in the window.")));
-        if s.era == Era::Win98 {
-            rows.push(Row::separator());
-        }
+    // Arrange Icons and Line up Icons, in My Computer too (brief 103, the survey's part 1:
+    // `*-arrange-mc-large-rmenu`, `*-arrange-fa-large-rmenu`): 98 puts a line before Refresh,
+    // 2000 none (98's and 2000's "Customize this Folder..." is left out, as in the View menu).
+    rows.push(Row::sub("Arrange &Icons", Sub::Arrange, sub_help("Contains commands for arranging items in the window.")));
+    rows.push(line_up_row(s));
+    if s.era == Era::Win98 {
+        rows.push(Row::separator());
     }
     if s.era != Era::Win95 {
         rows.push(Row::item("R&efresh", Command::Shared(D::Refresh), ""));
@@ -440,31 +451,56 @@ pub fn sub_rows(s: &State, sub: Sub) -> Vec<Row> {
         rows.extend(view_choices(s));
         return rows;
     }
-    let menu = match sub {
-        Sub::New => desktop::new_menu(),
-        _ => desktop::arrange_menu(s.auto_arrange),
-    };
+    if sub == Sub::Arrange {
+        return arrange_rows(s);
+    }
+    let menu = desktop::new_menu();
     menu.entries
         .into_iter()
         .enumerate()
         .map(|(i, entry)| {
-            let command = match sub {
-                Sub::New => desktop::new_at(i),
-                _ => desktop::arrange_at(i),
-            };
+            let command = desktop::new_at(i);
             let help = match command {
                 Some(D::NewFolder) => "Creates a new, empty folder.",
                 Some(D::NewShortcut) => "Creates a new, empty shortcut.",
-                Some(D::Arrange(Arrange::Name)) => "Sorts items alphabetically by name.",
-                Some(D::Arrange(Arrange::Type)) => "Sorts items by type.",
-                Some(D::Arrange(Arrange::Size)) => "Sorts items by size, from smallest to largest.",
-                Some(D::Arrange(Arrange::Date)) => "Sorts items by date, from oldest to most recent.",
-                Some(D::AutoArrange) => "Arranges the icons automatically.",
                 _ => "",
             };
             Row { entry, command: command.map(Command::Shared), sub: None, help: help.to_string() }
         })
         .collect()
+}
+
+/// Arrange Icons (the survey's part 1, the same in the three looks): a folder's by Name, by
+/// Type, by Size, by Date; My Computer's by Drive Letter, by Type, by Size, by Free Space (as its
+/// Details headers sort: `Arrange::Name` is the drive letter, `Date` the free space); a line;
+/// Auto Arrange with its check mark while on, grey in List and Details. No "by ..." entry is ever
+/// marked. The status bar's words: Windows 95's shell32 strings (4656 to 4659, 5973 for free
+/// space, 4401); by Drive Letter's "Sorts items alphabetically by name." is the captures' own
+/// (`*-arrange-mc-large-menu-view-arrange`, the entry highlighted).
+fn arrange_rows(s: &State) -> Vec<Row> {
+    let entries: [(&str, Arrange, &str); 4] = if s.files {
+        [
+            ("by &Name", Arrange::Name, "Sorts items alphabetically by name."),
+            ("by &Type", Arrange::Type, "Sorts items by type."),
+            ("by Si&ze", Arrange::Size, "Sorts items by size, from smallest to largest."),
+            ("by &Date", Arrange::Date, "Sorts items by date, from oldest to most recent."),
+        ]
+    } else {
+        [
+            ("by &Drive Letter", Arrange::Name, "Sorts items alphabetically by name."),
+            ("by &Type", Arrange::Type, "Sorts items by type."),
+            ("by &Size", Arrange::Size, "Sorts items by size, from smallest to largest."),
+            ("by &Free Space", Arrange::Date, "Sorts items by available free space"),
+        ]
+    };
+    let mut rows: Vec<Row> = entries.iter().map(|&(label, by, help)| Row::item(label, Command::Shared(D::Arrange(by)), help)).collect();
+    rows.push(Row::separator());
+    rows.push(
+        Row::item("&Auto Arrange", Command::Shared(D::AutoArrange), "Arranges the icons automatically.")
+            .ticked(s.auto_arrange)
+            .grayed(!s.mode.arranged_freely()),
+    );
+    rows
 }
 
 /// View > Explorer Bar, with only what works here: 98's All Folders and None (the one in effect
@@ -620,7 +656,7 @@ mod tests {
         assert!(!background_rows(&s).iter().any(|r| r.command == Some(Command::Undo)));
         let view = view_rows(&s);
         const VIEWS: [&str; 4] = ["Lar&ge Icons", "S&mall Icons", "&List", "&Details"];
-        assert_eq!(labels(&view), [&["Status &Bar", "-"][..], &VIEWS, &["-", "Arrange &Icons", "-", "&Refresh"]].concat());
+        assert_eq!(labels(&view), [&["Status &Bar", "-"][..], &VIEWS, &["-", "Arrange &Icons", "Lin&e up Icons", "-", "&Refresh"]].concat());
         assert_eq!(view[0].entry.mark, Some(Mark::Check));
         assert_eq!(view[2].entry.mark, Some(Mark::Bullet));
         assert_eq!(view[3].entry.mark, None);
@@ -628,20 +664,63 @@ mod tests {
         let details = view_rows(&State { mode: ViewMode::Details, ..s.clone() });
         assert_eq!(details[5].entry.mark, Some(Mark::Bullet), "the dot on the view shown");
         assert_eq!(details[5].command, Some(Command::View(ViewMode::Details)));
-        assert_eq!(labels(&view_rows(&state(&[], false))), [&["Status &Bar", "-"][..], &VIEWS, &["-", "&Refresh"]].concat());
+        // My Computer has Arrange Icons and Line up Icons too (brief 103).
+        assert_eq!(labels(&view_rows(&state(&[], false))), [&["Status &Bar", "-"][..], &VIEWS, &["-", "Arrange &Icons", "Lin&e up Icons", "-", "&Refresh"]].concat());
         // The empty area's menu: View first (95: `*-view-v1-details-rmenu`).
         let back = background_rows(&state(&[], true));
-        assert_eq!(labels(&back), ["&View", "-", "Arrange &Icons", "-", "&Paste", "Paste &Shortcut", "-", "Ne&w", "-", "P&roperties"]);
-        assert!(back[4].entry.disabled, "nothing on the clipboard");
+        assert_eq!(labels(&back), ["&View", "-", "Arrange &Icons", "Lin&e up Icons", "-", "&Paste", "Paste &Shortcut", "-", "Ne&w", "-", "P&roperties"]);
+        assert!(back[5].entry.disabled, "nothing on the clipboard");
         assert_eq!(labels(&sub_rows(&s, Sub::Views)), VIEWS);
         let back = background_rows(&state(&[], false));
-        assert_eq!(labels(&back), ["&View", "-", "&Paste", "Paste &Shortcut", "-", "P&roperties"], "My Computer (-folder-mc-rmenu-empty)");
+        assert_eq!(
+            labels(&back),
+            ["&View", "-", "Arrange &Icons", "Lin&e up Icons", "-", "&Paste", "Paste &Shortcut", "-", "P&roperties"],
+            "My Computer (`win95-truecolor-arrange-mc-large-rmenu`)"
+        );
         assert_eq!(opens(&background_rows(&state(&[], true)), 0), Some(Sub::Views));
         assert_eq!(opens(&background_rows(&state(&[], true)), 2), Some(Sub::Arrange));
+        assert_eq!(background_rows(&state(&[], true))[3].command, Some(Command::Shared(D::LineUp)));
         let new = sub_rows(&s, Sub::New);
         assert_eq!(new[0].command, Some(Command::Shared(D::NewFolder)));
         assert_eq!(new[0].help, "Creates a new, empty folder.");
         assert_eq!(sub_rows(&s, Sub::Arrange)[5].command, Some(Command::Shared(D::AutoArrange)));
+    }
+
+    /// Brief 103, the survey's part 1: Arrange Icons in My Computer (by Drive Letter, by Type, by
+    /// Size, by Free Space) and in a folder (by Name, by Type, by Size, by Date), a line, Auto
+    /// Arrange with its check mark while on; no "by ..." entry marked; Line up Icons and Auto
+    /// Arrange grey in List and Details, Arrange's "by ..." never.
+    #[test]
+    fn arrange_icons_and_line_up_as_the_reference_pcs_have_them() {
+        for era in Era::ALL {
+            let mc = State { era, ..state(&[], false) };
+            let rows = sub_rows(&mc, Sub::Arrange);
+            assert_eq!(labels(&rows), ["by &Drive Letter", "by &Type", "by &Size", "by &Free Space", "-", "&Auto Arrange"], "{era:?}");
+            assert_eq!(rows[0].command, Some(Command::Shared(D::Arrange(Arrange::Name))));
+            assert_eq!(rows[3].command, Some(Command::Shared(D::Arrange(Arrange::Date))), "free space sorts as its header");
+            assert_eq!(rows[0].help, "Sorts items alphabetically by name.", "`*-arrange-mc-large-menu-view-arrange`");
+            assert_eq!(rows[3].help, "Sorts items by available free space");
+            let folder = State { era, ..state(&[], true) };
+            let rows = sub_rows(&folder, Sub::Arrange);
+            assert_eq!(labels(&rows), ["by &Name", "by &Type", "by Si&ze", "by &Date", "-", "&Auto Arrange"], "{era:?}");
+            assert!(rows.iter().all(|r| r.entry.mark.is_none()), "nothing marked while Auto Arrange is off");
+            let on = sub_rows(&State { auto_arrange: true, ..folder.clone() }, Sub::Arrange);
+            assert_eq!(on[5].entry.mark, Some(Mark::Check));
+            assert!(on[..4].iter().all(|r| r.entry.mark.is_none()), "no mark on a \"by ...\" entry");
+            for (mode, free) in [(ViewMode::Large, true), (ViewMode::Small, true), (ViewMode::List, false), (ViewMode::Details, false)] {
+                for s in [State { mode, ..mc.clone() }, State { mode, ..folder.clone() }] {
+                    let arrange = sub_rows(&s, Sub::Arrange);
+                    assert!(arrange[..4].iter().all(|r| !r.entry.disabled), "{era:?} {mode:?}: by ... always");
+                    assert_eq!(arrange[5].entry.disabled, !free, "{era:?} {mode:?}: Auto Arrange");
+                    let view = view_rows(&s);
+                    let line_up = view.iter().find(|r| r.command == Some(Command::Shared(D::LineUp))).expect("Line up Icons");
+                    assert_eq!(line_up.entry.disabled, !free, "{era:?} {mode:?}: Line up Icons");
+                    assert_eq!(line_up.entry.label, if era == Era::Win95 { "Lin&e up Icons" } else { "Line &Up Icons" });
+                    let back = background_rows(&s);
+                    assert!(back.iter().any(|r| r.command == Some(Command::Shared(D::LineUp)) && r.entry.disabled == !free));
+                }
+            }
+        }
     }
 
     #[test]
@@ -661,7 +740,10 @@ mod tests {
         let go = go_rows(&s);
         assert_eq!(labels(&go), ["&Back\tAlt+Left Arrow", "&Forward\tAlt+Right Arrow", "&Up One Level", "-", "My &Computer"]);
         assert!(!go[0].entry.disabled && go[1].entry.disabled);
-        assert_eq!(labels(&background_rows(&s)), ["&View", "-", "Arrange &Icons", "-", "R&efresh", "-", "&Paste", "Paste &Shortcut", "-", "Ne&w", "-", "P&roperties"]);
+        assert_eq!(
+            labels(&background_rows(&s)),
+            ["&View", "-", "Arrange &Icons", "Line &Up Icons", "-", "R&efresh", "-", "&Paste", "Paste &Shortcut", "-", "Ne&w", "-", "P&roperties"]
+        );
     }
 
     #[test]
@@ -670,8 +752,13 @@ mod tests {
         assert_eq!(titles(Era::Win2000), ["&File", "&Edit", "&View", "&Tools"]);
         assert_eq!(bar_rows(&s, 3)[0].command, Some(Command::FolderOptions));
         let view = view_rows(&s);
-        assert_eq!(labels(&view), ["Status &Bar", "-", "Lar&ge Icons", "S&mall Icons", "&List", "&Details", "-", "G&o To", "&Refresh"]);
-        assert_eq!(opens(&view, 7), Some(Sub::GoTo));
+        assert_eq!(
+            labels(&view),
+            ["Status &Bar", "-", "Lar&ge Icons", "S&mall Icons", "&List", "&Details", "-", "Arrange &Icons", "Line &Up Icons", "-", "G&o To", "&Refresh"]
+        );
+        assert_eq!(opens(&view, 10), Some(Sub::GoTo));
+        // The empty area's: Refresh right under Line Up Icons (`win2000-truecolor-arrange-mc-large-rmenu`).
+        assert_eq!(labels(&background_rows(&s)), ["&View", "-", "Arrange &Icons", "Line &Up Icons", "R&efresh", "-", "&Paste", "Paste &Shortcut", "-", "P&roperties"]);
         let go = sub_rows(&s, Sub::GoTo);
         assert_eq!(go[4].entry.mark, Some(Mark::Check), "My Computer ticked while shown");
         assert!(go[0].entry.disabled && go[2].entry.disabled);

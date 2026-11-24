@@ -31,6 +31,8 @@ pub mod saved;
 pub mod status;
 pub mod tree_art;
 pub mod web;
+#[cfg(test)]
+mod arrange_tests;
 
 use std::collections::HashMap;
 
@@ -1183,6 +1185,19 @@ impl FolderWindow {
     pub fn arrange_by(&mut self, by: crate::desktop_icons::Arrange) {
         self.view.sort(by, false);
         self.sorted_by_header = false;
+        self.fit();
+    }
+
+    /// View > Line up Icons (brief 103): each icon off the grid onto the nearest free grid place,
+    /// the others stay (the desktop's rule, `Desktop::line_up`).
+    pub fn line_up(&mut self) {
+        self.view.line_up();
+        self.fit();
+    }
+
+    /// Auto Arrange on or off (brief 103: on, packed in order, a dragged icon last).
+    pub fn set_auto_arrange(&mut self, on: bool) {
+        self.view.set_auto_arrange(on);
         self.fit();
     }
 

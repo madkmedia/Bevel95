@@ -178,6 +178,40 @@ impl Desktop {
         if self.columns.is_empty() {
             self.columns = self.details.default_widths(self.era);
         }
+        // A folder window going to List or Details keeps the icons' places for the way back, and
+        // coming back puts them there: no original moved a dragged icon at that step (the
+        // Reference PCs, brief 103: `*-arrange-mc-c-moved-details-back-to-large`).
+        if self.host == Host::Window {
+            if before.arranged_freely() && !mode.arranged_freely() {
+                if let Some(places) = self.places.take() {
+                    self.stash = Some((before, places));
+                }
+                self.relayout();
+                return;
+            }
+            if !before.arranged_freely()
+                && mode.arranged_freely()
+                && let Some((was, places)) = self.stash.take()
+            {
+                if was == mode {
+                    self.places = Some(places);
+                    self.relayout();
+                    return;
+                }
+                if self.era != Era::Win2000 {
+                    let (old_w, old_h) = self.cell_size_of(was);
+                    let (new_w, new_h) = self.cell_size();
+                    let moved: HashMap<String, (i32, i32)> = places
+                        .into_iter()
+                        .map(|(id, (x, y))| (id, (x * new_w / old_w.max(1), y * new_h / old_h.max(1))))
+                        .collect();
+                    self.places = Some(moved);
+                    self.relayout();
+                    return;
+                }
+                self.moved.clear();
+            }
+        }
         // Between Large and Small Icons each item keeps its place on the grid (column and row):
         // 95's three columns of large icons became three columns of small ones (`v1-small-open`).
         // Windows 2000 put them into rows as wide as the window again (`-view-v1-small-open`).
@@ -191,6 +225,8 @@ impl Desktop {
             self.relayout();
             return;
         }
+        // Put in order afresh: no icon lies where it was dragged any more.
+        self.moved.clear();
         self.places = None;
         self.relayout();
         if self.host == Host::Window && mode.arranged_freely() && !self.items.is_empty() {
@@ -470,12 +506,21 @@ impl Desktop {
     pub fn sort(&mut self, by: Arrange, reversed: bool) {
         self.reversed = reversed;
         self.keep_order = false;
+        // Every icon back in that order: none goes last any more (brief 103).
+        self.last.clear();
         self.set_arrange(by);
     }
 
     /// Puts the owner's items in order: Arrange Icons' rules; in a folder window Windows 2000's
     /// dates oldest first (its Modified header; 95 and 98 newest first); reversed when asked.
     pub(super) fn sort_files(&self, files: &mut [Item], by: Arrange) {
+        if self.host == Host::Window && self.details == Columns::MyComputer {
+            self.sort_my_computer(files, by);
+            if self.reversed {
+                files.reverse();
+            }
+            return;
+        }
         crate::desktop_icons::arrange(files, by);
         if self.host == Host::Window && self.era == Era::Win2000 && by == Arrange::Date {
             let folders = files.iter().filter(|i| i.folder).count();
@@ -489,6 +534,32 @@ impl Desktop {
         if self.reversed {
             files.reverse();
         }
+    }
+
+    /// My Computer's Arrange Icons (brief 103; the Reference PCs' submenu: by Drive Letter, by
+    /// Type, by Size, by Free Space; `Arrange::Name` is by Drive Letter, `Date` by Free Space, as
+    /// the Details headers sort): the drives by their letter, type, size or free space (the
+    /// facts the window already has for Details, `spaces`; a drive without them counts as 0, so
+    /// an empty floppy comes first, as `win2000-...-mc-after-arrange-by-free-space` shows), the
+    /// other places (Control Panel, Printers, ...) after the drives in the order they came.
+    fn sort_my_computer(&self, files: &mut [Item], by: Arrange) {
+        let given = |i: &Item| self.given.get(&i.id).copied().unwrap_or(usize::MAX);
+        let drive = |i: &Item| i.id.len() == 3 && i.id.ends_with(":\\");
+        let space = |i: &Item| self.spaces.get(&i.id).copied().unwrap_or((0, 0));
+        files.sort_by(|a, b| {
+            drive(b).cmp(&drive(a)).then_with(|| {
+                if !drive(a) {
+                    return given(a).cmp(&given(b));
+                }
+                let key = match by {
+                    Arrange::Name => std::cmp::Ordering::Equal,
+                    Arrange::Type => a.type_name.to_lowercase().cmp(&b.type_name.to_lowercase()),
+                    Arrange::Size => space(a).1.cmp(&space(b).1),
+                    Arrange::Date => space(a).0.cmp(&space(b).0),
+                };
+                key.then_with(|| a.id.to_ascii_uppercase().cmp(&b.id.to_ascii_uppercase()))
+            })
+        });
     }
 
     /// Replaces items' pictures (read after their names showed), by id; nothing moves.

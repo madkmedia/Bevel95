@@ -2251,6 +2251,18 @@ fn scenes() -> Vec<Scene> {
             out.push(Scene { section, name: format!("{}-{state}", era_prefix(era)), caption, image: kinds_scene(theme, era, &fonts, mode) });
         }
     }
+    // Brief 103: Arrange Icons and Line up Icons in folder windows, each look.
+    for (era, theme, section) in [(Era::Win95, &WIN95, "Windows 95"), (Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        for (mc, which, state, caption) in [
+            (true, "view", "folder-arrange-mc-view", "My Computer's View menu on Arrange Icons: by Drive Letter, by Type, by Size, by Free Space, Auto Arrange; Line up Icons under it"),
+            (false, "rmenu", "folder-arrange-rmenu", "A folder's empty area menu with Arrange Icons open: by Name, by Type, by Size, by Date, Auto Arrange"),
+            (false, "lined", "folder-arrange-lined", "A file dropped crooked, then Line up Icons: it goes to the nearest grid place, the others stay"),
+        ] {
+            out.push(Scene { section, name: format!("{}-{state}", era_prefix(era)), caption, image: arrange_scene(theme, era, &fonts, mc, which) });
+        }
+    }
     // The web view panel of 98's and 2000's folder windows.
     for (era, theme, section) in [(Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
         let (regular, bold) = (load_font(theme, false), load_font(theme, true));
@@ -2784,6 +2796,38 @@ fn draw_long_menu_sheet() {
     let y = y + LABEL + 384 + GAP;
     bold.draw(&mut sheet, GAP, y, "640x360 scrolled to the end", rgb(0x000000));
     sheet.blit(&start_scrolls_scene(theme, &fonts, true), GAP, y + LABEL);
+    write_png(Path::new(&path), &sheet);
+    println!("wrote the sheet");
+}
+
+/// The owner's sheet for brief 103 (issue 9): per look My Computer's View menu with Arrange Icons
+/// open, a folder's empty-area menu with Arrange Icons open, and a folder with a file dropped
+/// crooked, before and after Line up Icons (drawn, not photographed).
+/// `BEVEL95_SHEET=<file> cargo test -p bevel-core --test golden -- --ignored --exact draw_arrange_sheet`.
+#[test]
+#[ignore = "writes the owner's sheet of Arrange Icons to BEVEL95_SHEET; run it on request"]
+fn draw_arrange_sheet() {
+    let Ok(path) = std::env::var("BEVEL95_SHEET") else {
+        panic!("BEVEL95_SHEET names the file to write");
+    };
+    const GAP: i32 = 12;
+    const LABEL: i32 = 18;
+    let bold = load_font(&WIN95, true);
+    let scenes = [(true, "view", "My Computer: View > Arrange Icons"), (false, "rmenu", "A folder: the empty area's menu"), (false, "crooked", "lemon dropped crooked"), (false, "lined", "after Line up Icons")];
+    let width = GAP + 4 * (WIDTH + GAP);
+    let height = GAP + 3 * (LABEL + SCREEN_H + GAP);
+    let mut sheet = Framebuffer::new(width, height, rgb(0xFFFFFF));
+    for (row, era) in Era::ALL.into_iter().enumerate() {
+        let theme = bevel_core::theme::theme_in(era, Depth::TrueColor);
+        let (regular, boldf) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &boldf };
+        let y = GAP + row as i32 * (LABEL + SCREEN_H + GAP);
+        for (k, (mc, which, label)) in scenes.into_iter().enumerate() {
+            let x = GAP + k as i32 * (WIDTH + GAP);
+            bold.draw(&mut sheet, x, y, &format!("{}: {label}", era.title()), rgb(0x000000));
+            sheet.blit(&arrange_scene(theme, era, &fonts, mc, which), x, y + LABEL);
+        }
+    }
     write_png(Path::new(&path), &sheet);
     println!("wrote the sheet");
 }
@@ -3651,6 +3695,86 @@ fn folder_scene(fonts: &Fonts, which: &str) -> Framebuffer {
     }
     screen
 }
+/// Brief 103: a folder window of `era` (My Computer with `mc`, else the survey's folder of twelve
+/// files) with, by `which`: its View menu open on Arrange Icons and that submenu beside it
+/// ("view"); the empty area's menu with Arrange Icons' submenu ("rmenu"); one file dropped
+/// crooked below the others ("crooked"); and that file after Line up Icons ("lined").
+fn arrange_scene(theme: &Theme, era: Era, fonts: &Fonts, mc: bool, which: &str) -> Framebuffer {
+    use bevel_core::desktop_art::Art;
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::menus::{self, Sub};
+    use bevel_core::folder::{FolderWindow, Space};
+    use bevel_core::kit::Form;
+    use bevel_core::layout::place_submenu;
+    let doc = icon(&DOCUMENT, 2);
+    let mut screen = Framebuffer::new(WIDTH, SCREEN_H, desktop(era));
+    let at = (20, 20);
+    let (title, small, address) = if mc { ("My Computer", Small::MyComputer, "My Computer") } else { ("fa", Small::Folder, "C:\\fa") };
+    let mut w = FolderWindow::new(era, title, art::small(era, small), !mc, (420, 330));
+    w.layout(fonts);
+    if era != Era::Win95 {
+        w.show_place(title, art::small(era, small), !mc, address, art::listed(era, small));
+    }
+    let item = |id: &str, name: &str, picture: Picture| Item {
+        id: id.into(),
+        name: name.into(),
+        picture,
+        shortcut: false,
+        folder: false,
+        type_name: "Text Document".into(),
+        size: 4,
+        modified: 0,
+    };
+    if mc {
+        w.set_items(vec![
+            item("A:\\", "3\u{bd} Floppy (A:)", Picture::Art(Art::Drive(DriveKind::Floppy))),
+            item("C:\\", "Local (C:)", Picture::Art(Art::Drive(DriveKind::Fixed))),
+            item("D:\\", "(D:)", Picture::Art(Art::Drive(DriveKind::CdRom))),
+            item("::control-panel", "Control Panel", Picture::Art(Art::ControlPanel)),
+            item("::printers", "Printers", Picture::Art(Art::Printers)),
+        ]);
+        w.spaces.insert("C:\\".into(), Space { free: 120 << 30, capacity: 476 << 30 });
+    } else {
+        let names = ["apple", "berry", "cherry", "date", "elder", "fig", "grape", "honey", "iris", "juniper", "kiwi", "lemon"];
+        w.set_items(names.iter().map(|n| item(&format!("C:\\fa\\{n}.txt"), &format!("{n}.txt"), Picture::Own(Some(doc.clone())))).collect());
+    }
+    if matches!(which, "crooked" | "lined") {
+        let lemon = "C:\\fa\\lemon.txt".to_string();
+        w.view.move_ids(std::slice::from_ref(&lemon), (168, 14));
+        if which == "lined" {
+            w.line_up();
+        }
+    }
+    w.set_screen(at.0, at.1);
+    w.layout(fonts);
+    let (ww, wh) = w.size_now();
+    let mut fb = Framebuffer::new(ww, wh, 0);
+    w.paint(&mut fb, theme, fonts);
+    screen.blit(&fb, at.0, at.1);
+    let screen_rect = Rect::new(0, 0, WIDTH, SCREEN_H);
+    let state = w.menu_state(false);
+    let (parent_rows, origin) = match which {
+        "view" => {
+            let r = w.title_rect(2).unwrap();
+            (menus::bar_rows(&state, 2), (at.0 + r.x, at.1 + r.bottom()))
+        }
+        "rmenu" => (menus::background_rows(&state), (at.0 + 230, at.1 + 210)),
+        _ => return screen,
+    };
+    let index = parent_rows.iter().position(|r| r.sub == Some(Sub::Arrange)).expect("Arrange Icons");
+    let parent = Menu { hover: Some(index), show_keys: true, ..menus::menu(&parent_rows) };
+    let (pfb, playout) = menu_image(theme, fonts, &parent, MenuStyle::Popup);
+    screen.blit(&pfb, origin.0, origin.1);
+    let sub = Menu { hover: Some(0), show_keys: true, ..menus::menu(&menus::sub_rows(&state, Sub::Arrange)) };
+    let (sfb, _) = menu_image(theme, fonts, &sub, MenuStyle::Popup);
+    let prect = Rect::new(origin.0, origin.1, pfb.width, pfb.height);
+    let entry = entry_on_screen(prect, &playout, index);
+    let (sx, sy) = place_submenu(prect, entry, sfb.width, sfb.height, 3, theme.popup.submenu, screen_rect);
+    screen.blit(&sfb, sx, sy);
+    screen
+}
+
 /// Windows 98's and 2000's folder window: a folder of files reached from My Computer (Back lit),
 /// a file selected and the pointer on a toolbar button, or the address bar's list open.
 fn explorer_scene(theme: &Theme, era: Era, fonts: &Fonts, which: &str) -> Framebuffer {
