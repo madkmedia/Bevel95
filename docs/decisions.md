@@ -4249,11 +4249,12 @@ it, but write nothing).
       kept every icon's place, left them where they were. The same for a window opened in a
       width with fewer columns, or after the step between Large and Small Icons: the moved icon
       stays at its place, the others at their slots in the window as it is now.
-    - **5. `TEST_MOVE` acts on a test item in a test folder's window only**
-      (`test_item_allowed`, `is_test_folder`): it is out of the exception that lets a test open a
-      menu on one of My Computer's drives, so no test can change a remembered layout of the
-      owner's. Test: `a_test_move_reaches_only_a_test_item_in_a_test_folder` (refused in My
-      Computer, in the Desktop place and in an ordinary folder).
+    - **5. `TEST_MOVE` acts on a test item in a test folder's window only** (`is_test_folder`;
+      since brief 106 every command that changes anything: `test_allowed`, below): it is out of
+      the exception that lets a test open a menu on one of My Computer's drives, so no test can
+      change a remembered layout of the owner's. Test:
+      `a_test_move_reaches_only_a_test_item_in_a_test_folder` (refused in My Computer, in the
+      Desktop place and in an ordinary folder).
     - **1. A place belongs to the view it was made in**: the record says which view (Large or
       Small Icons) its places are in (`moved<TAB>look<TAB>view<TAB>folder<TAB>x y id...`;
       `Desktop::moved_view`); a change of view saves the places again as the window then has
@@ -4261,33 +4262,33 @@ it, but write nothing).
       98: column and row kept, `view_step`), and in 2000, whose own step puts every icon back in
       order, does not use them: the record goes (`Desktop::load_moved` answers false). A window
       opening in List or Details keeps the record's own view for its return. The window's own
-      copy (`FolderHost::session`) carries its view too and follows the same rule.
+      copy (`FolderHost::session`) carries its view too and follows the same rule. (As built in
+      brief 105 the step at an opening or a Back was made before the items were measured, with
+      98's Small Icons width not known yet: repaired in brief 106, 1.)
     - **2.** In List or Details, showing or hiding the tree (any `repack`) leaves the places kept
       for the way back alone (`moved_places` gives them from the stash there: brief 103 gave
       none in List or Details, so a save there would have forgotten them).
-    - **3. With Auto Arrange on, the order is kept**: a moved icon's kept place says where in the
-      order it stands (the k-th cell, row by row), the others fill the other cells in their
-      order; an icon dropped between two others is still between them after a reopen or a
-      repack.
+    - **3. With Auto Arrange on, the order is kept**: as built in brief 105, a moved icon's kept
+      pixels were read as its place in the order with the columns of the moment, which held only
+      at the same number of columns (a reopened window with a scroll bar had another): replaced
+      in brief 106, 2 by the place in the order itself.
     - **6. Smaller limits, applied when folders.txt is read too** (`Saved::parse` goes through
       `remember_places`, `remember_last`): at most 64 moved icons a folder (`MOST_MOVED`, the last
-      moved), 200 records (`MOST_ARRANGED`, the last written), no id or folder longer than 260
-      characters (`LONGEST`: such an icon or folder is not kept), only Large or Small Icons as a
-      view. Names no longer in the folder are left out whenever a record is rewritten (the
-      folder window's `remember_places`; nothing is written for a window not read yet). **The
-      largest possible folders.txt** from these records: a `moved` line is at most 64 x (a tab,
-      two numbers of up to 11 characters each with their spaces, a 260-character id) + about 290
-      = about 18.5 KB, a `last` line 64 x 261 + about 280 = about 17 KB; a look and a folder may
-      have both, and 200 looks-and-folders in all (`arranged` counts them once), so at most about
-      7.1 MB besides the file's other records; a usual folders.txt stays a few KB (one or two
-      records of one or two icons).
+      moved), 200 records (`MOST_ARRANGED`, the last written), no id or folder longer than
+      `LONGEST` (brief 105 counted 260 BYTES of whole paths, so a long or non-English path lost
+      its places without a word; since brief 106, 4: 260 UTF-16 units, as Windows counts, of an
+      item's own name), only Large or Small Icons (or, since brief 106, "order") as what it
+      holds. Names no longer in the folder are left out whenever a record is rewritten (the
+      folder window's `remember_places`; nothing is written for a window not read yet). The
+      largest possible folders.txt: brief 106, 4 below.
     - **7.** F5 writes folders.txt only when it changed the record (`refresh_places` answers
-      whether it did; so do `remember_places` and `load_places`; a drop and Line up Icons too).
+      whether it did; so do `remember_places` and `load_places`; a drop and Line up Icons too;
+      Auto Arrange, Arrange by, View and the test move since brief 106, 7).
     - **8. A record belongs to the look it was made in** (the main session's decision, as
       `background.txt`): `moved` and `last` lines carry the look's word and are used only in that
-      look; switching looks never shows another look's arrangement of a folder. Lines of brief
-      103 without a look (a few hours old) are dropped when read: those folders open in order
-      once.
+      look. Lines of brief 103 without a look (a few hours old) are dropped when read: those
+      folders open in order once. (A change of look while a window stayed open still showed and
+      could save the old look's arrangement: repaired in brief 106, 3.)
     - **9.** 2000's F5 with its web view puts every icon back in order, a kept "moved last" order
       included (`Desktop::back_in_order`), and both records of the folder go.
     - **10.** A rename carries the icon's place (and its place in a "moved last" order) along, in
@@ -4306,6 +4307,75 @@ it, but write nothing).
       stood and its cell empty; a second F5 did not write folders.txt; Small Icons saved the
       record again in Small, and the window opened again in Small Icons shows it at its place;
       98 with its web view: packed with it last through every step and in Small Icons.
+  - **The last round, brief 106** (the review of brief 105, `private/review/brief105-review.md`,
+    numbered as there):
+    - **1. A record of the other view is stepped only once the items are measured** (98's Small
+      Icons width is the widest name's + 28, not known before): `Desktop::load_moved` keeps such
+      places aside (`unstepped`) when the items have not come, and `measure` steps them
+      (`step_unstepped`); the same for a Back from the window's copy. Test
+      `a_record_of_the_other_view_is_stepped_after_the_measuring` (the record loaded BEFORE the
+      items, as the program does, 95 and 98, both ways).
+    - **2. With Auto Arrange on, what is kept is the order itself**: the record holds each moved
+      icon's place in the order (`moved<TAB>look<TAB>order<TAB>folder<TAB>k 0 name...`,
+      `Held::Order`, `Desktop::ranks`); the window lays out the moved icons at their places in
+      the order and the others in their item order around them. Only right after a drop is the
+      order read from where the icons lie (`dropped`), which gives the dropped icon its new place.
+      So an icon dropped between two others is between the same two after a reopen in any width,
+      with or without a scroll bar, and after another view. An order record waits while Auto
+      Arrange is off. Test `auto_arrange_keeps_the_order_after_a_reopen` (three widths, the
+      record before the items).
+    - **3. A change of look while a folder window is open**: the window forgets the old look's
+      arrangement at once (`Desktop::forget_moved`: the moved icons, their places and order, the
+      "moved last" order, the places kept for List and Details; `FolderHost::session` of every
+      folder emptied) and lays out the folder as the NEW look remembers it (`load_places` after
+      the new look's font, so its Small Icons width is measured). Nothing of the old look is
+      saved as the new look's record and the new look's record is not deleted by the change.
+      Test `a_change_of_look_shows_the_new_looks_own_record` (98 to 95 without the tree, 98 to
+      2000 and back).
+    - **4. Items by their own name; lengths as Windows counts**: an item of a folder is kept by
+      its name within the folder (`saved::short_id`, `full_id`; My Computer's items, the Desktop
+      place's, a drive keep their whole ids); `LONGEST` = 260 counts UTF-16 units
+      (`short_enough`), for names and the folder's own path (a folder whose path is longer than
+      MAX_PATH keeps no record). Records written in the morning of 2026-11-24 with whole paths
+      are read as they are (a name with a backslash is an id) and written by name at their next
+      change. **The largest possible folders.txt** from these records: a `moved` line at most 64
+      x (a tab, two numbers of up to 5 digits with their spaces, a name of 260 units: 260 bytes
+      in English letters, up to 780 bytes in letters of three bytes) + the folder (as much
+      again) and its words: about 18 KB in English names, about 51.6 KB at most; a `last` line
+      about 17 KB, about 50.8 KB at most; a look and a folder may have both, 200 in all: about 7
+      MB with English names, about 20.5 MB at the very most (every name 260 Chinese letters).
+      That bound is higher than brief 105's 7.1 MB only because lengths are now counted as
+      Windows counts; a usual record is smaller than before (a name instead of a whole path).
+    - **5. Test commands that change anything act only in a test folder's window**, on a test
+      item when they name one (`test_allowed`); outside a test folder (My Computer, the Desktop
+      place, an ordinary folder) only the commands that open a menu or read something get
+      through (`only_reads`: the menu bar's menus, the menu on an item or on Back, the address
+      bar's list, Back's list). Refused there: View, the header's sort, the web view switch,
+      Select All, Folder Options, the slow readings, every file command, even on a "Bevel95 test"
+      item. Test `test_commands_that_change_anything_act_only_in_a_test_folder` (every code from
+      0 to 300).
+    - **6. A new file takes the first free cell** (as before brief 105, and as `mod.rs` says);
+      "its own slot" is the rule only for a layout from a record (`own_slots`: `load_moved`,
+      `repack`, a view change before the reading). Test `a_new_file_takes_the_first_free_cell`.
+    - **7.** Auto Arrange, Arrange by (the order already in use), View and the test move write
+      folders.txt only when it changed (`save_if_changed`: the file's text before and after).
+    - **8.** Places outside 0..=65535 are dropped when the file is read and never recorded
+      (`FARTHEST`). Test `places_far_away_are_not_kept`.
+    - **9.** The gap rule keeps one pointer to the next free cell, moving forward only; a window's
+      grid has no end below, so an icon that finds no cell gets a further row instead of the
+      corner on top of another. Test `icons_that_find_no_cell_get_further_rows` (one column).
+    - **10.** A change of view before the folder is read keeps the moved icons' places for the
+      step once the items are measured (as 1). Test
+      `a_view_change_before_the_reading_steps_the_places`.
+    - **Proof**: the tests named; each of the tests of 1, 2, 6 and 9 was seen to fail with its
+      repair taken out. Live (`private/probes/folder-arrange/try106.ps1`, a scratch copy of the
+      installed folders.exe, photographs `try106-*`): 98, a file moved in Large Icons into
+      column 4, row 2, the folder opened in Small Icons: column 4, row 2 of Small Icons' own
+      202-pixel columns; 95, Auto Arrange on in a folder of 30 files with a scroll bar, a file
+      moved between the 17th and 18th, closed and opened: between the same two; a 95 record and a
+      98 record of one folder, the look changed with the window open: 95 showed its own moved
+      file and the 98 file back in its place, 98 again its order with that file last, both
+      records kept. The brief 105 try again (`try.ps1`, 95): as before.
 
 ## Dragging files (2026-11-16, the owner: "Fine to work on remaining faults and dragging files")
 - **Measured first** on the three Reference PCs by a measuring helper (snapshot mode, each PC

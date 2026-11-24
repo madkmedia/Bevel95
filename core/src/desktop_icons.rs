@@ -381,7 +381,21 @@ pub struct Desktop {
     last: Vec<String>,
     /// The order the items came in (`set_files`): My Computer's by drive letter (`keep_order`).
     given: HashMap<String, usize>,
+    /// A folder window with Auto Arrange on: where in the order each moved icon stands (the k-th
+    /// cell), what is kept for it (brief 106, 2).
+    ranks: HashMap<String, i32>,
+    /// A drop was just made (`move_by`): Auto Arrange reads the order from where the icons lie.
+    dropped: bool,
+    /// The next layout is from a record (`load_moved`, `repack`): the icons not moved stand at
+    /// their own slots (brief 105, 4); otherwise a new icon takes the first free cell.
+    own_slots: bool,
+    /// Places made in the other free view, waiting for the items and their measuring before they
+    /// are stepped to this view (brief 106, 1: Small Icons' width is not known before).
+    unstepped: Option<(ViewMode, MovedList)>,
 }
+
+/// Moved icons' places (x, y, id) in the order they were moved (`Desktop::moved_places`).
+type MovedList = Vec<(i32, i32, String)>;
 
 /// Icons' places by id (their cell's top-left, from the area's top-left).
 type Places = HashMap<String, (i32, i32)>;
@@ -390,6 +404,14 @@ type Places = HashMap<String, (i32, i32)>;
 /// row of the new grid (95's and 98's step between Large and Small Icons: `v1-small-open`).
 fn view_step((x, y): (i32, i32), old: (i32, i32), new: (i32, i32)) -> (i32, i32) {
     (x.div_euclid(old.0.max(1)) * new.0, y.div_euclid(old.1.max(1)) * new.1)
+}
+
+/// What a folder window keeps of its moved icons (`Desktop::moved_places`): their places in Large
+/// or Small Icons, or (Auto Arrange on) their places in the order (brief 106, 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    Places(ViewMode),
+    Order,
 }
 
 /// A label's measured size (width with its box, lines), collapsed and in full.
@@ -565,6 +587,10 @@ impl Desktop {
             stash: None,
             last: Vec::new(),
             given: HashMap::new(),
+            ranks: HashMap::new(),
+            dropped: false,
+            own_slots: false,
+            unstepped: None,
         };
         d.selected = vec![false; d.items.len()];
         d.relayout();
@@ -688,6 +714,9 @@ impl Desktop {
             && let Some(c) = stash.remove(old_id)
         {
             stash.insert(new_id.to_string(), c);
+        }
+        if let Some(k) = self.ranks.remove(old_id) {
+            self.ranks.insert(new_id.to_string(), k);
         }
         if self.hidden.remove(old_id) {
             self.hidden.insert(new_id.to_string());
@@ -1036,6 +1065,8 @@ impl Desktop {
         }
         // Packed again: no icon lies where it was dragged any more.
         self.moved.clear();
+        self.ranks.clear();
+        self.unstepped = None;
         self.stash = None;
         self.replace_items(items);
         if self.places.is_some() && self.mode.arranged_freely() {
@@ -1076,6 +1107,8 @@ impl Desktop {
             self.last.push(id.clone());
         }
         self.moved.clear();
+        self.ranks.clear();
+        self.unstepped = None;
         self.stash = None;
         let mut files = self.files();
         self.put_last(&mut files);
@@ -1115,8 +1148,22 @@ impl Desktop {
         }
         let keep: Places = self.moved_places().into_iter().map(|(x, y, id)| (id, (x, y))).collect();
         self.places = Some(keep);
+        self.own_slots = true;
         self.relayout();
         self.changed = true;
+    }
+
+    /// A folder window whose look changed: every arrangement of the old look goes at once (the
+    /// moved icons, their places and order, the order with moved icons last, the places kept for
+    /// List and Details), every icon back in order; the new look's own record is laid out after
+    /// (brief 106, 3: each look stays pure).
+    pub fn forget_moved(&mut self) {
+        if self.host != Host::Window {
+            return;
+        }
+        self.last.clear();
+        let by = self.arrange;
+        self.set_arrange(by);
     }
 
     /// The icons that go last in the order (`pack_moved_last`), in that order.
@@ -1277,20 +1324,32 @@ impl Desktop {
             // (A window: row by row, the row an icon's top edge is in, then from the left.)
             let mut order: Vec<usize> = (0..n).collect();
             if self.host == Host::Window {
-                // A window: a placed icon's place says where in the order it stands (the k-th
-                // cell, row by row); the icons without a place fill the other cells in item order,
-                // so that an icon dropped between two others stays between them when only the
-                // moved icons' places were kept (brief 105, 3).
+                // A window keeps the ORDER (brief 106, 2): each icon the person moved stands at
+                // its own place in the order (`ranks`, the k-th cell), the others fill the other
+                // cells in item order (their order never changes with a drop). Only right after a
+                // drop is the order read from where the icons lie (row by row, then from the
+                // left; every icon has its packed place then), which gives the dropped icon its
+                // new place in the order. So the order survives a reopen, another width, a scroll
+                // bar.
                 let (cols, _) = self.grid();
+                let moved: HashSet<&str> = self.moved.iter().map(String::as_str).collect();
                 let mut placed: Vec<(i32, i32, usize)> = (0..n)
                     .filter_map(|i| {
-                        let &(x, y) = places.get(&self.items[i].id)?;
-                        Some(((y.div_euclid(ch) * cols + x.div_euclid(cw).min(cols - 1)).max(0), x, i))
+                        let id = self.items[i].id.as_str();
+                        if self.dropped {
+                            let &(x, y) = places.get(id)?;
+                            return Some(((y.div_euclid(ch) * cols + x.div_euclid(cw).min(cols - 1)).max(0), x, i));
+                        }
+                        if !moved.contains(id) {
+                            return None;
+                        }
+                        self.ranks.get(id).map(|&k| (k, 0, i))
                     })
                     .collect();
                 placed.sort();
+                let in_placed: HashSet<usize> = placed.iter().map(|p| p.2).collect();
                 let mut placed = placed.into_iter().peekable();
-                let mut rest = (0..n).filter(|&i| !places.contains_key(&self.items[i].id));
+                let mut rest = (0..n).filter(|i| !in_placed.contains(i));
                 order.clear();
                 for k in 0..n as i32 {
                     let next = match placed.peek() {
@@ -1305,6 +1364,13 @@ impl Desktop {
                         None => break,
                     }
                 }
+                // The moved icons' places in the order, kept (`moved_places`).
+                for (k, &i) in order.iter().enumerate() {
+                    if moved.contains(self.items[i].id.as_str()) {
+                        self.ranks.insert(self.items[i].id.clone(), k as i32);
+                    }
+                }
+                self.dropped = false;
             } else {
                 let key = |i: usize| match places.get(&self.items[i].id) {
                     Some(&(x, y)) => (0, x.div_euclid(cw), y, i),
@@ -1360,16 +1426,20 @@ impl Desktop {
         }
         let mut next = 0;
         let window = self.host == Host::Window;
-        // A window: each icon without a place stands at its own slot in the order, so the cell a
-        // moved icon left stays empty and the others do not close up (the Reference PCs, brief
-        // 105, 4: "The other icons do not move"); first every one whose slot is free, then each
-        // one whose slot is covered takes the next free cell after it. The desktop: the first free
-        // cell, as always.
+        // A window laid out from a record (`own_slots`: opened again, Back, Up, a new width): each
+        // icon without a place stands at its own slot in the order, so the cell a moved icon left
+        // stays empty and the others do not close up (the Reference PCs, brief 105, 4: "The other
+        // icons do not move"); first every one whose slot is free, then each one whose slot is
+        // covered takes the next free cell after it (one pointer moving forward: brief 106, 9).
+        // Otherwise (a new file in a window, the desktop) the first free cell, as before (brief
+        // 106, 6). A window's grid has no end below: an icon that finds no cell gets a further
+        // row, never the corner on top of another.
         let mut rest: Vec<usize> = (0..n).filter(|&i| cells[i].is_none()).collect();
-        if window {
+        let own_slots = window && self.own_slots;
+        if own_slots {
             rest.retain(|&i| {
                 let own = i as i32;
-                if own >= cols * rows || taken.contains(&self.slot(own)) {
+                if taken.contains(&self.slot(own)) {
                     return true;
                 }
                 let c = self.slot(own);
@@ -1381,17 +1451,15 @@ impl Desktop {
                 false
             });
         }
+        let end = if window { i32::MAX } else { cols * rows };
         for i in rest {
-            if window {
-                next = (i as i32).min(cols * rows);
-                if !(next..cols * rows).any(|k| !taken.contains(&self.slot(k))) {
-                    next = 0;
-                }
+            if own_slots {
+                next = next.max(i as i32);
             }
-            while next < cols * rows && taken.contains(&self.slot(next)) {
+            while next < end && taken.contains(&self.slot(next)) {
                 next += 1;
             }
-            let free = (next < cols * rows).then(|| self.slot(next));
+            let free = (next < end).then(|| self.slot(next));
             let c = match free {
                 Some(c) => c,
                 None => self.clamp(places.get(&self.items[i].id).copied().unwrap_or((0, 0))),
@@ -1404,6 +1472,11 @@ impl Desktop {
             }
         }
         self.cells = cells.into_iter().map(|c| c.unwrap_or((0, 0))).collect();
+        if n > 0 {
+            // Laid out from the record once the items are there; a file that comes later takes
+            // the first free cell.
+            self.own_slots = false;
+        }
         if !new_places.is_empty() {
             if let Some(places) = self.places.as_mut() {
                 places.extend(new_places);
@@ -1842,7 +1915,9 @@ impl Desktop {
         self.note_moved(items);
         self.store_cells();
         if self.auto_arrange {
+            self.dropped = true;
             self.relayout();
+            self.dropped = false;
         }
     }
 
@@ -1868,7 +1943,12 @@ impl Desktop {
     /// A folder window: the places of the icons the person moved (x, y in the view's own pixels
     /// of Large or Small Icons as now, then the id), in the order they were moved: what is kept
     /// for the folder (brief 103: only icons really moved, never every icon of a big folder).
+    /// With Auto Arrange on, each one's place in the order instead (k, 0, id): `moved_held`
+    /// says which (brief 106, 2).
     pub fn moved_places(&self) -> Vec<(i32, i32, String)> {
+        if self.host == Host::Window && self.auto_arrange {
+            return self.moved.iter().filter_map(|id| self.ranks.get(id).map(|&k| (k, 0, id.clone()))).collect();
+        }
         if !self.mode.arranged_freely() {
             // In List or Details: the places kept for the way back.
             let Some((_, stash)) = &self.stash else { return Vec::new() };
@@ -1887,35 +1967,107 @@ impl Desktop {
         self.stash.as_ref().map_or(ViewMode::Large, |(m, _)| *m)
     }
 
+    /// What `moved_places` holds: places in a view, or (Auto Arrange on) places in the order.
+    pub fn moved_held(&self) -> Held {
+        if self.host == Host::Window && self.auto_arrange {
+            Held::Order
+        } else {
+            Held::Places(self.moved_view())
+        }
+    }
+
     /// A folder window opened or gone back to: the icons the person moved there before lie
     /// where they were left (`moved_places`, made in view `made_in`), each other icon at its own
     /// slot in the order, the cells the moved ones left empty (brief 105, 4). Made in the other
     /// free view: moved as the view's own step moves an icon (95, 98: onto the new grid's cell);
     /// in 2000, whose own step puts every icon back in order, not used: false then (the record
-    /// is to go). In List or Details they wait for the way back.
-    pub fn load_moved(&mut self, list: &[(i32, i32, String)], made_in: ViewMode) -> bool {
-        if self.host != Host::Window || list.is_empty() || !made_in.arranged_freely() {
+    /// is to go). In List or Details they wait for the way back. The step waits until the items
+    /// have come and been measured (brief 106, 1: Small Icons' width is the widest name's).
+    /// `Held::Order` (Auto Arrange on when it was made): each moved icon's place in the order,
+    /// used while Auto Arrange is on (brief 106, 2).
+    pub fn load_moved(&mut self, list: &[(i32, i32, String)], held: Held) -> bool {
+        if self.host != Host::Window || list.is_empty() {
+            return true;
+        }
+        let made_in = match held {
+            Held::Order => {
+                if !self.auto_arrange {
+                    return true;
+                }
+                self.moved.clear();
+                self.ranks.clear();
+                for (k, _, id) in list {
+                    self.moved.retain(|m| m != id);
+                    self.moved.push(id.clone());
+                    self.ranks.insert(id.clone(), *k);
+                }
+                if self.mode.arranged_freely() {
+                    self.places.get_or_insert_with(HashMap::new);
+                    self.relayout();
+                    self.changed = false;
+                } else {
+                    self.stash = Some((ViewMode::Large, HashMap::new()));
+                }
+                return true;
+            }
+            Held::Places(made_in) => made_in,
+        };
+        if !made_in.arranged_freely() {
             return true;
         }
         let target = if self.mode.arranged_freely() { self.mode } else { made_in };
         if target != made_in && self.era == Era::Win2000 {
             return false;
         }
-        let (old, new) = (self.cell_size_of(made_in), self.cell_size_of(target));
-        let mut places = HashMap::new();
         self.moved.clear();
-        for (x, y, id) in list {
-            let at = if target == made_in { (*x, *y) } else { view_step((*x, *y), old, new) };
-            places.insert(id.clone(), at);
+        for (_, _, id) in list {
             self.moved.retain(|m| m != id);
             self.moved.push(id.clone());
         }
+        if target != made_in && self.items.is_empty() {
+            // Stepped once the items are measured (`measure`); meanwhile nothing lies there.
+            self.unstepped = Some((made_in, list.to_vec()));
+            self.places = Some(HashMap::new());
+            self.own_slots = true;
+            self.relayout();
+            self.changed = false;
+            return true;
+        }
+        self.place_moved(list, made_in, target);
+        true
+    }
+
+    /// Puts the moved icons' places `list` (made in view `made_in`) into view `target`, stepped
+    /// as the view's own step moves an icon when the two differ.
+    fn place_moved(&mut self, list: &[(i32, i32, String)], made_in: ViewMode, target: ViewMode) {
+        let (old, new) = (self.cell_size_of(made_in), self.cell_size_of(target));
+        let places: Places = list
+            .iter()
+            .map(|(x, y, id)| (id.clone(), if target == made_in { (*x, *y) } else { view_step((*x, *y), old, new) }))
+            .collect();
         if self.mode.arranged_freely() {
             self.places = Some(places);
+            self.own_slots = true;
             self.relayout();
             self.changed = false;
         } else {
             self.stash = Some((target, places));
+        }
+    }
+
+    /// The items have been measured (`measure`): places waiting for their step (`unstepped`)
+    /// are put into the view now. True if there were some.
+    fn step_unstepped(&mut self) -> bool {
+        if self.items.is_empty() {
+            return false;
+        }
+        let Some((made_in, list)) = self.unstepped.take() else { return false };
+        if self.mode.arranged_freely() {
+            let target = self.mode;
+            self.place_moved(&list, made_in, target);
+        } else {
+            // List or Details meanwhile: kept as made, stepped on the way back.
+            self.stash = Some((made_in, list.into_iter().map(|(x, y, id)| (id, (x, y))).collect()));
         }
         true
     }

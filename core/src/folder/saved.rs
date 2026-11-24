@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+pub use crate::desktop_icons::Held;
 use crate::desktop_icons::{Arrange, ViewMode};
 use crate::theme::Era;
 
@@ -93,13 +94,66 @@ pub struct Saved {
 pub const MOST_ARRANGED: usize = MOST;
 /// How many moved icons one record keeps at most (brief 105: the last moved).
 pub const MOST_MOVED: usize = 64;
-/// The longest item id or folder kept (MAX_PATH): a longer one is not kept (brief 105, 6: so
-/// the file has a bound).
+/// The longest item name or folder kept, in UTF-16 units as Windows counts (MAX_PATH): a longer
+/// one is not kept (brief 105, 6: so the file has a bound; brief 106, 4: counted as Windows
+/// counts, so a non-English name is not cut shorter). An item is kept by its name within its
+/// folder (`short_id`), so only the folder's own path is near it.
 pub const LONGEST: usize = 260;
+/// The largest coordinate kept: places outside 0..=FARTHEST are not kept (brief 106, 8).
+pub const FARTHEST: i32 = 65535;
 
-/// A record of moved icons: the view (Large or Small Icons) their places are in, and (x, y,
-/// item id) in the order they were moved (brief 105, 1).
-pub type MovedRecord = (ViewMode, Vec<(i32, i32, String)>);
+/// Whether `s` is short enough to keep (`LONGEST`, UTF-16 units).
+pub fn short_enough(s: &str) -> bool {
+    s.encode_utf16().count() <= LONGEST
+}
+
+/// A record of moved icons: what they hold (places in Large or Small Icons, or places in the
+/// order), and (x, y, item) in the order they were moved (brief 105, 1; brief 106, 2).
+pub type MovedRecord = (Held, Vec<(i32, i32, String)>);
+
+/// How an item of folder `dir` (a folder's path; None: My Computer, the Desktop place) is kept in
+/// the record: by its own name within the folder (brief 103, decision 7; brief 106, 4); an item
+/// that lies elsewhere (My Computer's own, a drive) by its whole id.
+pub fn short_id(dir: Option<&str>, id: &str) -> String {
+    if let Some(dir) = dir {
+        let dir = dir.trim_end_matches('\\');
+        if id.len() > dir.len() + 1
+            && id.is_char_boundary(dir.len())
+            && id[..dir.len()].eq_ignore_ascii_case(dir)
+            && id.as_bytes()[dir.len()] == b'\\'
+        {
+            let name = &id[dir.len() + 1..];
+            if !name.contains('\\') && !name.starts_with("::") {
+                return name.to_string();
+            }
+        }
+    }
+    id.to_string()
+}
+
+/// The item id a kept name stands for in folder `dir` (`short_id`'s other way): a name without a
+/// backslash is the folder's item of that name; anything else (a record of before brief 106,
+/// whole paths; My Computer's ids) is the id itself.
+pub fn full_id(dir: Option<&str>, kept: &str) -> String {
+    match dir {
+        Some(dir) if !kept.contains('\\') && !kept.starts_with("::") => format!("{}\\{kept}", dir.trim_end_matches('\\')),
+        _ => kept.to_string(),
+    }
+}
+
+fn held_word(held: Held) -> &'static str {
+    match held {
+        Held::Order => "order",
+        Held::Places(view) => view.word(),
+    }
+}
+
+fn held_of(word: &str) -> Option<Held> {
+    if word == "order" {
+        return Some(Held::Order);
+    }
+    ViewMode::from_word(word).filter(|v| v.arranged_freely()).map(Held::Places)
+}
 
 /// The look a record's word names (`Era::setting`).
 fn era_of(word: &str) -> Option<Era> {
@@ -221,24 +275,26 @@ impl Saved {
                 }
                 continue;
             }
-            // moved<TAB>look<TAB>view<TAB>folder<TAB>x y id<TAB>x y id... (no file name holds a
-            // tab). Before brief 103 a line "places" held every icon's place of a folder, and for a
-            // few hours of brief 103 "moved" had no look and no view: neither is read any more
-            // (those folders open in order once). The limits hold for what is read too.
+            // moved<TAB>look<TAB>large|small|order<TAB>folder<TAB>x y name<TAB>x y name... (no file
+            // name holds a tab; "order": x is the place in the order). Before brief 103 a line
+            // "places" held every icon's place of a folder, and for a few hours of brief 103
+            // "moved" had no look and no view: neither is read any more (those folders open in
+            // order once). Brief 105's lines held whole paths: read as they are (`full_id`), and
+            // written by name at the next change. The limits hold for what is read too.
             if let Some(rest) = line.strip_prefix("moved\t") {
                 let mut fields = rest.split('\t');
-                let (Some(look), Some(view), Some(folder)) = (fields.next(), fields.next(), fields.next()) else { continue };
-                let (Some(era), Some(view)) = (era_of(look), ViewMode::from_word(view)) else { continue };
-                if folder.is_empty() || folder.len() > LONGEST || !view.arranged_freely() {
+                let (Some(look), Some(held), Some(folder)) = (fields.next(), fields.next(), fields.next()) else { continue };
+                let (Some(era), Some(held)) = (era_of(look), held_of(held)) else { continue };
+                if folder.is_empty() || !short_enough(folder) {
                     continue;
                 }
                 let list: Vec<(i32, i32, String)> = fields
                     .filter_map(|f| {
                         let mut p = f.splitn(3, ' ');
-                        Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next().filter(|s| !s.is_empty() && s.len() <= LONGEST)?.to_string()))
+                        Some((p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next().filter(|s| !s.is_empty())?.to_string()))
                     })
                     .collect();
-                saved.remember_places(era, folder, view, list);
+                saved.remember_places(era, folder, held, list);
                 continue;
             }
             // last<TAB>look<TAB>folder<TAB>id<TAB>id...
@@ -246,10 +302,10 @@ impl Saved {
                 let mut fields = rest.split('\t');
                 let (Some(look), Some(folder)) = (fields.next(), fields.next()) else { continue };
                 let Some(era) = era_of(look) else { continue };
-                if folder.is_empty() || folder.len() > LONGEST {
+                if folder.is_empty() || !short_enough(folder) {
                     continue;
                 }
-                let list: Vec<String> = fields.filter(|f| !f.is_empty() && f.len() <= LONGEST).map(str::to_string).collect();
+                let list: Vec<String> = fields.filter(|f| !f.is_empty()).map(str::to_string).collect();
                 saved.remember_last(era, folder, list);
                 continue;
             }
@@ -336,10 +392,10 @@ impl Saved {
             }
         }
         for key in keys {
-            if let Some((view, list)) = self.places.get(key) {
-                // The key is "look<TAB>folder": the view goes between them.
+            if let Some((held, list)) = self.places.get(key) {
+                // The key is "look<TAB>folder": the view (or "order") goes between them.
                 let (look, folder) = key.split_once('\t').unwrap_or(("", key));
-                out += &format!("moved\t{look}\t{}\t{folder}", view.word());
+                out += &format!("moved\t{look}\t{}\t{folder}", held_word(*held));
                 for (x, y, id) in list {
                     out += &format!("\t{x} {y} {id}");
                 }
@@ -383,17 +439,20 @@ impl Saved {
         }
     }
 
-    /// Remembers where the icons the person moved in a folder lie in look `era`, in view `view`
-    /// (at most `MOST_MOVED`, the last moved; ids and folders longer than `LONGEST` not kept; at
-    /// most `MOST_ARRANGED` records, the one changed longest ago going); an empty list forgets.
-    /// True if the record changed.
-    pub fn remember_places(&mut self, era: Era, folder: &str, view: ViewMode, mut list: Vec<(i32, i32, String)>) -> bool {
+    /// Remembers where the icons the person moved in a folder lie in look `era`, as `held`
+    /// (places in a view, or in the order) (at most `MOST_MOVED`, the last moved; names and
+    /// folders longer than `LONGEST` and places outside 0..=`FARTHEST` not kept; at most
+    /// `MOST_ARRANGED` records, the one changed longest ago going); an empty list forgets. True
+    /// if the record changed.
+    pub fn remember_places(&mut self, era: Era, folder: &str, held: Held, mut list: Vec<(i32, i32, String)>) -> bool {
         let key = arranged_key(era, folder);
-        list.retain(|(_, _, id)| id.len() <= LONGEST);
+        let near = |v: i32| (0..=FARTHEST).contains(&v);
+        list.retain(|(x, y, id)| short_enough(id) && near(*x) && near(*y));
         if list.len() > MOST_MOVED {
             list.drain(..list.len() - MOST_MOVED);
         }
-        if list.is_empty() || folder.len() > LONGEST {
+        let view = held;
+        if list.is_empty() || !short_enough(folder) {
             let had = self.places.remove(&key).is_some();
             self.untouch(&key);
             return had;
@@ -412,11 +471,11 @@ impl Saved {
     /// view), as `remember_places` does; an empty list forgets. True if the record changed.
     pub fn remember_last(&mut self, era: Era, folder: &str, mut list: Vec<String>) -> bool {
         let key = arranged_key(era, folder);
-        list.retain(|id| id.len() <= LONGEST);
+        list.retain(|id| short_enough(id));
         if list.len() > MOST_MOVED {
             list.drain(..list.len() - MOST_MOVED);
         }
-        if list.is_empty() || folder.len() > LONGEST {
+        if list.is_empty() || !short_enough(folder) {
             let had = self.last.remove(&key).is_some();
             self.untouch(&key);
             return had;

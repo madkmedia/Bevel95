@@ -193,7 +193,8 @@ impl Desktop {
                 && mode.arranged_freely()
                 && let Some((was, places)) = self.stash.take()
             {
-                if was == mode {
+                // Auto Arrange keeps the order, whatever the view (brief 106, 2).
+                if was == mode || self.auto_arrange {
                     self.places = Some(places);
                     self.relayout();
                     return;
@@ -214,6 +215,21 @@ impl Desktop {
         // 95's three columns of large icons became three columns of small ones (`v1-small-open`).
         // Windows 2000 put them into rows as wide as the window again (`-view-v1-small-open`).
         if before.arranged_freely() && mode.arranged_freely() && self.places.is_some() && self.era != Era::Win2000 {
+            if self.items.is_empty() {
+                // Not read yet (a slow drive): the kept places themselves take the step (brief
+                // 106, 10), once the items are measured (98's Small Icons width is the widest
+                // name's: `unstepped`, as for a record of the other view); there are no cells to
+                // step.
+                let places = self.places.take().unwrap_or_default();
+                if self.unstepped.is_none() && !self.moved.is_empty() {
+                    let list = self.moved.iter().filter_map(|id| places.get(id).map(|&(x, y)| (x, y, id.clone()))).collect();
+                    self.unstepped = Some((before, list));
+                }
+                self.places = Some(HashMap::new());
+                self.own_slots = true;
+                self.relayout();
+                return;
+            }
             let new = self.cell_size();
             let cells: Vec<(i32, i32)> = self.cells.iter().map(|&c| super::view_step(c, (old_w, old_h), new)).collect();
             self.cells = cells;
@@ -241,9 +257,14 @@ impl Desktop {
             Era::Win95 => (SMALL_95, if fixed_list { SMALL_95.max(widest + COLUMN_PAD) } else { widest + COLUMN_PAD }),
             _ => (widest + COLUMN_PAD, widest + COLUMN_PAD),
         };
-        if (small, list) != (self.small_w, self.list_w) {
-            self.small_w = small;
-            self.list_w = list;
+        let changed = (small, list) != (self.small_w, self.list_w);
+        self.small_w = small;
+        self.list_w = list;
+        // Places made in the other view, waiting for this measuring (brief 106, 1).
+        if self.step_unstepped() {
+            return;
+        }
+        if changed {
             if self.mode == ViewMode::Small && self.host == Host::Window && self.places.is_some() && !self.moved.is_empty() {
                 // The icons the person moved stay where they were left, the others at their own
                 // slots in the new columns (found by the live try of brief 105: a window opened

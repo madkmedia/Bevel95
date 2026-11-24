@@ -3,7 +3,7 @@
 
 use super::saved::{Kept, Relaid, Saved, kept};
 use super::*;
-use crate::desktop_icons::{Arrange, Item, Picture, ViewMode};
+use crate::desktop_icons::{Arrange, Held, Item, Picture, ViewMode};
 use crate::fb::Icon;
 
 fn fonts() -> (Font, Font) {
@@ -95,7 +95,7 @@ fn only_moved_icons_are_kept_and_put_back_when_the_window_opens_again() {
     let apple = at(&w, &id("apple"));
     // Opened again: a new window of the same folder.
     let mut again = window(Era::Win95, true, fa());
-    assert!(again.view.load_moved(&kept, ViewMode::Large));
+    assert!(again.view.load_moved(&kept, Held::Places(ViewMode::Large)));
     assert_eq!((at(&again, &id("fig")), at(&again, &id("apple"))), (fig, apple));
     assert_eq!(again.view.moved_ids(), [id("fig"), id("apple")]);
     // Brief 105, 4: the others stand where they stood, each at its own slot in the order, and the
@@ -122,7 +122,7 @@ fn an_icon_whose_slot_is_covered_takes_the_next_free_cell() {
     w.view.move_ids(&[id("lemon")], (berry.0 - lemon.0, berry.1 - lemon.1));
     let kept = w.view.moved_places();
     let mut again = window(Era::Win95, true, fa());
-    assert!(again.view.load_moved(&kept, ViewMode::Large));
+    assert!(again.view.load_moved(&kept, Held::Places(ViewMode::Large)));
     assert_eq!(at(&again, &id("lemon")), berry);
     // berry's slot is covered: it takes the first free cell from there on (lemon's old one, the
     // only free one), every other icon at its own slot.
@@ -145,7 +145,7 @@ fn a_moved_icon_stays_when_a_small_window_gets_its_scroll_bar() {
     let kept = w.view.moved_places();
     let mut again = FolderWindow::new(Era::Win95, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (340, 290));
     again.layout(&Fonts { regular: &r, bold: &b });
-    assert!(again.view.load_moved(&kept, ViewMode::Large));
+    assert!(again.view.load_moved(&kept, Held::Places(ViewMode::Large)));
     again.set_items(fa());
     assert_eq!(again.view.moved_places(), kept);
     assert_eq!(names(&again)[2], "cherry", "still in its order, only its place is its own");
@@ -336,27 +336,27 @@ fn the_record_is_read_written_and_pruned() {
     use saved::arranged_key;
     let e = Era::Win95;
     let mut s = Saved::default();
-    assert!(s.remember_places(e, "c:\\fa", ViewMode::Large, vec![(446, 332, "C:\\fa\\fig.txt".into())]));
+    assert!(s.remember_places(e, "c:\\fa", Held::Places(ViewMode::Large), vec![(446, 332, "C:\\fa\\fig.txt".into())]));
     assert!(s.remember_last(e, "c:\\fb", vec!["C:\\fb\\win.com".into()]));
     let back = Saved::parse(&s.text());
-    assert_eq!(back.places_of(e, "c:\\fa"), Some((ViewMode::Large, vec![(446, 332, "C:\\fa\\fig.txt".to_string())])));
+    assert_eq!(back.places_of(e, "c:\\fa"), Some((Held::Places(ViewMode::Large), vec![(446, 332, "C:\\fa\\fig.txt".to_string())])));
     assert_eq!(back.last_of(e, "c:\\fb"), ["C:\\fb\\win.com"]);
     assert_eq!(back.arranged, [arranged_key(e, "c:\\fa"), arranged_key(e, "c:\\fb")]);
     // Brief 105, 7: the same again is no change (nothing to write).
     let mut same = back.clone();
-    assert!(!same.remember_places(e, "c:\\fa", ViewMode::Large, vec![(446, 332, "C:\\fa\\fig.txt".into())]));
+    assert!(!same.remember_places(e, "c:\\fa", Held::Places(ViewMode::Large), vec![(446, 332, "C:\\fa\\fig.txt".into())]));
     assert!(!same.remember_last(e, "c:\\fb", vec!["C:\\fb\\win.com".into()]));
     assert!(!same.remember_last(e, "c:\\nothing", Vec::new()));
     // The view is part of the record: the same places in another view are a change.
-    assert!(same.remember_places(e, "c:\\fa", ViewMode::Small, vec![(446, 332, "C:\\fa\\fig.txt".into())]));
+    assert!(same.remember_places(e, "c:\\fa", Held::Places(ViewMode::Small), vec![(446, 332, "C:\\fa\\fig.txt".into())]));
     // An empty list forgets.
     let mut t = back.clone();
-    assert!(t.remember_places(e, "c:\\fa", ViewMode::Large, Vec::new()));
+    assert!(t.remember_places(e, "c:\\fa", Held::Places(ViewMode::Large), Vec::new()));
     assert!(t.places_of(e, "c:\\fa").is_none() && t.arranged == [arranged_key(e, "c:\\fb")]);
     // At most MOST_ARRANGED folders: the one changed longest ago goes; a change makes it new.
     let mut u = Saved::default();
     for k in 0..saved::MOST_ARRANGED + 5 {
-        u.remember_places(e, &format!("c:\\f{k}"), ViewMode::Large, vec![(0, 0, "x".into())]);
+        u.remember_places(e, &format!("c:\\f{k}"), Held::Places(ViewMode::Large), vec![(0, 0, "x".into())]);
         if k == 10 {
             u.remember_last(e, "c:\\f0", vec!["y".into()]);
         }
@@ -368,7 +368,7 @@ fn the_record_is_read_written_and_pruned() {
     assert_eq!(reread.arranged, u.arranged, "the age survives the file");
     // At most MOST_MOVED icons for one folder: the last moved.
     let mut v = Saved::default();
-    v.remember_places(e, "c:\\big", ViewMode::Large, (0..saved::MOST_MOVED as i32 + 10).map(|i| (i, i, format!("{i}"))).collect());
+    v.remember_places(e, "c:\\big", Held::Places(ViewMode::Large), (0..saved::MOST_MOVED as i32 + 10).map(|i| (i, i, format!("{i}"))).collect());
     let (_, big) = v.places_of(e, "c:\\big").unwrap();
     assert_eq!(big.len(), saved::MOST_MOVED);
     assert_eq!(big[0].2, "10");
@@ -402,7 +402,7 @@ fn the_limits_hold_when_the_file_is_read() {
     assert!(s.places_of(Era::Win98, "c:\\f249").is_some());
     let one = Saved::parse(text.lines().next().unwrap());
     let (view, big) = one.places_of(Era::Win98, "c:\\big").unwrap();
-    assert_eq!(view, ViewMode::Large);
+    assert_eq!(view, Held::Places(ViewMode::Large));
     assert_eq!(big.len(), saved::MOST_MOVED);
     assert_eq!(big[0].2, "id36", "the last moved");
     // Too long, or a view that holds no places.
@@ -417,7 +417,7 @@ fn the_limits_hold_when_the_file_is_read() {
 #[test]
 fn a_record_belongs_to_its_look() {
     let mut s = Saved::default();
-    s.remember_places(Era::Win95, "c:\\fa", ViewMode::Large, vec![(446, 332, id("fig"))]);
+    s.remember_places(Era::Win95, "c:\\fa", Held::Places(ViewMode::Large), vec![(446, 332, id("fig"))]);
     s.remember_last(Era::Win98, "c:\\fa", vec![id("fig")]);
     let back = Saved::parse(&s.text());
     assert!(back.places_of(Era::Win95, "c:\\fa").is_some());
@@ -426,7 +426,7 @@ fn a_record_belongs_to_its_look() {
     assert!(back.last_of(Era::Win95, "c:\\fa").is_empty() && back.last_of(Era::Win2000, "c:\\fa").is_empty());
     // Forgetting one look's record leaves the other's.
     let mut t = back.clone();
-    t.remember_places(Era::Win95, "c:\\fa", ViewMode::Large, Vec::new());
+    t.remember_places(Era::Win95, "c:\\fa", Held::Places(ViewMode::Large), Vec::new());
     assert_eq!(t.last_of(Era::Win98, "c:\\fa"), [id("fig")]);
     assert_eq!(t.arranged, [saved::arranged_key(Era::Win98, "c:\\fa")]);
 }
@@ -454,13 +454,13 @@ fn a_place_belongs_to_the_view_it_was_made_in() {
             // Opened again in Small Icons from the Small record: the same place.
             let mut again = window(era, true, fa());
             again.set_view_mode(ViewMode::Small);
-            assert!(again.view.load_moved(&small, ViewMode::Small));
+            assert!(again.view.load_moved(&small, Held::Places(ViewMode::Small)));
             assert_eq!(again.view.moved_places(), small);
         }
         // Opened in Small Icons from a Large record.
         let mut other = window(era, true, fa());
         other.set_view_mode(ViewMode::Small);
-        let used = other.view.load_moved(&large, ViewMode::Large);
+        let used = other.view.load_moved(&large, Held::Places(ViewMode::Large));
         if era == Era::Win2000 {
             assert!(!used, "2000: not used, the record goes");
             assert!(other.view.moved_places().is_empty());
@@ -476,7 +476,7 @@ fn a_place_belongs_to_the_view_it_was_made_in() {
         for list in [ViewMode::Details, ViewMode::List] {
             let mut d = window(era, true, fa());
             d.set_view_mode(list);
-            assert!(d.view.load_moved(&large, ViewMode::Large));
+            assert!(d.view.load_moved(&large, Held::Places(ViewMode::Large)));
             assert_eq!(d.view.moved_view(), ViewMode::Large, "{era:?} {list:?}");
             assert_eq!(d.view.moved_places(), large);
             d.set_view_mode(ViewMode::Large);
@@ -500,7 +500,7 @@ fn a_moved_icon_stays_when_a_small_icons_window_measures_its_items() {
         let mut again = FolderWindow::new(era, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (640, 420));
         again.layout(&Fonts { regular: &r, bold: &b });
         again.set_view_mode(ViewMode::Small);
-        assert!(again.view.load_moved(&kept, ViewMode::Small));
+        assert!(again.view.load_moved(&kept, Held::Places(ViewMode::Small)));
         again.set_items(fa());
         assert_eq!(again.view.moved_places(), kept, "{era:?}");
         assert_eq!(at(&again, &id("cherry")), at(&w, &id("cherry")), "{era:?}");
@@ -543,13 +543,31 @@ fn auto_arrange_keeps_the_order_after_a_reopen() {
     let shown = order(&w);
     let k = shown.iter().position(|n| n == "apple").unwrap();
     assert_eq!((shown[k - 1].as_str(), shown[k + 1].as_str()), ("fig", "grape"));
+    // Brief 106, 2: what is kept is the place in the order itself.
+    assert_eq!(w.view.moved_held(), Held::Order);
     let kept = w.view.moved_places();
+    assert_eq!(kept, vec![(k as i32, 0, id("apple"))]);
     let mut again = window(Era::Win95, true, fa());
     again.set_auto_arrange(true);
-    assert!(again.view.load_moved(&kept, ViewMode::Large));
+    assert!(again.view.load_moved(&kept, Held::Order));
     assert_eq!(order(&again), shown, "after a reopen");
     again.view.repack();
     assert_eq!(order(&again), shown, "after a repack");
+    // Brief 106, 2: opened again as the program does it (the record before the items) in a
+    // narrower window, which gets its scroll bar at the first reading and so has another number
+    // of columns: still between the same two.
+    let (r, b) = fonts();
+    for size in [(340, 290), (250, 290), (900, 420)] {
+        let mut narrow = FolderWindow::new(Era::Win95, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, size);
+        narrow.layout(&Fonts { regular: &r, bold: &b });
+        narrow.set_auto_arrange(true);
+        assert!(narrow.view.load_moved(&kept, Held::Order));
+        narrow.set_items(fa());
+        let o = order(&narrow);
+        let k = o.iter().position(|n| n == "apple").unwrap();
+        assert_eq!((o[k - 1].as_str(), o[k + 1].as_str()), ("fig", "grape"), "{size:?}: {o:?}");
+        assert_eq!(narrow.view.moved_places(), kept, "{size:?}");
+    }
 }
 
 /// Brief 105, 10: a rename carries the icon's place along (what is kept names it by its new
@@ -569,4 +587,216 @@ fn a_rename_carries_the_place_along() {
     w.set_view_mode(ViewMode::Details);
     w.view.renamed(&id("figs"), &id("fig"), "fig.txt");
     assert_eq!(w.view.moved_places(), vec![(before[0].0, before[0].1, id("fig"))]);
+}
+
+/// A window made as the program makes one: its view first, the record laid out before the items
+/// come (`load_places` runs at the opening, Back, Up), then the items with their measuring.
+fn opened(era: Era, size: (i32, i32), mode: ViewMode, kept: &[(i32, i32, String)], held: Held, items: Vec<Item>) -> FolderWindow {
+    let (r, b) = fonts();
+    let mut w = FolderWindow::new(era, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, size);
+    w.layout(&Fonts { regular: &r, bold: &b });
+    w.set_view_mode(mode);
+    assert!(w.view.load_moved(kept, held));
+    w.set_items(items);
+    w
+}
+
+fn file(n: &str) -> Item {
+    Item {
+        id: format!("C:\\fa\\{n}"),
+        name: n.to_string(),
+        picture: Picture::Own(None),
+        shortcut: false,
+        folder: false,
+        type_name: "Text Document".into(),
+        size: 4,
+        modified: 0,
+    }
+}
+
+/// Brief 106, 1: a record made in the other free view is stepped only once the items have come
+/// and been measured (98's Small Icons width is the widest name's, not known before). Loaded
+/// BEFORE the items, as the program does (an opening, a Back from the window's copy), it lands
+/// where the same record loaded after the measuring lands, in 95 and 98, both ways.
+#[test]
+fn a_record_of_the_other_view_is_stepped_after_the_measuring() {
+    // Longer names than the start's width, so a step with the unmeasured width shows.
+    let long: Vec<Item> = FA.iter().map(|n| file(&format!("{n} with a rather long name.txt"))).collect();
+    let fig = "C:\\fa\\fig with a rather long name.txt".to_string();
+    for era in [Era::Win95, Era::Win98] {
+        for (made, open) in [(ViewMode::Large, ViewMode::Small), (ViewMode::Small, ViewMode::Large)] {
+            let mut w = window(era, true, long.clone());
+            w.set_view_mode(made);
+            let f = at(&w, &fig);
+            // Into the third column, second row of the view it is made in.
+            let target = (w.view.area().x + 2 * (if made == ViewMode::Large { 75 } else { at(&w, &long[1].id).0 - at(&w, &long[0].id).0 }) + 3, f.1 + 40);
+            w.view.move_ids(std::slice::from_ref(&fig), (target.0 - f.0, target.1 - f.1));
+            let kept = w.view.moved_places();
+            // Loaded after the measuring: the right step.
+            let mut known = window(era, true, long.clone());
+            known.set_view_mode(open);
+            assert!(known.view.load_moved(&kept, Held::Places(made)));
+            let right = known.view.moved_places();
+            // Loaded before the items, as the program does.
+            let w2 = opened(era, (640, 420), open, &kept, Held::Places(made), long.clone());
+            assert_eq!(w2.view.moved_places(), right, "{era:?} {made:?} to {open:?}");
+            assert_eq!(w2.view.moved_held(), Held::Places(open));
+        }
+    }
+}
+
+/// Brief 106, 3: a change of look while a window is open: the old look's arrangement goes at
+/// once and the new look's own record is laid out. To 95 without the tree (the view is kept):
+/// 98's "moved last" order and its moved icon go; between 98 and 2000: one's moved places go,
+/// the other's own record comes.
+#[test]
+fn a_change_of_look_shows_the_new_looks_own_record() {
+    // 98 with its web view (an order with fig last) to 95.
+    let mut w = window(Era::Win98, true, fa());
+    w.view.move_ids(&[id("fig")], (171, 173));
+    let moved = w.view.moved_ids().to_vec();
+    w.view.pack_moved_last(&moved);
+    assert_eq!(names(&w).last().map(String::as_str), Some("fig"));
+    w.set_era(Era::Win95);
+    w.view.forget_moved();
+    assert_eq!(names(&w), FA, "98's order is not shown in 95");
+    assert!(w.view.last_order().is_empty() && w.view.moved_ids().is_empty() && w.view.moved_places().is_empty());
+    // 95's own record of the folder.
+    let fresh = window(Era::Win95, true, fa());
+    let c = at(&fresh, &id("cherry"));
+    let mine = vec![(c.0 + 300, c.1 + 200, id("cherry"))];
+    assert!(w.view.load_moved(&mine, Held::Places(ViewMode::Large)));
+    assert_eq!(w.view.moved_places(), mine);
+    assert_eq!(at(&w, &id("berry")), at(&fresh, &id("berry")));
+    // 98 (places kept: no web view) to 2000 and back.
+    for (from, to) in [(Era::Win98, Era::Win2000), (Era::Win2000, Era::Win98)] {
+        let mut w = window(from, true, fa());
+        w.view.move_ids(&[id("fig")], (171, 173));
+        w.set_era(to);
+        w.view.forget_moved();
+        assert!(w.view.moved_places().is_empty(), "{from:?} to {to:?}: the old look's places go");
+        assert_eq!(all(&w), all(&window(to, true, fa())), "{from:?} to {to:?}: in order");
+        let theirs = vec![(400, 250, id("apple"))];
+        assert!(w.view.load_moved(&theirs, Held::Places(ViewMode::Large)));
+        assert_eq!(w.view.moved_places(), theirs, "{from:?} to {to:?}: the new look's own record");
+    }
+}
+
+/// Brief 106, 4: an item is kept by its own name within its folder (My Computer's and the
+/// Desktop place's by their ids), and the length is counted as Windows counts (UTF-16 units),
+/// so a non-English name is kept like any other.
+#[test]
+fn items_are_kept_by_name_and_counted_as_windows_counts() {
+    use saved::{full_id, short_id};
+    let dir = Some("C:\\Users\\x\\fa");
+    assert_eq!(short_id(dir, "C:\\Users\\x\\fa\\apple.txt"), "apple.txt");
+    assert_eq!(short_id(dir, "c:\\users\\X\\FA\\apple.txt"), "apple.txt", "Windows' names know no case");
+    assert_eq!(full_id(dir, "apple.txt"), "C:\\Users\\x\\fa\\apple.txt");
+    assert_eq!(short_id(Some("C:\\"), "C:\\win.com"), "win.com");
+    assert_eq!(full_id(Some("C:\\"), "win.com"), "C:\\win.com");
+    // Not of this folder, My Computer's own, a drive: the whole id, both ways.
+    for id in ["C:\\Users\\x\\fb\\pear.txt", "C:\\Users\\x\\fa\\sub\\pear.txt", "::printers", "C:\\"] {
+        assert_eq!(short_id(dir, id), id);
+        assert_eq!(full_id(dir, &short_id(dir, id)), id);
+        assert_eq!(short_id(None, id), id);
+    }
+    // A record of brief 105 (whole paths) is still read as it is.
+    assert_eq!(full_id(dir, "C:\\Users\\x\\fa\\apple.txt"), "C:\\Users\\x\\fa\\apple.txt");
+    // 200 Japanese letters: 600 bytes, 200 units: kept; 261 units: not.
+    let e = Era::Win98;
+    let folder: String = "\u{65e5}".repeat(250);
+    let name: String = "\u{672c}".repeat(200);
+    let mut s = Saved::default();
+    assert!(s.remember_places(e, &folder, Held::Places(ViewMode::Large), vec![(1, 2, name.clone())]));
+    let back = Saved::parse(&s.text());
+    assert_eq!(back.places_of(e, &folder), Some((Held::Places(ViewMode::Large), vec![(1, 2, name)])));
+    assert!(!s.remember_places(e, "c:\\fx", Held::Places(ViewMode::Large), vec![(1, 2, "\u{672c}".repeat(261))]));
+    assert!(s.places_of(e, "c:\\fx").is_none());
+    // An emoji is two units, as Windows counts it.
+    assert!(saved::short_enough(&"\u{1F600}".repeat(130)) && !saved::short_enough(&"\u{1F600}".repeat(131)));
+}
+
+/// Brief 106, 2: the record says "order" with Auto Arrange on, and is read back so.
+#[test]
+fn an_order_record_is_written_and_read() {
+    let mut s = Saved::default();
+    assert!(s.remember_places(Era::Win95, "c:\\fa", Held::Order, vec![(5, 0, "apple.txt".into())]));
+    assert!(s.text().contains("moved\twin95\torder\tc:\\fa\t5 0 apple.txt") || s.text().contains("\torder\tc:\\fa\t5 0 apple.txt"));
+    let back = Saved::parse(&s.text());
+    assert_eq!(back.places_of(Era::Win95, "c:\\fa"), Some((Held::Order, vec![(5, 0, "apple.txt".to_string())])));
+    // An order record waits while Auto Arrange is off (it is not shown as places).
+    let mut w = window(Era::Win95, true, fa());
+    assert!(w.view.load_moved(&[(5, 0, id("apple"))], Held::Order));
+    assert_eq!(names(&w), FA);
+}
+
+/// Brief 106, 6: a new file takes the first free cell (as before brief 105); "its own slot" is
+/// the rule only when a window is laid out from a record.
+#[test]
+fn a_new_file_takes_the_first_free_cell() {
+    for era in Era::ALL {
+        let mut w = window(era, true, fa());
+        let berry = at(&w, &id("berry"));
+        let without: Vec<Item> = fa().into_iter().filter(|i| i.id != id("berry")).collect();
+        w.set_items(without.clone());
+        let mut with_new = without;
+        with_new.push(file("zz.txt"));
+        w.set_items(with_new);
+        assert_eq!(at(&w, "C:\\fa\\zz.txt"), berry, "{era:?}: the gap berry left is the first free cell");
+    }
+}
+
+/// Brief 106, 8: places outside 0..=65535 are dropped when the file is read and never kept.
+#[test]
+fn places_far_away_are_not_kept() {
+    let s = Saved::parse("moved\twin95\tlarge\tc:\\fa\t70000 1 a\t-1 2 b\t5 65536 c\t65535 0 d\t2147483647 1 e\n");
+    assert_eq!(s.places_of(Era::Win95, "c:\\fa"), Some((Held::Places(ViewMode::Large), vec![(65535, 0, "d".to_string())])));
+    let mut t = Saved::default();
+    assert!(!t.remember_places(Era::Win95, "c:\\fa", Held::Places(ViewMode::Large), vec![(i32::MAX, 0, "a".into()), (-5, 0, "b".into())]));
+    assert!(t.places_of(Era::Win95, "c:\\fa").is_none());
+}
+
+/// Brief 106, 9: in a window one column wide, moved icons that cover more cells than the grid's
+/// spare rows: the others get further rows, never the corner on top of another.
+#[test]
+fn icons_that_find_no_cell_get_further_rows() {
+    let (r, b) = fonts();
+    let mut probe = FolderWindow::new(Era::Win95, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (130, 400));
+    probe.layout(&Fonts { regular: &r, bold: &b });
+    probe.set_items(fa());
+    assert_eq!(at(&probe, &id("berry")).0, at(&probe, &id("apple")).0, "one column");
+    // Eight icons each lying across two rows: sixteen rows covered, more than 12 + 2.
+    let kept: Vec<(i32, i32, String)> = FA[..8].iter().enumerate().map(|(k, n)| (10, 40 + 150 * k as i32, id(n))).collect();
+    let w = opened(Era::Win95, (130, 400), ViewMode::Large, &kept, Held::Places(ViewMode::Large), fa());
+    let cells = all(&w);
+    for (i, a) in cells.iter().enumerate() {
+        for (j, c) in cells.iter().enumerate().skip(i + 1) {
+            assert!((a.0 - c.0).abs() >= 75 || (a.1 - c.1).abs() >= 75, "{} and {} lie on each other: {a:?} {c:?}", FA[i], FA[j]);
+        }
+    }
+}
+
+/// Brief 106, 10: a change of view before the folder is read steps the kept places themselves
+/// (once the items are measured): the same as the step made with the items there.
+#[test]
+fn a_view_change_before_the_reading_steps_the_places() {
+    let long: Vec<Item> = FA.iter().map(|n| file(&format!("{n} with a rather long name.txt"))).collect();
+    let fig = "C:\\fa\\fig with a rather long name.txt".to_string();
+    for era in [Era::Win95, Era::Win98] {
+        let mut w = window(era, true, long.clone());
+        w.view.move_ids(std::slice::from_ref(&fig), (171, 173));
+        let kept = w.view.moved_places();
+        // With the items there: Large, then Small.
+        w.set_view_mode(ViewMode::Small);
+        let right = w.view.moved_places();
+        // Before the reading: opened in Large from the record, Small at once, then the items.
+        let (r, b) = fonts();
+        let mut early = FolderWindow::new(era, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (640, 420));
+        early.layout(&Fonts { regular: &r, bold: &b });
+        assert!(early.view.load_moved(&kept, Held::Places(ViewMode::Large)));
+        early.set_view_mode(ViewMode::Small);
+        early.set_items(long.clone());
+        assert_eq!(early.view.moved_ids(), std::slice::from_ref(&fig), "{era:?}");
+        assert_eq!(early.view.moved_places(), right, "{era:?}");
+    }
 }
