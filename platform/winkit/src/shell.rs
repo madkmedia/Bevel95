@@ -272,6 +272,12 @@ pub fn read_item(s: &Seen, era: Era) -> Item {
             Some(own) => Picture::Own(Some(own)),
             None => Picture::Kind(file_kinds::Kind::Program),
         },
+        // A file that names a picture of its own keeps it (an Internet Shortcut of a Steam game:
+        // issue 8, brief 100); else the look's picture of its kind.
+        Some(Choice::OwnOrLook) => match names_own_picture(&s.path).then(|| large_file_icon(&path)).flatten() {
+            Some(own) => Picture::Own(Some(own)),
+            None => Picture::Kind(file_kinds::Kind::Ending),
+        },
         Some(Choice::Today) => Picture::Own(large_file_icon(&path)),
     };
     let type_name = decision.and_then(|d| d.type_name).map_or(today_type, str::to_string);
@@ -445,6 +451,8 @@ pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>, era: Era)
         None => Picture::Folder,
         Some(Choice::Look(k)) => Picture::Kind(k),
         Some(Choice::OwnOrProgram) => Picture::Kind(file_kinds::Kind::Program),
+        // The kind's picture at once; a picture of its own replaces it when read (`own_picture`).
+        Some(Choice::OwnOrLook) => Picture::Kind(file_kinds::Kind::Ending),
         Some(Choice::Today) => kind.index.map_or(Picture::Own(None), |i| Picture::Shell(pictures_at(i))),
     };
     let type_name = decision.and_then(|d| d.type_name).map_or(kind.type_name, str::to_string);
@@ -455,7 +463,33 @@ pub fn quick_item(s: &Seen, kinds: &mut HashMap<(String, bool), Kind>, era: Era)
 /// thread): not for a kind whose picture is the look's own (`file_kinds::Choice::Look`).
 pub fn reads_own_picture(path: &Path, era: Era) -> bool {
     let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    !matches!(file_kinds::decide(era, &file_name).picture, Choice::Look(_))
+    match file_kinds::decide(era, &file_name).picture {
+        Choice::Look(_) => false,
+        // An Internet Shortcut: only if it names a picture of its own (brief 100).
+        Choice::OwnOrLook => names_own_picture(path),
+        _ => true,
+    }
+}
+
+/// Whether an Internet Shortcut names a picture of its own: its `[InternetShortcut]` section's
+/// `IconFile` line, the one thing asked of the file (Windows' own reader of such files,
+/// `GetPrivateProfileStringW`; brief 100, issue 8: a Steam game's shortcut names the game's icon).
+fn names_own_picture(path: &Path) -> bool {
+    let mut buf = [0u16; 520];
+    let (section, key, empty, file) = (wide("InternetShortcut"), wide("IconFile"), wide(""), wide(&path.to_string_lossy()));
+    // SAFETY: null-terminated strings and a buffer of the size given.
+    let n = unsafe {
+        windows_sys::Win32::System::WindowsProgramming::GetPrivateProfileStringW(
+            section.as_ptr(),
+            key.as_ptr(),
+            empty.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+            file.as_ptr(),
+        )
+    } as usize;
+    let line = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
+    file_kinds::names_own_picture((n > 0).then_some(line.as_str()))
 }
 
 /// A file's own picture (an application's, a shortcut's: read from the file), when it is not its

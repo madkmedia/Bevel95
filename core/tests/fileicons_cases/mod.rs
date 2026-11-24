@@ -46,6 +46,8 @@ fn items(era: Era) -> (Vec<Item>, Vec<usize>) {
             let picture = match d.picture {
                 Choice::Look(k) => Picture::Kind(k),
                 Choice::OwnOrProgram if NO_ICON.contains(&file) => Picture::Kind(Kind::Program),
+                // The Reference PCs' url.url names no picture of its own: the kind's (brief 100).
+                Choice::OwnOrLook => Picture::Kind(Kind::Ending),
                 _ => {
                     masked.push(i);
                     Picture::Own(None)

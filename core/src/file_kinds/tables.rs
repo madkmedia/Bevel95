@@ -5,7 +5,7 @@
 //! own); an ending that showed the unknown page (no class, a MIME type only, a class without a
 //! picture or whose picture was not on the disk) is left out and keeps today's name and picture.
 
-use super::Shown::{self, Fixed, Own, Program};
+use super::Shown::{self, Fixed, Own, OwnOrFixed, Program};
 /// Windows 95's kinds.
 #[rustfmt::skip]
 pub(super) const WIN95: &[(&str, &str, Shown)] = &[
@@ -85,7 +85,7 @@ pub(super) const WIN95: &[(&str, &str, Shown)] = &[
     ("ttf", "TrueType Font file", Fixed("shell32-156")),
     ("txt", "Text Document", Fixed("shell32-152")),
     ("uls", "User Location Service", Fixed("conf-100")),
-    ("url", "Internet Shortcut", Fixed("url-102")),
+    ("url", "Internet Shortcut", OwnOrFixed("url-102")),
     ("vxd", "Virtual device driver", Fixed("shell32-154")),
     ("wav", "Wave Sound", Fixed("sndrec32-15")),
     ("wht", "Microsoft NetMeeting Whiteboard Document", Fixed("wb32-106")),
@@ -199,7 +199,7 @@ pub(super) const WIN98: &[(&str, &str, Shown)] = &[
     ("ttf", "TrueType Font file", Fixed("shell32-156")),
     ("txt", "Text Document", Fixed("shell32-152")),
     ("uls", "Internet Location Service", Fixed("conf-91")),
-    ("url", "Internet Shortcut", Fixed("url-102")),
+    ("url", "Internet Shortcut", OwnOrFixed("url-102")),
     ("vbs", "VBScript Script File", Fixed("wscript-101")),
     ("vcf", "VCard File", Fixed("wab-102")),
     ("vrml", "VRMLBrowserCtl Object", Fixed("iexplore-32528")),
@@ -362,7 +362,7 @@ pub(super) const WIN2000: &[(&str, &str, Shown)] = &[
     ("txt", "Text Document", Fixed("shell32-152")),
     ("udl", "Microsoft Data Link", Fixed("oledb32-202")),
     ("uls", "Internet Location Service", Fixed("conf-90")),
-    ("url", "Internet Shortcut", Fixed("url-102")),
+    ("url", "Internet Shortcut", OwnOrFixed("url-102")),
     ("vbe", "VBScript Encoded Script File", Fixed("wscript-101")),
     ("vbs", "VBScript Script File", Fixed("wscript-101")),
     ("vcf", "vCard File", Fixed("wab-IDI_ICON_VCARD")),

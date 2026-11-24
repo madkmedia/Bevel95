@@ -34,6 +34,9 @@ pub enum Shown {
     Program,
     /// The file's own picture (icons, cursors, shortcuts): today's shell shows those.
     Own,
+    /// The file's own picture where it names one, else the look's picture of that name (an
+    /// Internet Shortcut with its own `IconFile`, as a Steam game's: issue 8, brief 100).
+    OwnOrFixed(&'static str),
 }
 
 /// Which of the look's pictures an item shows (`desktop_icons::Picture::Kind`).
@@ -53,6 +56,9 @@ pub enum Choice {
     /// The file's own picture if it has one (read from the shell off the window's thread), else
     /// the look's program picture.
     OwnOrProgram,
+    /// The file's own picture if it has one (the shell's picture of the file is not the one it
+    /// gives its kind), else the look's picture of its kind (brief 100: a file's own picture wins).
+    OwnOrLook,
     /// Today's picture from the shell.
     Today,
 }
@@ -76,8 +82,17 @@ pub fn decide(era: Era, file_name: &str) -> Decision {
         Shown::Fixed(_) => Choice::Look(Kind::Ending),
         Shown::Program => Choice::OwnOrProgram,
         Shown::Own => Choice::Today,
+        Shown::OwnOrFixed(_) => Choice::OwnOrLook,
     };
     Decision { picture, type_name: Some(type_name) }
+}
+
+/// Whether a file of a kind that may carry its own picture (`Choice::OwnOrLook`: an Internet
+/// Shortcut) names one: its `IconFile` (the one line asked of the file; `None`: no such line) holds
+/// something (brief 100, issue 8). The shell cannot tell: for an Internet Shortcut without a picture
+/// of its own it answers with today's browser's picture, not its kind's.
+pub fn names_own_picture(icon_file: Option<&str>) -> bool {
+    icon_file.is_some_and(|f| !f.trim().is_empty())
 }
 
 /// A file name's ending as Windows found it (`PathFindExtension`): what follows the last dot, if
@@ -118,7 +133,7 @@ pub fn picture(era: Era, depth: Depth, kind: Kind, id: &str, small: bool) -> Opt
     let name = match kind {
         Kind::Program => PROGRAM,
         Kind::Ending => match known(era, &ending(file_name_of(id))?)?.1 {
-            Shown::Fixed(name) => name,
+            Shown::Fixed(name) | Shown::OwnOrFixed(name) => name,
             _ => return None,
         },
     };
@@ -196,7 +211,7 @@ mod tests {
             assert_eq!(known(era, "exe"), Some(("Application", Shown::Program)));
             assert_eq!(known(era, "ico"), Some(("Icon", Shown::Own)));
             assert_eq!(known(era, "lnk"), Some(("Shortcut", Shown::Own)));
-            assert_eq!(known(era, "url"), Some(("Internet Shortcut", Shown::Fixed("url-102"))));
+            assert_eq!(known(era, "url"), Some(("Internet Shortcut", Shown::OwnOrFixed("url-102"))));
             // Not known to any of them (or only as a MIME type, with the unknown page).
             for e in ["pdf", "docx", "mp4", "zip", "json", "md", "7z"] {
                 assert_eq!(known(era, e), None, "{era:?} {e}");
@@ -259,6 +274,13 @@ mod tests {
             assert_eq!(decide(era, "a.scr"), Decision { picture: Choice::OwnOrProgram, type_name: Some("Screen Saver") });
             assert_eq!(decide(era, "a.ico"), Decision { picture: Choice::Today, type_name: Some("Icon") });
             assert_eq!(decide(era, "a.lnk"), Decision { picture: Choice::Today, type_name: Some("Shortcut") });
+            // Issue 8 (brief 100): an Internet Shortcut keeps a picture of its own (a Steam game's),
+            // and one without shows the old kind's picture; its Type name stays the look's.
+            assert_eq!(decide(era, "Game.url"), Decision { picture: Choice::OwnOrLook, type_name: Some("Internet Shortcut") });
+            assert!(names_own_picture(Some("C:\\Program Files (x86)\\Steam\\steam\\games\\game.ico")), "its own picture");
+            assert!(!names_own_picture(None), "no IconFile line: the kind's picture");
+            assert!(!names_own_picture(Some("  ")), "an empty IconFile: the kind's picture");
+            assert!(picture(era, Depth::TrueColor, Kind::Ending, "C:\\Desktop\\Game.url", false).is_some(), "the kind's picture for one without");
             assert_eq!(decide(era, "a.pdf"), Decision { picture: Choice::Today, type_name: None });
         }
     }

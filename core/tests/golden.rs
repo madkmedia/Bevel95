@@ -3797,6 +3797,8 @@ fn kinds_scene(theme: &Theme, era: Era, fonts: &Fonts, mode: ViewMode) -> Frameb
             let picture = match d.picture {
                 Choice::Look(k) => Picture::Kind(k),
                 Choice::OwnOrProgram => Picture::Kind(Kind::Program),
+                // A made-up Internet Shortcut without a picture of its own: the kind's.
+                Choice::OwnOrLook => Picture::Kind(Kind::Ending),
                 Choice::Today => panic!("{name}: a kind {era:?} knew"),
             };
             Item {
