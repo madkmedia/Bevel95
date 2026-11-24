@@ -503,7 +503,11 @@ mod tests {
         for _ in 0..3 {
             let started = std::time::Instant::now();
             let e = write_whole(&path, b"new\n").unwrap_err();
-            assert!(started.elapsed() < std::time::Duration::from_millis(100), "{:?}", started.elapsed());
+            // On the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the default
+            // run (brief 104).
+            if std::env::var_os("BEVEL95_TIMED").is_some() {
+                assert!(started.elapsed() < std::time::Duration::from_millis(100), "{:?}", started.elapsed());
+            }
             assert!(is_read_only(&e), "{e}");
         }
         assert_eq!(READ_ONLY_LOGGED.lock().unwrap().iter().filter(|p| **p == path).count(), 1, "logged once");

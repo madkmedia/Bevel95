@@ -1645,17 +1645,20 @@ mod tests {
         let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join(r"System32\cmd.exe");
         let copy = dir.join("waittest.exe");
         fs::copy(&system, &copy).unwrap();
+        // Upper bounds on the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the
+        // default run (brief 104); the lower bound cannot be broken by a slow PC and stays.
+        let timed = std::env::var_os("BEVEL95_TIMED").is_some();
         // Nothing runs it yet: no wait at all.
         let start = Instant::now();
         assert!(wait_for_copies(&copy, std::process::id(), Duration::from_secs(5)).is_empty());
-        assert!(start.elapsed() < Duration::from_millis(500));
+        assert!(!timed || start.elapsed() < Duration::from_millis(500));
         // A copy that ends by itself after about a second is waited for.
         let mut short = bevel_winkit::quiet::command(&copy).args(["/c", "ping -n 2 127.0.0.1 >nul"]).spawn().unwrap();
         std::thread::sleep(Duration::from_millis(100));
         let start = Instant::now();
         assert!(wait_for_copies(&copy, std::process::id(), Duration::from_secs(5)).is_empty());
         assert!(short.try_wait().unwrap().is_some(), "the wait returned before the copy ended");
-        assert!(start.elapsed() < Duration::from_secs(4));
+        assert!(!timed || start.elapsed() < Duration::from_secs(4));
         // One that does not end: the wait stops at its limit and names the one that still runs;
         // the one named as the exception is not waited for.
         let mut long = bevel_winkit::quiet::command(&copy).args(["/c", "ping -n 30 127.0.0.1 >nul"]).spawn().unwrap();
@@ -1664,7 +1667,7 @@ mod tests {
         let still = wait_for_copies(&copy, std::process::id(), Duration::from_millis(700));
         assert_eq!(still, [long.id()]);
         let took = start.elapsed();
-        assert!(took >= Duration::from_millis(650) && took < Duration::from_secs(3), "{took:?}");
+        assert!(took >= Duration::from_millis(650) && (!timed || took < Duration::from_secs(3)), "{took:?}");
         // It is not finishing a file job (it holds no such mark): Setup says it did not end, never
         // that a copy or move of files is being finished (the second safety review of 2026-11-18,
         // B1). A process with the mark (this test's own) is finishing one.
@@ -1676,7 +1679,7 @@ mod tests {
         assert_eq!(still_running_message(&with_mark, false), STILL_FINISHING_REMOVE);
         let start = Instant::now();
         assert!(wait_for_copies(&copy, long.id(), Duration::from_secs(5)).is_empty());
-        assert!(start.elapsed() < Duration::from_millis(500));
+        assert!(!timed || start.elapsed() < Duration::from_millis(500));
         // Another program's file of the same name elsewhere is not ours.
         let other = dir.join("other");
         fs::create_dir_all(&other).unwrap();

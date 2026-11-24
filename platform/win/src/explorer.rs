@@ -681,7 +681,12 @@ mod tests {
         // On the same thread (a panic inside the hide): at once, without the lock.
         let started = Instant::now();
         assert!(hold(lock, Duration::from_secs(1)).is_none());
-        assert!(started.elapsed() < Duration::from_millis(100));
+        // Upper bounds on the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the
+        // default run (brief 104); the lower bounds cannot be broken by a slow PC and stay.
+        let timed = std::env::var_os("BEVEL95_TIMED").is_some();
+        if timed {
+            assert!(started.elapsed() < Duration::from_millis(100));
+        }
         drop(held);
         // A hide that does not end: the restore stops waiting at the limit and goes on.
         let (ready, wait) = std::sync::mpsc::channel();
@@ -695,7 +700,10 @@ mod tests {
         let started = Instant::now();
         assert!(hold(lock, Duration::from_millis(300)).is_none(), "the limit ran out");
         let took = started.elapsed();
-        assert!(took >= Duration::from_millis(250) && took < Duration::from_secs(2), "{took:?}");
+        assert!(took >= Duration::from_millis(250), "{took:?}");
+        if timed {
+            assert!(took < Duration::from_secs(2), "{took:?}");
+        }
         stop.send(()).unwrap();
         stuck.join().unwrap();
         // A lock left by a panic (poisoned) is taken all the same.

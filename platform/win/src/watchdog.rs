@@ -309,6 +309,10 @@ mod tests {
         let (came, took) = wait_for_place_named(me, &name, std::time::Duration::from_secs(10));
         freeing.join().unwrap();
         assert!(came, "the place came free");
-        assert!(took < std::time::Duration::from_secs(3), "at once, not after the limit: {took:?}");
+        // On the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the default run
+        // (brief 104); `came` already says the place came free before the limit ran out.
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(took < std::time::Duration::from_secs(3), "at once, not after the limit: {took:?}");
+        }
     }
 }

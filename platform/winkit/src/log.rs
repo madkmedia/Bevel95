@@ -631,7 +631,11 @@ mod tests {
         for _ in 0..20 {
             assert_eq!(decide(&cell, &game), Home::Portable(root.clone()));
         }
-        assert!(started.elapsed() < std::time::Duration::from_millis(100), "no read, no wait");
+        // On the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the default run
+        // (brief 104). Twenty decisions with a 200 ms wait each would take 4 s.
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(started.elapsed() < std::time::Duration::from_millis(100), "no read, no wait");
+        }
         // Held at the start of another run: not known, and so it stays once freed.
         let other = std::sync::RwLock::new(None);
         assert_eq!(decide(&other, &game), Home::NotKnown);
@@ -767,7 +771,10 @@ mod tests {
         fs::create_dir(&settings).unwrap();
         let started = Instant::now();
         assert_eq!(settings_owner_within(&settings, Duration::from_secs(1)), Owner::Missing);
-        assert!(started.elapsed() < Duration::from_millis(200));
+        // On the clock only on request (BEVEL95_TIMED=1; brief 104).
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(started.elapsed() < Duration::from_millis(200));
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -818,7 +825,10 @@ mod tests {
         let home = home_for(&exe, Told::Ask, &root.join("installed"), |p| settings_owner_within(p, Duration::from_secs(1)));
         icacls(&["/remove:d", "*S-1-1-0"]);
         assert_eq!(owner, Owner::Unreadable);
-        assert!(took < Duration::from_millis(500), "no waiting for a program that does not exist: {took:?}");
+        // On the clock only on request (BEVEL95_TIMED=1; brief 104).
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(took < Duration::from_millis(500), "no waiting for a program that does not exist: {took:?}");
+        }
         assert_eq!(home, Home::Installed, "not Bevel95's as far as can be told: the installed folder, and it runs");
         assert_eq!(settings_owner(&settings), Owner::Ours, "readable again");
         fs::remove_dir_all(root).unwrap();

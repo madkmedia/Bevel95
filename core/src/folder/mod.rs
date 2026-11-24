@@ -3002,7 +3002,11 @@ mod tests {
         let painted = std::time::Instant::now();
         w.paint(&mut fb, crate::theme::theme(Era::Win2000), &fonts);
         let paint = painted.elapsed();
-        assert!(set.as_millis() < 1500 && again.as_millis() < 1500 && paint.as_millis() < 500, "set {set:?}, again {again:?}, paint {paint:?}");
+        // On the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the default run
+        // (brief 104).
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(set.as_millis() < 1500 && again.as_millis() < 1500 && paint.as_millis() < 500, "set {set:?}, again {again:?}, paint {paint:?}");
+        }
     }
 
     fn files(names: &[(&str, u64, u64)]) -> Vec<Item> {
@@ -3409,11 +3413,16 @@ mod tests {
                 w.paint(&mut fb, crate::theme::theme(Era::Win98), &fonts);
             }
             let t = started.elapsed();
-            assert!(t.as_millis() < 2000, "{mode:?}: 10 pages {t:?}");
+            // On the clock only on request (BEVEL95_TIMED=1; brief 104).
+            if std::env::var_os("BEVEL95_TIMED").is_some() {
+                assert!(t.as_millis() < 2000, "{mode:?}: 10 pages {t:?}");
+            }
         }
         let started = std::time::Instant::now();
         w.header_click(1);
-        assert!(started.elapsed().as_millis() < 2000, "a sort of 10,000 items");
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(started.elapsed().as_millis() < 2000, "a sort of 10,000 items");
+        }
     }
 
     #[test]

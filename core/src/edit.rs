@@ -842,20 +842,46 @@ mod tests {
     }
 
     /// Brief 97: every field has a limit; a pasted line of a million characters is cut to it, and
-    /// finding the character under the pointer afterwards answers at once.
+    /// finding the character under the pointer afterwards answers at once. Brief 104: "at once" is
+    /// proved by the work done (how many characters are measured), not by the clock, which a busy
+    /// PC can make slow; the clock's version is `..._timed`, among the ignored tests.
     #[test]
     fn a_million_character_paste_is_cut_and_a_click_answers_at_once() {
         let long: String = std::iter::repeat_n('w', 1_000_000).collect();
+        let measured = std::cell::Cell::new(0usize);
+        let width = |_: usize, _: char| {
+            measured.set(measured.get() + 1);
+            7
+        };
         for limit in [255, 259, 2047] {
             let mut e = Edit::new("").with_rule(Some(limit), Allow::Any);
             assert!(e.paste(&long));
             assert_eq!(e.len(), limit);
-            let started = std::time::Instant::now();
-            let at = e.index_at(&|_, _| 7, 7 * 100 + 2);
-            assert_eq!(at, 100);
-            assert!(started.elapsed() < std::time::Duration::from_millis(50), "{:?}", started.elapsed());
+            measured.set(0);
+            assert_eq!(e.index_at(&width, 7 * 100 + 2), 100);
+            assert!(measured.get() <= 102, "one pass, stopping at the pointer: {} measured", measured.get());
         }
         // Without a limit the click is still one pass, stopping where the pointer is.
+        let mut free = Edit::new("");
+        free.paste(&long);
+        measured.set(0);
+        assert_eq!(free.index_at(&width, 7 * 10), 10);
+        assert!(measured.get() <= 12, "not the whole million: {} measured", measured.get());
+    }
+
+    /// The same by the clock (under 50 ms each): a busy PC can fail it, so it is not in the default
+    /// run (`cargo test -- --ignored a_million_character_paste_is_cut_and_a_click_answers_at_once_timed`).
+    #[test]
+    #[ignore = "asserts on the clock; run it on request"]
+    fn a_million_character_paste_is_cut_and_a_click_answers_at_once_timed() {
+        let long: String = std::iter::repeat_n('w', 1_000_000).collect();
+        for limit in [255, 259, 2047] {
+            let mut e = Edit::new("").with_rule(Some(limit), Allow::Any);
+            assert!(e.paste(&long));
+            let started = std::time::Instant::now();
+            assert_eq!(e.index_at(&|_, _| 7, 7 * 100 + 2), 100);
+            assert!(started.elapsed() < std::time::Duration::from_millis(50), "{:?}", started.elapsed());
+        }
         let mut free = Edit::new("");
         free.paste(&long);
         let started = std::time::Instant::now();

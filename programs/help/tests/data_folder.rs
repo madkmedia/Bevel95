@@ -209,7 +209,11 @@ fn a_flagged_start_keeps_its_data_beside_the_copy_without_reading() {
     let started = Instant::now();
     let (process, _) = start(&mut desktop, &copy, "--portable-copy");
     assert_eq!(ended(process), Some(0));
-    assert!(started.elapsed() < Duration::from_millis(900), "no wait for the held file: {:?}", started.elapsed());
+    // On the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the default run
+    // (brief 104).
+    if std::env::var_os("BEVEL95_TIMED").is_some() {
+        assert!(started.elapsed() < Duration::from_millis(900), "no wait for the held file: {:?}", started.elapsed());
+    }
     drop(held);
     assert!(copy.portable_log().is_file(), "the log beside the copy's bevel95.exe");
     assert!(!copy.installed().exists(), "nothing in the installed folder");

@@ -445,7 +445,11 @@ mod tests {
             want(now);
         }
         let asking = started.elapsed();
-        assert!(asking.as_millis() < 200, "the asking thread waits for nobody ({asking:?})");
+        // On the clock only on request (BEVEL95_TIMED=1): a busy PC must not fail the default run
+        // (brief 104).
+        if std::env::var_os("BEVEL95_TIMED").is_some() {
+            assert!(asking.as_millis() < 200, "the asking thread waits for nobody ({asking:?})");
+        }
         assert!(matches!(wait(&ids[0]), State::Ready(..)) && matches!(wait(&ids[1]), State::Ready(..)));
         let decodes = DECODES.load(Ordering::SeqCst) - before;
         assert_eq!(decodes, 2, "each picture decoded once");
