@@ -50,7 +50,7 @@ Website: https://madkmedia.github.io/Bevel95/
 - **Minesweeper, Solitaire and the Calculator**, each in the look you use, with their Help.
 - **Quick Search**: press the Windows key, type a few letters of a program's name, press Enter.
 - **Monitor Lines** (right-click the taskbar, then **Bevel95**): the faint dark lines of an old
-  monitor over the whole screen, Light, Medium or Strong, at sizes 2× and up. Off unless you choose it.
+  monitor over the screen the taskbar is on, Light, Medium or Strong, at sizes 2× and up. Off unless you choose it.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 
@@ -154,7 +154,7 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
 - `programs.txt` and `programs.old.txt`: the programs you ticked for the Start menu, and a
   safety copy of that list.
 - `desktop.txt` and `folders.txt`: where the classic desktop's icons lie, and each folder
-  window's place, size and view.
+  window's place, size and view, and where the icons you moved in a folder lie.
 - `background.txt`: the wallpaper and pattern chosen for each look in Display Properties.
 - `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
   of recent file operations, the order of the task buttons, the commands typed into Run, the

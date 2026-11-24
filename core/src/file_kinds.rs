@@ -91,8 +91,25 @@ pub fn decide(era: Era, file_name: &str) -> Decision {
 /// Shortcut) names one: its `IconFile` (the one line asked of the file; `None`: no such line) holds
 /// something (brief 100, issue 8). The shell cannot tell: for an Internet Shortcut without a picture
 /// of its own it answers with today's browser's picture, not its kind's.
+///
+/// Only a file on a drive of this PC counts (`X:\...` or `X:/...`; the review before 0.1.6,
+/// W4): a network share (`\\server\...`, `//server/...`, `\\?\...`), anything with a scheme
+/// (`http:`, `https:`, `ftp:`, `file:` ...) or a path without a drive is not, so that a shortcut
+/// someone sends never makes Bevel95 ask Windows to reach another computer for a picture; such a
+/// shortcut shows the look's Internet Shortcut picture. (The platform also refuses a drive
+/// letter that is a network drive: `shell::names_own_picture`.)
 pub fn names_own_picture(icon_file: Option<&str>) -> bool {
-    icon_file.is_some_and(|f| !f.trim().is_empty())
+    icon_file.is_some_and(|f| local_drive_path(f.trim()).is_some())
+}
+
+/// The drive letter of `path` if it is a whole path on a drive (`X:\...` or `X:/...`, with no
+/// other colon: a stream or a scheme), else None.
+pub fn local_drive_path(path: &str) -> Option<char> {
+    let mut chars = path.chars();
+    let (letter, colon, slash) = (chars.next()?, chars.next()?, chars.next()?);
+    let rest: String = chars.collect();
+    (letter.is_ascii_alphabetic() && colon == ':' && (slash == '\\' || slash == '/') && !rest.is_empty() && !rest.contains(':'))
+        .then(|| letter.to_ascii_uppercase())
 }
 
 /// A file name's ending as Windows found it (`PathFindExtension`): what follows the last dot, if
@@ -280,6 +297,27 @@ mod tests {
             assert!(names_own_picture(Some("C:\\Program Files (x86)\\Steam\\steam\\games\\game.ico")), "its own picture");
             assert!(!names_own_picture(None), "no IconFile line: the kind's picture");
             assert!(!names_own_picture(Some("  ")), "an empty IconFile: the kind's picture");
+            // The review before 0.1.6, W4: only a file on a drive of this PC.
+            assert!(names_own_picture(Some("c:/Games/Steam/game.ICO")), "forward slashes, a drive");
+            assert!(names_own_picture(Some("  D:\\GAMES\\X.EXE  ")), "upper case, spaces around");
+            for far in [
+                "\\\\server\\share\\game.ico",
+                "//server/share/game.ico",
+                "\\\\?\\C:\\game.ico",
+                "\\\\?\\UNC\\server\\share\\game.ico",
+                "http://example.com/game.ico",
+                "HTTPS://example.com/game.ico",
+                "ftp://example.com/game.ico",
+                "file:///C:/game.ico",
+                "file://server/share/game.ico",
+                "C:\\game.ico:stream",
+                "game.ico",
+                "\\game.ico",
+                "C:game.ico",
+                "C:\\",
+            ] {
+                assert!(!names_own_picture(Some(far)), "{far}: the kind's picture, Windows not asked");
+            }
             assert!(picture(era, Depth::TrueColor, Kind::Ending, "C:\\Desktop\\Game.url", false).is_some(), "the kind's picture for one without");
             assert_eq!(decide(era, "a.pdf"), Decision { picture: Choice::Today, type_name: None });
         }

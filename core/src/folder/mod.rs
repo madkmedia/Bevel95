@@ -44,6 +44,13 @@ use crate::theme::{Era, Theme};
 use crate::window::{self, TitleButton, TitleLook};
 
 pub use explorer::{ListRow, Tool};
+
+/// A part whose press acts on files or on the clipboard (the toolbar's Undo, Cut, Copy, Paste,
+/// Delete and Properties): never carried on after it ended a rename (`carry_on_after_rename`;
+/// the review before 0.1.6, R1).
+pub fn acts_on_files(part: Part) -> bool {
+    matches!(part, Part::Tool(Tool::Undo | Tool::Cut | Tool::Copy | Tool::Paste | Tool::Delete | Tool::Properties))
+}
 pub use history::{History, Place, Step};
 pub use menus::Command;
 use explorer::Chrome;
@@ -462,9 +469,16 @@ impl FolderWindow {
     /// dropped, the drag cannot be taken up halfway. The address field takes the keyboard with
     /// everything selected (a first click), the tree's row, box or blank do what a press does
     /// there, a scroll arrow or page scrolls. Nothing while a rename (or its warning) is still on.
+    ///
+    /// A press on a toolbar button that acts on files or the clipboard (Undo, Cut, Copy, Paste,
+    /// Delete, Properties: `acts_on_files`) is dropped too, as in 0.1.5: the rename runs on a
+    /// thread of its own and is not on the Undo list yet, so a carried-on Undo would take back
+    /// the step before it, and Cut, Copy, Delete and Properties would act on the old name (the
+    /// review before 0.1.6, R1). The person clicks again; by then the rename is done. Everything
+    /// else a press can land on only navigates or shows something and goes on.
     pub fn carry_on_after_rename(&mut self) -> Vec<Effect<Part>> {
         let Some((part, x, y)) = self.press_after_rename.take() else { return Vec::new() };
-        if self.view.renaming().is_some() {
+        if self.view.renaming().is_some() || acts_on_files(part) {
             return Vec::new();
         }
         match self.press(Some(part), x, y) {
@@ -3326,6 +3340,39 @@ mod tests {
         w.view.rename_asking(true);
         assert_eq!(w.press(Some(Part::Address), 200, 100), Press::Done);
         assert_eq!(w.view.renaming(), Some(0));
+    }
+
+    /// The review before 0.1.6, R1: a press on the toolbar's Undo, Cut, Copy, Paste, Delete or
+    /// Properties that ended a rename only ends it (the name typed is taken) and is NOT carried
+    /// on: the rename runs on a thread of its own and is not on the Undo list yet. Nothing else
+    /// is activated, then or later; in 98 and 2000.
+    #[test]
+    fn a_press_on_a_file_button_only_ends_the_rename() {
+        let (r, b) = fonts();
+        let fonts = Fonts { regular: &r, bold: &b };
+        for era in [Era::Win98, Era::Win2000] {
+            for tool in [Tool::Undo, Tool::Cut, Tool::Copy, Tool::Paste, Tool::Delete, Tool::Properties] {
+                let part = Part::Tool(tool);
+                assert!(acts_on_files(part));
+                let mut w = FolderWindow::new(era, "t", Icon { width: 16, height: 16, pixels: vec![0; 256] }, true, (640, 461));
+                w.layout(&fonts);
+                w.set_items(items(3));
+                assert!(w.begin_rename(0));
+                for ch in "new name".chars() {
+                    w.typed(ch);
+                }
+                assert_eq!(w.press(Some(part), 200, 100), Press::Act(Part::RenameEnd(false)), "{era:?} {tool:?}");
+                assert!(!w.click_after_rename(), "{era:?} {tool:?}");
+                // The name typed is taken.
+                assert_eq!(w.view.end_rename(), crate::desktop_icons::RenameEnd::Rename { id: w.view.items[0].id.clone(), name: "new name".into() });
+                assert!(w.carry_on_after_rename().is_empty(), "{era:?} {tool:?}: nothing activated");
+                assert!(w.carry_on_after_rename().is_empty(), "{era:?} {tool:?}: nor later");
+            }
+        }
+        // What only navigates or shows something goes on.
+        for part in [Part::Tool(Tool::Back), Part::Tool(Tool::Forward), Part::Tool(Tool::Up), Part::Tool(Tool::Views), Part::Tool(Tool::Folders), Part::Go, Part::Address] {
+            assert!(!acts_on_files(part), "{part:?}");
+        }
     }
 
     #[test]

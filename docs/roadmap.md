@@ -7,12 +7,11 @@ here is promised, and an issue is the place to say what matters to you.
 ## The taskbar and Start menu
 - A taskbar on every screen (today one taskbar on the main screen lists the windows of all
   screens, as Windows 98 and 2000 did), the taskbar on the other edges.
-- Quick Launch's rest: dragging its band wider, the arrows or "»" for icons that do not fit (at
-  most 10 show), Show Text, Show Title, large icons, dragging shortcuts onto it, the other
+- Quick Launch's rest: Show Text, Show Title, large icons, dragging shortcuts onto it, the other
   entries of an icon's menu (Send To, Cut, Copy, Rename).
 - Balloon messages in the classic style (today Windows 11 shows them as its own notifications),
   the notification area by keyboard (Win+B).
-- Windows 98's menus sliding open; Windows 2000's personalized menus and six of its Start Menu
+- Windows 98's menus sliding open; Windows 2000's personalized menus and five of its Start Menu
   settings.
 - Programs that ask where the taskbar is get the hidden Windows taskbar's place, so a few may
   put their pop-ups slightly too high.
@@ -30,7 +29,6 @@ here is promised, and an issue is the place to say what matters to you.
   History), Find, Send To, Format, Rename in the tree, dragging folders in the tree.
 - The web view's picture preview; Control Panel, Printers, the Recycle Bin and network places
   open Windows' own windows.
-- Undo for file operations is being reworked.
 
 ## Programs
 - More classic programs: Notepad, Paint and others. Today there are Minesweeper, Solitaire and

@@ -489,7 +489,17 @@ fn names_own_picture(path: &Path) -> bool {
         )
     } as usize;
     let line = String::from_utf16_lossy(&buf[..n.min(buf.len())]);
-    file_kinds::names_own_picture((n > 0).then_some(line.as_str()))
+    if !file_kinds::names_own_picture((n > 0).then_some(line.as_str())) {
+        return false;
+    }
+    // A drive letter of this PC's own (fixed, removable, CD, RAM disk), never a network drive
+    // (a letter given to a share) nor a letter with no drive: the review before 0.1.6, W4.
+    // Windows answers from its list of drives without reaching the drive.
+    let Some(letter) = file_kinds::local_drive_path(line.trim()) else { return false };
+    let root = wide(&format!("{letter}:\\"));
+    // SAFETY: a null-terminated string.
+    let kind = unsafe { windows_sys::Win32::Storage::FileSystem::GetDriveTypeW(root.as_ptr()) };
+    matches!(kind, 2 | 3 | 5 | 6)
 }
 
 /// A file's own picture (an application's, a shortcut's: read from the file), when it is not its
