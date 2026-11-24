@@ -81,6 +81,16 @@ box **Windows protected your PC** ("Unknown publisher") may appear: click **More
 **Run anyway**. On a PC with **Smart App Control** switched on, Windows blocks unsigned programs
 outright; Bevel95 cannot run there unless Smart App Control is off.
 
+**An antivirus program may warn too.** Bevel95 does a few things that such programs watch for,
+each for a plain reason: the one file unpacks its companion programs; it can add itself to the
+programs that start with Windows (if you tick that); it listens for the Windows key, to open its
+Start menu or Quick Search; and it hides Windows' taskbar and puts its own in its place. A program
+that judges by behaviour may therefore stop Bevel95 while it runs, even though its scan of the
+file finds nothing (one user reports that from Kaspersky). Each release's files are uploaded to
+VirusTotal, where about seventy scanners look at them: look a file up there by the SHA-256
+fingerprint published beside it. If your antivirus stops Bevel95, you can report a false alarm to
+its maker, and please tell us too (see "The log, and reporting a problem" below).
+
 Double-click the file. **Bevel95 Setup** asks how you want to use it:
 
 - **Install it on this computer**: Setup then asks for the look, whether to show the classic

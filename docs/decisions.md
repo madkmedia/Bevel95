@@ -6556,6 +6556,16 @@ sharable").
   committer of the commits not yet pushed; it fails on a private word (kind, file, line; never the
   text) and on any name or address but the public identity's. It changes nothing and contacts
   nothing. Without the word list it stops.
+- **Antivirus programs** (2026-11-24): one user's Kaspersky Standard stopped the released 0.1.5
+  one file while it ran, as "PDM:Trojan.Win32.Generic" (System Watcher: a judgment by behaviour,
+  not by the file's contents). Both 0.1.5 files were then uploaded to VirusTotal with the owner's
+  leave: the one file 0 of 69 scanners, the portable zip 1 of 65 (Bkav Pro, a generic name);
+  Kaspersky's own scanner found nothing in either. Which behaviour set the watcher off is not
+  known. The project made no report to Kaspersky (its form starts from a scan result, which is
+  clean); the affected person can report it from their own product. Code signing stays off (the
+  owner's rule). From 0.1.5 on each release's files are uploaded to VirusTotal. The README says
+  what to do ("An antivirus program may warn too", under Download and install), naming the
+  behaviours such programs watch for and why Bevel95 has each.
 
 ## A menu longer than the screen (2026-11-24, brief 91; a user: "I noticed some glitches with the start menu when there's too much to fit the screen"; the owner: "Start menu is worth fixing")
 - **Each look as its own Windows did**, as the Reference PCs showed it (`private/probes/start-long/survey.md`, part 1; the numbers in theme-spec.md, "A menu longer than the screen"). Until now every look went on in further columns of the menu's widest width, which could run off a small screen (and the look's screen is small at Size 2 or 3).
