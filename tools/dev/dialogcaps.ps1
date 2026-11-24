@@ -11,6 +11,7 @@
 # -NoKeys leaves out the two Ctrl+Tab presses (the second pages): no real key is sent then.
 param([Parameter(Mandatory)][string]$Out, [int[]]$StartEntries = @(8, 10, 11), [switch]$NoKeys)
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $PSScriptRoot 'lines-pause.ps1')
 Add-Type -Namespace Dc -Name W -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string c, string t);
@@ -56,7 +57,10 @@ function Snap([string]$name) {
     Start-Sleep -Milliseconds 500
     $r = New-Object Dc.W+RECT; [void][Dc.W]::GetWindowRect($h, [ref]$r)
     $bmp = New-Object Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T)
+    # Without Bevel95's Monitor Lines, if they are on (lines-pause.ps1).
+    Suspend-MonitorLines
     $g = [Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size); $g.Dispose()
+    Resume-MonitorLines
     $bmp.Save((Join-Path $Out "$name.png")); $bmp.Dispose()
     Write-Host "  ${name}: $($r.R - $r.L)x$($r.B - $r.T)"
     return $h

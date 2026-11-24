@@ -167,8 +167,16 @@ pub static WM_BAR_MONITOR_LINES: Private = Private::new("Bevel95.Bar.MonitorLine
 /// shows Light, Medium or Strong for at most `MONITOR_LINES_TEST_SECS` seconds WITHOUT saving
 /// anything (settings.txt is not touched); 0 ends it at once. Answers the lines' window (0: none).
 pub static WM_TEST_MONITOR_LINES: Private = Private::new("Bevel95.Bar.TestMonitorLines");
-/// A live test's lines end by themselves after this long, should the test not end them.
+/// A live test's lines end by themselves this long after its FIRST message, whatever comes after
+/// (brief 104, N5); a new test can begin only `MONITOR_LINES_TEST_GAP_SECS` after a test's first
+/// message, so no stream of messages keeps them up.
 const MONITOR_LINES_TEST_SECS: u64 = 20;
+const MONITOR_LINES_TEST_GAP_SECS: u64 = 60;
+/// The project's own screen-photographing helpers (`tools\dev\lines-pause.ps1`, brief 104): wParam 1
+/// takes the lines away for at most `MONITOR_LINES_PAUSE_SECS` seconds, 0 ends the pause at once.
+/// Nothing is saved. Answers 1 if the lines' window was there or a pause was on, else 0.
+pub static WM_PAUSE_MONITOR_LINES: Private = Private::new("Bevel95.Bar.PauseMonitorLines");
+const MONITOR_LINES_PAUSE_SECS: u64 = 60;
 
 /// Every message of the bar registered by name, with the `WM_APP + n` it was before (the names
 /// `tools\dev\postbar.ps1` knows and decisions.md lists).
@@ -201,6 +209,8 @@ fn register_messages() {
     WM_TEST_LONG_MENU.id();
     WM_BAR_MONITOR_LINES.id();
     WM_TEST_MONITOR_LINES.id();
+    WM_PAUSE_MONITOR_LINES.id();
+    bevel_winkit::on_top::WM_RAISE_LINES.id();
 }
 /// The timer that slides an auto-hiding bar in and out, and its step.
 const SLIDE: usize = 2;
@@ -391,6 +401,10 @@ pub struct App {
     /// strength in force for a few seconds instead, never saved (`WM_TEST_MONITOR_LINES`).
     pub monitor_lines: bevel_core::monitor_lines::Strength,
     monitor_lines_test: Option<(bevel_core::monitor_lines::Strength, Instant)>,
+    /// When the last live test began (its first message): its cap and the gap count from it.
+    monitor_lines_test_began: Option<Instant>,
+    /// A screen-photographing helper's pause (`WM_PAUSE_MONITOR_LINES`): since when.
+    monitor_lines_paused: Option<Instant>,
 }
 
 impl App {
@@ -716,6 +730,8 @@ pub fn run() -> u32 {
             ending: false,
             monitor_lines: settings.monitor_lines,
             monitor_lines_test: None,
+            monitor_lines_test_began: None,
+            monitor_lines_paused: None,
         });
     });
     // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
@@ -2372,10 +2388,6 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     if with_app(|app| app.clock_offset != values.clock_offset).unwrap_or(false) {
         set_clock_offset(values.clock_offset);
     }
-    // Monitor Lines (the Desktop page; brief 102): written only when changed.
-    if with_app(|app| app.monitor_lines != values.monitor_lines).unwrap_or(false) {
-        set_monitor_lines(values.monitor_lines, false);
-    }
     if with_app(|app| app.scaling != values.scale.way).unwrap_or(false) {
         set_scaling(bar, values.scale.way);
     }
@@ -2387,6 +2399,11 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     }
     if with_app(|app| app.colors != values.colors).unwrap_or(false) {
         set_colors(bar, values.colors);
+    }
+    // Monitor Lines (the Desktop page; brief 102), after the size, so they are put on for the size
+    // now in force (brief 104, N3): written only when changed.
+    if with_app(|app| app.monitor_lines != values.monitor_lines).unwrap_or(false) {
+        set_monitor_lines(values.monitor_lines, false);
     }
     sync_desktop();
     reposition(bar);
@@ -2408,15 +2425,25 @@ fn tick(bar: HWND) {
     };
     // A live test's Monitor Lines end by themselves; the lines follow what decides them (they go
     // while the bar does not show: `sync_lines`).
-    let test_over = with_app(|app| {
-        let over = app.monitor_lines_test.is_some_and(|(_, at)| at.elapsed().as_secs() >= MONITOR_LINES_TEST_SECS);
+    // A helper's pause ends by itself too.
+    let (test_over, pause_over) = with_app(|app| {
+        let over = app.monitor_lines_test.is_some()
+            && app.monitor_lines_test_began.is_some_and(|at| at.elapsed().as_secs() >= MONITOR_LINES_TEST_SECS);
         if over {
             app.monitor_lines_test = None;
         }
-        over
-    });
-    if test_over == Some(true) {
+        let pause_over = app.monitor_lines_paused.is_some_and(|at| at.elapsed().as_secs() >= MONITOR_LINES_PAUSE_SECS);
+        if pause_over {
+            app.monitor_lines_paused = None;
+        }
+        (over, pause_over)
+    })
+    .unwrap_or_default();
+    if test_over {
         log("monitor lines: the live test's lines ended by themselves");
+    }
+    if pause_over {
+        log("monitor lines: a helper's pause ended by itself");
     }
     sync_lines();
     // While the session may be ending, the Windows taskbar stays as it was put back; so it does
@@ -2933,7 +2960,11 @@ pub fn sync_lines() {
     use bevel_core::monitor_lines::{self as lines, Strength};
     let Some(wanted) = with_app(|app| {
         let strength = app.monitor_lines_test.map_or(app.monitor_lines, |(s, _)| s);
-        let shows = app.ours && !app.ending && !app.fullscreen.is_behind() && !bevel_winkit::panic::happened();
+        let shows = app.ours
+            && !app.ending
+            && !app.fullscreen.is_behind()
+            && app.monitor_lines_paused.is_none()
+            && !bevel_winkit::panic::happened();
         let period = lines::period(app.scale)?;
         let m = app.monitor;
         (shows && strength != Strength::Off && rect_w(&m) > 0 && rect_h(&m) > 0).then_some(crate::monitor_lines::Wanted {
@@ -2976,20 +3007,70 @@ fn set_monitor_lines(strength: bevel_core::monitor_lines::Strength, from_menu: b
 }
 
 /// `WM_TEST_MONITOR_LINES`: a live test's lines on (wParam 1 to 3) or off (0), never saved; answers
-/// the lines' window, if one shows.
+/// the lines' window, if one shows. A test lasts at most `MONITOR_LINES_TEST_SECS` from its first
+/// message (a later "on" changes the strength, never the end), and a new one can begin only
+/// `MONITOR_LINES_TEST_GAP_SECS` after the last one began (brief 104, N5). Logged only when it did
+/// something.
 fn test_monitor_lines(wparam: usize) -> LRESULT {
     use bevel_core::monitor_lines::Strength;
     let strength = match wparam {
         1..=3 => Strength::ALL.get(wparam).copied(),
         _ => None,
     };
-    with_app(|app| app.monitor_lines_test = strength.map(|s| (s, Instant::now())));
-    log(&match strength {
-        Some(s) => format!("monitor lines: a live test's {} for at most {MONITOR_LINES_TEST_SECS} s (not saved)", s.setting()),
-        None => "monitor lines: the live test's lines ended".to_string(),
-    });
-    sync_lines();
+    let done = with_app(|app| {
+        let running = app.monitor_lines_test.is_some();
+        match strength {
+            Some(s) if running => {
+                app.monitor_lines_test = Some((s, Instant::now()));
+                Some(format!("monitor lines: the live test shows {} now (not saved)", s.setting()))
+            }
+            Some(s) => {
+                let may = app.monitor_lines_test_began.is_none_or(|at| at.elapsed().as_secs() >= MONITOR_LINES_TEST_GAP_SECS);
+                may.then(|| {
+                    app.monitor_lines_test = Some((s, Instant::now()));
+                    app.monitor_lines_test_began = Some(Instant::now());
+                    format!("monitor lines: a live test's {} for at most {MONITOR_LINES_TEST_SECS} s (not saved)", s.setting())
+                })
+            }
+            None => app.monitor_lines_test.take().map(|_| "monitor lines: the live test's lines ended".to_string()),
+        }
+    })
+    .flatten();
+    if let Some(line) = done {
+        log(&line);
+        sync_lines();
+    }
     crate::monitor_lines::window() as LRESULT
+}
+
+/// `WM_PAUSE_MONITOR_LINES`: a screen-photographing helper's pause (wParam 1) or its end (0).
+/// Nothing is saved; the pause ends by itself after `MONITOR_LINES_PAUSE_SECS`. Answers 1 if the
+/// lines' window was there or a pause was on (the helper then knows to wait for the screen).
+fn pause_monitor_lines(wparam: usize) -> LRESULT {
+    let showing = !crate::monitor_lines::window().is_null();
+    let Some((was_paused, changed)) = with_app(|app| {
+        let was = app.monitor_lines_paused.is_some();
+        let changed = match wparam {
+            // Only while the lines show: with them off a photograph needs nothing.
+            1 if !was && showing => {
+                app.monitor_lines_paused = Some(Instant::now());
+                true
+            }
+            0 if was => {
+                app.monitor_lines_paused = None;
+                true
+            }
+            _ => false,
+        };
+        (was, changed)
+    }) else {
+        return 0;
+    };
+    if changed {
+        log(if wparam == 1 { "monitor lines: paused for a photograph (at most 60 s)" } else { "monitor lines: the pause ended" });
+        sync_lines();
+    }
+    LRESULT::from(showing || was_paused)
 }
 
 /// Ends this bar and starts a fresh one: through the watchdog if it is running (it restores
@@ -3565,6 +3646,13 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 0;
         }
         m if m == WM_TEST_MONITOR_LINES.id() => return test_monitor_lines(wparam),
+        m if m == WM_PAUSE_MONITOR_LINES.id() => return pause_monitor_lines(wparam),
+        // Bevel95's own windows came up (a companion program's, or one of another thread of the
+        // bar's): the lines go where they belong. Does nothing else, whoever posts it.
+        m if m == bevel_winkit::on_top::WM_RAISE_LINES.id() => {
+            crate::monitor_lines::raise();
+            return 0;
+        }
         m if m == WM_START_ACTION.id() => {
             start_action(wparam);
             return 0;

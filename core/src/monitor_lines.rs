@@ -1,7 +1,8 @@
 //! Monitor Lines: the faint dark lines of an old monitor over the whole screen (brief 102,
-//! PROVISIONAL wording). One see-through window over the bar's screen darkens the last screen row
-//! of every old pixel row: at size n, every n-th row counted from the screen's top, black with the
-//! strength as its alpha; every other row fully see-through. Nothing else: no color change, no
+//! PROVISIONAL wording). One see-through window over the bar's screen darkens every n-th screen
+//! row at size n, counted from the screen's top (the last row of each old pixel row of what starts
+//! at a multiple of n from the top), black with the strength as its alpha; every other row fully
+//! see-through. Nothing else: no color change, no
 //! mask. This module makes the picture and says when there is one; the window is the platform's
 //! (`platform/win/src/monitor_lines.rs`).
 
@@ -154,19 +155,71 @@ pub const QUICK_RETURN_MS: u64 = 2_000;
 /// After this many quick returns in a row the lines stop going over that window: no fight
 /// without end (brief 102).
 pub const FIGHTS_BEFORE_GIVING_UP: u32 = 5;
+/// A window given up on that has not been seen above the lines for this long is looked at afresh
+/// (brief 104: three minutes); a remembered count that old is forgotten too.
+pub const GIVEN_UP_FOR_MS: u64 = 180_000;
 
-/// What the bar's tick does about the windows found above the lines (`Fights::above`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// A window found above the lines, front first (`place`, `Fights::tick`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Above {
+    /// A window of Bevel95's own copy (the bar's, a companion program's): always goes under the
+    /// lines, never counted.
+    Own,
+    /// Another program's window, by its handle, and whether it was given up on (it insists on
+    /// being on top: it stays above the lines).
+    Other { id: u64, given_up: bool },
+}
+
+/// Where the lines' window goes among the windows (`place`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// Where it is: nothing above it to cover.
+    Stay,
+    /// On top of every window.
+    Top,
+    /// Just under this window (one given up on) and above every window under it.
+    Under(u64),
+}
+
+/// Where the lines go, given the windows above them (front first): just under the lowest window
+/// given up on, so that every window given up on stays above them and everything under that one
+/// is covered; on top of everything when none is given up on; nowhere new when nothing needs
+/// covering. Also the other programs' windows this covers (to be counted: `Fights::tick`).
+/// Windows in front of the lowest given-up one stay above the lines whatever they are: one
+/// window cannot go between them without moving another program's window, which Bevel95 never
+/// does.
+pub fn place(above: &[Above]) -> (Place, Vec<u64>) {
+    let lowest = above.iter().rposition(|a| matches!(a, Above::Other { given_up: true, .. }));
+    let (place, behind) = match lowest {
+        Some(i) => {
+            let Above::Other { id, .. } = above[i] else { unreachable!() };
+            (Place::Under(id), &above[i + 1..])
+        }
+        None => (Place::Top, above),
+    };
+    if behind.is_empty() {
+        return (Place::Stay, Vec::new());
+    }
+    let covered = behind
+        .iter()
+        .filter_map(|a| match a {
+            Above::Other { id, given_up: false } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    (place, covered)
+}
+
+/// What the bar's tick does about the windows found above the lines (`Fights::tick`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Verdict {
-    /// Put the lines back on top.
-    pub raise: bool,
+    pub place: Place,
     /// A window was given up on just now: how many have been so far in this run (for the log).
     pub gave_up: Option<u32>,
 }
 
 /// The other programs' windows that came above the lines, by their handles (as numbers): how often
-/// each came back quickly, and those given up on. The bar's own windows are never counted: they
-/// always go under the lines.
+/// each came back quickly, and those given up on. Bevel95's own windows are never counted.
 #[derive(Clone, Debug, Default)]
 pub struct Fights {
     windows: std::collections::HashMap<u64, Fight>,
@@ -176,21 +229,46 @@ pub struct Fights {
 #[derive(Clone, Copy, Debug)]
 struct Fight {
     times: u32,
+    /// When it was last covered (counting) or, given up on, last seen above the lines.
     last_ms: u64,
     given_up: bool,
 }
 
 impl Fights {
-    /// The tick found `foreign` (other programs' windows, front first) and, with `own`, windows of
-    /// the bar's own above the lines, at `now_ms`. The lines go back on top unless one of the
-    /// windows above was given up on (its program insists: it stays above, and so then does what
-    /// is above with it), except that the bar's own windows always go under them.
-    pub fn above(&mut self, foreign: &[u64], own: bool, now_ms: u64) -> Verdict {
-        if foreign.iter().any(|id| self.windows.get(id).is_some_and(|f| f.given_up)) {
-            return Verdict { raise: own, gave_up: None };
+    /// The windows above the lines as `place` takes them: each other program's window marked
+    /// given up on or not. `above`: front first, `None` for Bevel95's own, else the handle.
+    fn marked(&self, above: &[Option<u64>]) -> Vec<Above> {
+        above
+            .iter()
+            .map(|a| match a {
+                None => Above::Own,
+                Some(id) => Above::Other { id: *id, given_up: self.windows.get(id).is_some_and(|f| f.given_up) },
+            })
+            .collect()
+    }
+
+    /// Where the lines go now, counting nothing (the bar's own windows coming up: `raise`).
+    pub fn place_now(&self, above: &[Option<u64>]) -> Place {
+        place(&self.marked(above)).0
+    }
+
+    /// The bar's tick found `above` (front first; `None` for Bevel95's own) at `now_ms`: marks
+    /// not seen for `GIVEN_UP_FOR_MS` end, the windows given up on that are above are seen, every
+    /// other program's window the lines cover is counted (a quick return, `QUICK_RETURN_MS`,
+    /// counts on; more than `FIGHTS_BEFORE_GIVING_UP` in a row gives it up, and then it is not
+    /// covered), and where the lines go.
+    pub fn tick(&mut self, above: &[Option<u64>], now_ms: u64) -> Verdict {
+        for id in above.iter().flatten() {
+            if let Some(f) = self.windows.get_mut(id)
+                && f.given_up
+            {
+                f.last_ms = now_ms;
+            }
         }
+        self.windows.retain(|_, f| now_ms.saturating_sub(f.last_ms) <= GIVEN_UP_FOR_MS);
+        let (_, covered) = place(&self.marked(above));
         let mut gave_up = None;
-        for &id in foreign {
+        for id in covered {
             let fight = self.windows.entry(id).or_insert(Fight { times: 0, last_ms: 0, given_up: false });
             let quick = fight.times > 0 && now_ms.saturating_sub(fight.last_ms) <= QUICK_RETURN_MS;
             fight.times = if quick { fight.times + 1 } else { 1 };
@@ -201,25 +279,43 @@ impl Fights {
                 gave_up = Some(self.given_up);
             }
         }
-        if gave_up.is_some() {
-            // Not over it once more: it would only come back again.
-            return Verdict { raise: own, gave_up };
-        }
-        Verdict { raise: own || !foreign.is_empty(), gave_up: None }
+        // A window given up on just now is not covered once more: it would only come back again.
+        Verdict { place: place(&self.marked(above)).0, gave_up }
     }
 
-    /// Forgets the windows `keep` says no to (gone, or long quiet), so the list stays small.
-    pub fn retain(&mut self, mut keep: impl FnMut(u64) -> bool) {
-        self.windows.retain(|&id, _| keep(id));
+    /// The windows given up on (the platform ends a mark whose window is gone or hidden: `forget`).
+    pub fn given_up_ids(&self) -> Vec<u64> {
+        self.windows.iter().filter(|(_, f)| f.given_up).map(|(&id, _)| id).collect()
     }
 
-    /// How many windows are remembered (for the tests).
+    /// Forgets window `id` (gone or hidden: a window shown again is looked at afresh).
+    pub fn forget(&mut self, id: u64) {
+        self.windows.remove(&id);
+    }
+
+    /// How many windows are remembered.
     pub fn len(&self) -> usize {
         self.windows.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
+    }
+}
+
+/// The folder of the Bevel95 copy a program file belongs to (lower case, `\` only): the program's
+/// folder, or the one above a `programs` folder (where a copy keeps its companion programs).
+/// Two programs whose copy folders are equal belong to one copy (brief 104: the bar treats the
+/// windows of its own copy's programs as its own). Pure.
+pub fn copy_folder(program: &str) -> String {
+    let path = program.replace('/', "\\").to_lowercase();
+    let dir = match path.rfind('\\') {
+        Some(i) => &path[..i],
+        None => "",
+    };
+    match dir.rsplit_once('\\') {
+        Some((parent, "programs")) => parent.to_string(),
+        _ => dir.to_string(),
     }
 }
 
@@ -297,39 +393,98 @@ mod tests {
         assert!(off.pixels.iter().all(|&p| p == 0xFF12_3456), "Off changes nothing");
     }
 
+    fn other(id: u64) -> Above {
+        Above::Other { id, given_up: false }
+    }
+    fn insisting(id: u64) -> Above {
+        Above::Other { id, given_up: true }
+    }
+
     #[test]
-    fn an_insisting_window_is_given_up_on_after_a_few_times() {
+    fn the_lines_go_under_the_lowest_insisting_window_only() {
+        // Nothing above: stay.
+        assert_eq!(place(&[]), (Place::Stay, vec![]));
+        // An ordinary window, the bar's own: on top, the other counted.
+        assert_eq!(place(&[other(1), Above::Own]), (Place::Top, vec![1]));
+        // One insisting window and one ordinary window behind it: just under the insisting one,
+        // the ordinary one covered.
+        assert_eq!(place(&[insisting(7), other(1)]), (Place::Under(7), vec![1]));
+        // The ordinary one in front of the insisting one stays above (it cannot be put between).
+        assert_eq!(place(&[other(1), insisting(7)]), (Place::Stay, vec![]));
+        // Two insisting windows: under the lower one, both stay above.
+        assert_eq!(place(&[insisting(7), insisting(8)]), (Place::Stay, vec![]));
+        assert_eq!(place(&[insisting(7), other(2), insisting(8), other(3), Above::Own]), (Place::Under(8), vec![3]));
+        // The bar's own window opening while an insisting window shows: under that window, not
+        // on top of it.
+        assert_eq!(place(&[insisting(7), Above::Own]), (Place::Under(7), vec![]));
+        assert_eq!(place(&[Above::Own, insisting(7)]), (Place::Stay, vec![]));
+    }
+
+    #[test]
+    fn an_insisting_window_is_given_up_on_and_others_are_still_covered() {
         let mut f = Fights::default();
-        // Nothing above: nothing to do.
-        assert_eq!(f.above(&[], false, 0), Verdict::default());
+        assert_eq!(f.tick(&[], 0), Verdict { place: Place::Stay, gave_up: None });
         // The bar's own windows always go under the lines, never counted.
         for t in 0..50 {
-            assert_eq!(f.above(&[], true, t * 100), Verdict { raise: true, gave_up: None });
+            assert_eq!(f.tick(&[None], t * 100).place, Place::Top);
         }
         assert!(f.is_empty());
-        // Another program's window back above every tick: over it five times, then given up on.
-        let mut raised = 0;
-        let mut gave_up = None;
+        // Another program's window back above every tick: over it five times, then left above.
+        let (mut covered, mut gave_up) = (0, None);
         for t in 0..20 {
-            let v = f.above(&[7], false, 1_000 + t * 100);
-            raised += u32::from(v.raise);
+            let v = f.tick(&[Some(7)], 1_000 + t * 100);
+            covered += u32::from(v.place == Place::Top);
             gave_up = gave_up.or(v.gave_up);
         }
-        assert_eq!((raised, gave_up), (FIGHTS_BEFORE_GIVING_UP, Some(1)));
-        // From then on it stays above; the bar's own still go under.
-        assert_eq!(f.above(&[7], false, 9_000), Verdict { raise: false, gave_up: None });
-        assert_eq!(f.above(&[7], true, 9_100), Verdict { raise: true, gave_up: None });
+        assert_eq!((covered, gave_up), (FIGHTS_BEFORE_GIVING_UP, Some(1)));
+        assert_eq!(f.given_up_ids(), [7]);
+        // An ordinary window behind it is still covered, the lines just under the insisting one.
+        assert_eq!(f.tick(&[Some(7), Some(9)], 4_000).place, Place::Under(7));
+        // The bar's own window opening meanwhile: the same, the insisting one not covered again.
+        assert_eq!(f.place_now(&[Some(7), None]), Place::Under(7));
+        assert_eq!(f.place_now(&[Some(7)]), Place::Stay);
         // A window the person brings forward now and then (seconds apart) is never given up on.
         for t in 0..100 {
-            assert_eq!(f.above(&[9], false, 20_000 + t * 5_000), Verdict { raise: true, gave_up: None });
+            assert_eq!(f.tick(&[Some(7), Some(9)], 10_000 + t * 5_000).place, Place::Under(7));
+            assert!(f.tick(&[Some(7)], 10_000 + t * 5_000 + 500).gave_up.is_none());
         }
-        // A second insisting window is counted as the second.
-        let last = (0..10).filter_map(|t| f.above(&[11], false, 900_000 + t * 100).gave_up).last();
-        assert_eq!(last, Some(2));
-        // Gone windows are forgotten.
-        f.retain(|id| id != 7);
-        assert_eq!(f.len(), 2);
-        assert!(f.above(&[7], false, 1_000_000).raise, "a new window with the old number starts afresh");
+    }
+
+    #[test]
+    fn two_insisting_windows_and_the_mark_expiring() {
+        let mut f = Fights::default();
+        for t in 0..10 {
+            f.tick(&[Some(7)], t * 100);
+        }
+        let last = (0..10).filter_map(|t| f.tick(&[Some(7), Some(8)], 2_000 + t * 100).gave_up).last();
+        assert_eq!(last, Some(2), "the second one given up on too");
+        let mut ids = f.given_up_ids();
+        ids.sort();
+        assert_eq!(ids, [7, 8]);
+        assert_eq!(f.tick(&[Some(7), Some(8)], 4_000).place, Place::Stay, "both left above");
+        // Seen above: the mark lasts. Not seen for three minutes: it ends, and the window is
+        // looked at afresh.
+        assert_eq!(f.tick(&[Some(8)], 4_001 + GIVEN_UP_FOR_MS).place, Place::Stay);
+        assert_eq!(f.given_up_ids(), [8]);
+        assert_eq!(f.tick(&[Some(7)], 4_000 + GIVEN_UP_FOR_MS + 200).place, Place::Top, "7 covered again");
+        // Gone or hidden: the platform forgets it.
+        f.forget(8);
+        assert!(f.given_up_ids().is_empty());
+        assert_eq!(f.len(), 1, "only 7's fresh count is remembered");
+        // The list stays small: counts not renewed for three minutes go by themselves.
+        f.tick(&[], 10_000 + 2 * GIVEN_UP_FOR_MS);
+        assert!(f.is_empty());
+    }
+
+    #[test]
+    fn the_copy_a_program_belongs_to() {
+        let installed = copy_folder(r"C:\Users\x\AppData\Local\Bevel95\bevel95.exe");
+        assert_eq!(installed, r"c:\users\x\appdata\local\bevel95");
+        assert_eq!(copy_folder(r"C:\Users\x\AppData\Local\Bevel95\programs\calculator.exe"), installed);
+        assert_eq!(copy_folder(r"c:/users/x/appdata/local/BEVEL95/Programs/folders.exe"), installed);
+        assert_ne!(copy_folder(r"D:\Portable\Bevel95\programs\calculator.exe"), installed);
+        assert_ne!(copy_folder(r"C:\Users\x\AppData\Local\Bevel95\other\calculator.exe"), installed);
+        assert_ne!(copy_folder(r"C:\Users\x\AppData\Local\calculator.exe"), installed);
     }
 
     #[test]

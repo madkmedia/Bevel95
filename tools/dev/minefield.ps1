@@ -32,6 +32,7 @@ param(
     [string]$Data = (Join-Path $env:TEMP "bevel95-minefield-test"), [string]$Out = (Join-Path $env:TEMP "bevel95-minefield-test\caps")
 )
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $PSScriptRoot 'lines-pause.ps1')
 Add-Type -Namespace Mf -Name W -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowExW(IntPtr p, IntPtr after, string c, string t);
@@ -195,7 +196,10 @@ if ($Snap) {
     foreach ($w in Get-GameWindows) {
         $r = New-Object Mf.W+RECT; [void][Mf.W]::GetWindowRect($w.Handle, [ref]$r)
         $bmp = New-Object Drawing.Bitmap ($r.R - $r.L), ($r.B - $r.T)
+        # Without Bevel95's Monitor Lines, if they are on (lines-pause.ps1).
+        Suspend-MonitorLines
         $g = [Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size); $g.Dispose()
+        Resume-MonitorLines
         $file = Join-Path $Out "$Snap-$($w.Kind).png"
         $bmp.Save($file); $bmp.Dispose()
         "$($w.Kind) `"$($w.Title)`": $($r.R - $r.L)x$($r.B - $r.T) at $($r.L),$($r.T) -> $file"

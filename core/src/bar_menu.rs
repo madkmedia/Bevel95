@@ -286,13 +286,14 @@ pub fn colors_at(index: usize) -> Option<Depth> {
 
 /// The Monitor Lines submenu (brief 102, PROVISIONAL wording): Off, Light, Medium, Strong, a bullet
 /// on the setting. At a size where the lines cannot show (1×, and every size between whole
-/// numbers: `monitor_lines::possible`) every entry is grey, the bullet still on the setting, which
-/// is kept for when the size is whole again. The bar's and the desktop's Bevel95 menus share it.
+/// numbers: `monitor_lines::possible`) Light, Medium and Strong are grey, the bullet still on the
+/// setting, which is kept for when the size is whole again; Off can be chosen at every size
+/// (brief 104). The bar's and the desktop's Bevel95 menus share it.
 pub fn monitor_lines_menu(current: Strength, scale: Scale) -> Menu {
     let mut menu = choices(Strength::ALL.iter().map(|&s| (s.title().to_string(), s == current)));
     let possible = crate::monitor_lines::possible(scale);
-    for entry in &mut menu.entries {
-        entry.disabled = !possible;
+    for (entry, s) in menu.entries.iter_mut().zip(Strength::ALL) {
+        entry.disabled = !possible && s != Strength::Off;
     }
     menu
 }
@@ -582,8 +583,8 @@ mod tests {
         assert_eq!(colors_at(3), None);
     }
 
-    /// Brief 102: a bullet on the setting; every entry grey at 1× and between whole sizes (1.75),
-    /// where the lines cannot show, the bullet kept.
+    /// Brief 102: a bullet on the setting; Light, Medium and Strong grey at 1× and between whole
+    /// sizes (1.75), where the lines cannot show, the bullet kept; Off always (brief 104).
     #[test]
     fn the_monitor_lines_menu_marks_the_setting_and_greys_where_it_cannot_show() {
         for strength in Strength::ALL {
@@ -600,7 +601,8 @@ mod tests {
                 assert_eq!(labels, ["Off", "Light", "Medium", "Strong"]);
                 let marked: Vec<bool> = m.entries.iter().map(|e| e.mark == Some(Mark::Bullet)).collect();
                 assert_eq!(marked, Strength::ALL.map(|s| s == strength), "{strength:?} at {scale}");
-                assert!(m.entries.iter().all(|e| e.choosable() == open), "{strength:?} at {scale}");
+                let choosable: Vec<bool> = m.entries.iter().map(|e| e.choosable()).collect();
+                assert_eq!(choosable, [true, open, open, open], "{strength:?} at {scale}: Off always");
             }
         }
         assert_eq!(monitor_lines_at(0), Some(Strength::Off));

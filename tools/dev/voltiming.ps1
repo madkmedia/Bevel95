@@ -3,6 +3,7 @@
 # its pixels first showed on the screen, counted from the button's release.
 param([int]$Runs = 3, [switch]$Real)
 Add-Type -AssemblyName System.Drawing
+. (Join-Path $PSScriptRoot 'lines-pause.ps1')
 Add-Type @'
 using System; using System.Runtime.InteropServices;
 public static class T {
@@ -29,6 +30,9 @@ if ($bar -eq [IntPtr]::Zero) { 'no bar'; exit 1 }
 $r = New-Object T+RECT; [void][T]::GetWindowRect($bar, [ref]$r)
 $w = $r.R - $r.L; $h = $r.B - $r.T
 $bmp = New-Object Drawing.Bitmap $w, $h
+# Without Bevel95's Monitor Lines while the screen is read, if they are on (lines-pause.ps1; the
+# pause ends below, or by itself after a minute).
+Suspend-MonitorLines
 $g = [Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size); $g.Dispose()
 $xs = @(); $ys = @()
 for ($y = 0; $y -lt $h; $y++) { for ($x = [int]($w * 2 / 3); $x -lt $w; $x++) { $c = $bmp.GetPixel($x, $y); if ($c.R -eq 255 -and $c.G -eq 255 -and $c.B -eq 0) { $xs += $x; $ys += $y } } }
@@ -72,5 +76,6 @@ for ($run = 1; $run -le $Runs; $run++) {
   if ([T]::IsWindow($p)) { "  (still open)" }
 }
 [void][T]::ReleaseDC([IntPtr]::Zero, $dc)
+Resume-MonitorLines
 if ($Real) { [void][T]::SetCursorPos($back.X, $back.Y) }
 

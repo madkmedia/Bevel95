@@ -3,11 +3,13 @@
 //! window is layered and transparent, so Windows' hit test passes it by for every program and
 //! thread: it never takes a click, a key or the focus, and it is never a task button. It is
 //! filled once with `UpdateLayeredWindow` (per-pixel alpha, premultiplied) and kept above every
-//! other window of the bar's process: where the bar shows or raises one of its own, `raise` puts
-//! the lines back on top at once (also through `bevel_winkit::on_top`, for the kit's windows, a
-//! program's menus and the dragged picture); other programs' always-on-top windows are put back
-//! under it on the bar's tick (`keep_on_top`), and one that insists is given up on after a few
-//! times (`bevel_core::monitor_lines::Fights`), logged counted, never with its title or class.
+//! window of Bevel95's own copy: where the bar shows or raises one of its own, `raise` puts the
+//! lines back at once (also through `bevel_winkit::on_top`, for the kit's windows, a program's
+//! menus and the dragged picture, and for the companion programs, which ask the bar by its
+//! message); other programs' always-on-top windows are put back under it on the bar's tick
+//! (`keep_on_top`), and one that insists is given up on after a few times: the lines then stand
+//! just under it and above everything else (`bevel_core::monitor_lines::{place, Fights}`, brief
+//! 104), logged counted, never with its title or class.
 //! The window is the bar's process's: when the bar ends, it ends, and nothing is left to restore.
 
 use std::cell::RefCell;
@@ -16,7 +18,7 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
 
-use bevel_core::monitor_lines::{self as lines, Fights, Strength};
+use bevel_core::monitor_lines::{self as lines, Fights, Place, Strength};
 use windows_sys::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CreateCompatibleDC, CreateDIBSection,
@@ -26,8 +28,8 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GW_HWNDPREV, GetWindow, GetWindowRect, GetWindowThreadProcessId,
-    HTTRANSPARENT, HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, MA_NOACTIVATE, RegisterClassExW, RemovePropW,
-    SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetPropW,
+    HTTRANSPARENT, HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, MA_NOACTIVATE, PostMessageW, RegisterClassExW,
+    RemovePropW, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetPropW,
     SetWindowPos, ShowWindow, ULW_ALPHA, UpdateLayeredWindow, WM_MOUSEACTIVATE, WM_NCHITTEST, WNDCLASSEXW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
@@ -202,6 +204,10 @@ fn fill(hwnd: HWND, w: &Wanted) -> bool {
         let bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
         if bitmap.is_null() || bits.is_null() {
             log_win32("CreateDIBSection(monitor lines)");
+            // A bitmap that came back without its bits is freed too (brief 104, N1).
+            if !bitmap.is_null() {
+                DeleteObject(bitmap);
+            }
             DeleteDC(dc);
             ReleaseDC(null_mut(), screen);
             return false;
@@ -226,95 +232,150 @@ fn fill(hwnd: HWND, w: &Wanted) -> bool {
     }
 }
 
-/// Puts the lines back on top of every window (above the bar's own just shown). From any of the
-/// bar's threads: from another thread than the window's, without waiting for it.
+/// Puts the lines where they belong after one of Bevel95's own windows came up or forward: above
+/// it and every window but those given up on (`bevel_core::monitor_lines::place`), counting
+/// nothing. On the lines' thread at once; from another thread (the desktop's, a drag's) the bar
+/// is asked by its message (`on_top::WM_RAISE_LINES`), as Bevel95's companion programs ask it.
 pub fn raise() {
     let hwnd = WINDOW.load(Ordering::SeqCst) as HWND;
-    if !hwnd.is_null() {
-        raise_window(hwnd);
-    }
-}
-
-fn raise_window(hwnd: HWND) {
-    let mut process = 0;
-    // SAFETY: plain queries; the window is checked to be still this process's (a handle that went
-    // meanwhile is never another program's window moved).
-    unsafe {
-        let thread = GetWindowThreadProcessId(hwnd, &mut process);
-        if thread == 0 || process != GetCurrentProcessId() {
-            return;
-        }
-        let wait = if thread == GetCurrentThreadId() { 0 } else { SWP_ASYNCWINDOWPOS };
-        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | wait);
-    }
-}
-
-/// The bar's tick: a window found above the lines on their screen goes back under them, the bar's
-/// own always, another program's unless it insists (`Fights`). Reads the order of windows from
-/// the lines up, nothing else.
-pub fn keep_on_top() {
-    let hwnd = WINDOW.load(Ordering::SeqCst) as HWND;
-    let Some(w) = NOW.with(|n| *n.borrow()) else {
-        return;
-    };
     if hwnd.is_null() {
         return;
     }
-    let screen = RECT { left: w.left, top: w.top, right: w.left + w.width, bottom: w.top + w.height };
-    let (foreign, own) = windows_above(hwnd, &screen);
-    if foreign.is_empty() && !own {
+    let mut process = 0;
+    // SAFETY: plain queries; the window is checked to be still this process's.
+    let thread = unsafe { GetWindowThreadProcessId(hwnd, &mut process) };
+    // SAFETY: plain queries.
+    if thread == 0 || process != unsafe { GetCurrentProcessId() } {
         return;
     }
-    let now = EPOCH.with(|e| e.elapsed().as_millis() as u64);
-    let verdict = FIGHTS.with(|f| {
-        let mut f = f.borrow_mut();
-        // Every so often the windows that went are forgotten.
-        if f.len() > 32 {
-            // SAFETY: a plain query; any number.
-            f.retain(|id| unsafe { IsWindow(id as HWND) } != 0);
+    // SAFETY: a plain query.
+    if thread == unsafe { GetCurrentThreadId() } {
+        place_lines(hwnd, false);
+    } else {
+        let bar = crate::bar::BAR_HWND.load(Ordering::SeqCst) as HWND;
+        if !bar.is_null() {
+            // SAFETY: posting a message without pointers to the bar's own window.
+            unsafe { PostMessageW(bar, bevel_winkit::on_top::WM_RAISE_LINES.id(), 0, 0) };
         }
-        f.above(&foreign, own, now)
-    });
-    if verdict.raise {
-        raise_window(hwnd);
     }
-    if let Some(n) = verdict.gave_up {
+}
+
+/// The bar's tick: the windows found above the lines on their screen are counted (another
+/// program's that insists is given up on: `Fights`), and the lines go where they belong.
+pub fn keep_on_top() {
+    let hwnd = WINDOW.load(Ordering::SeqCst) as HWND;
+    if !hwnd.is_null() {
+        place_lines(hwnd, true);
+    }
+}
+
+/// Reads the windows above the lines (front first), decides with `Fights` (counting on the tick
+/// only) and moves the lines' window there: on top of every window, or just under the lowest
+/// window given up on, or nowhere new. On the lines' own thread.
+fn place_lines(hwnd: HWND, count: bool) {
+    let Some(w) = NOW.with(|n| *n.borrow()) else {
+        return;
+    };
+    let screen = RECT { left: w.left, top: w.top, right: w.left + w.width, bottom: w.top + w.height };
+    let above = windows_above(hwnd, &screen);
+    let now = EPOCH.with(|e| e.elapsed().as_millis() as u64);
+    let Ok((place, gave_up)) = FIGHTS.with(|f| {
+        let mut f = f.try_borrow_mut()?;
+        // A mark ends when its window is gone or hidden (a few windows: only those given up on).
+        for id in f.given_up_ids() {
+            // SAFETY: plain queries; any number.
+            let shows = unsafe { IsWindow(id as HWND) != 0 && IsWindowVisible(id as HWND) != 0 };
+            if !shows {
+                f.forget(id);
+            }
+        }
+        Ok::<_, std::cell::BorrowMutError>(if count {
+            let v = f.tick(&above, now);
+            (v.place, v.gave_up)
+        } else {
+            (f.place_now(&above), None)
+        })
+    }) else {
+        return;
+    };
+    let after = match place {
+        Place::Stay => None,
+        Place::Top => Some(HWND_TOPMOST),
+        Place::Under(id) => Some(id as HWND),
+    };
+    if let Some(after) = after {
+        // SAFETY: our own window; only its place among the windows changes.
+        unsafe { SetWindowPos(hwnd, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER) };
+    }
+    if let Some(n) = gave_up {
         static SAID: AtomicU32 = AtomicU32::new(0);
         let said = SAID.fetch_add(1, Ordering::Relaxed) + 1;
         if said <= 5 || said.is_multiple_of(50) {
             log(&format!(
-                "monitor lines: a window of another program came back above the lines {} times in a row; it is left above them from now on (windows left so far: {n})",
+                "monitor lines: a window of another program came back above the lines {} times in a row; the lines stay just under it while it shows (windows left so far: {n})",
                 lines::FIGHTS_BEFORE_GIVING_UP + 1
             ));
         }
     }
 }
 
-/// The windows above `lines` that show on `screen`: other programs' (front first) and whether any
-/// is the bar's process's own.
-fn windows_above(lines: HWND, screen: &RECT) -> (Vec<u64>, bool) {
-    let ours = unsafe { GetCurrentProcessId() };
-    let (mut foreign, mut own) = (Vec::new(), false);
+/// The windows above `lines` that show on `screen`, front first: `None` for a window of Bevel95's
+/// own copy (the bar's process, or a program file of the bar's own folder: `Own`), else its
+/// handle.
+fn windows_above(lines: HWND, screen: &RECT) -> Vec<Option<u64>> {
+    let mut found = Vec::new();
     // SAFETY: plain queries on any window handle.
     unsafe {
         let mut above = GetWindow(lines, GW_HWNDPREV);
         let mut steps = 0;
         while !above.is_null() && steps < 1000 {
             if shows_on(above, screen) {
-                let mut process = 0;
-                GetWindowThreadProcessId(above, &mut process);
-                if process == ours {
-                    own = true;
-                } else {
-                    foreign.push(above as u64);
-                }
+                found.push(if is_own(above) { None } else { Some(above as u64) });
             }
             above = GetWindow(above, GW_HWNDPREV);
             steps += 1;
         }
     }
-    foreign.reverse(); // front first
-    (foreign, own)
+    found.reverse(); // front first
+    found
+}
+
+thread_local! {
+    /// Windows already told apart (`is_own`), by handle: the process they belong to and whether it
+    /// is a program of the bar's own copy. A window never changes its process, so the answer holds
+    /// while the window's process is the same one.
+    static OWN: RefCell<std::collections::HashMap<u64, (u32, bool)>> = RefCell::new(std::collections::HashMap::new());
+}
+
+/// Whether `hwnd` belongs to Bevel95's own copy: the bar's process, or a process whose program
+/// file is in the bar's own folder (`bevel_core::monitor_lines::copy_folder`): never by a class
+/// name, so another copy's programs and a stranger's window of the same class are not ours.
+fn is_own(hwnd: HWND) -> bool {
+    let mut pid = 0;
+    // SAFETY: plain queries.
+    unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+    // SAFETY: a plain query.
+    if pid == unsafe { GetCurrentProcessId() } {
+        return true;
+    }
+    if pid == 0 {
+        return false;
+    }
+    if let Some(own) = OWN.with(|o| o.borrow().get(&(hwnd as u64)).filter(|(p, _)| *p == pid).map(|(_, own)| *own)) {
+        return own;
+    }
+    let own = match (bevel_winkit::on_top::process_path(pid), std::env::current_exe()) {
+        (Some(theirs), Ok(ours)) => lines::copy_folder(&theirs) == lines::copy_folder(&ours.to_string_lossy()),
+        _ => false,
+    };
+    OWN.with(|o| {
+        let mut o = o.borrow_mut();
+        if o.len() >= 64 {
+            o.clear();
+        }
+        o.insert(hwnd as u64, (pid, own));
+    });
+    own
 }
 
 /// A window that can be seen on `screen`: visible, not minimized or cloaked, not empty, and
@@ -423,8 +484,8 @@ mod tests {
     }
 
     /// The window as the bar makes it, shown off every screen: its styles, a click at its middle
-    /// reaches the window under it, it is no task button, and `raise_window` puts it above a
-    /// topmost window shown after it (a menu, another program's window).
+    /// reaches the window under it, it is no task button, and `place_lines` puts it above a
+    /// topmost window of the process shown after it (a menu: Bevel95's own).
     #[test]
     fn the_lines_window_takes_nothing_and_goes_on_top() {
         let (x, y) = (AWAY, AWAY + 200);
@@ -432,10 +493,12 @@ mod tests {
         let w = Wanted { left: x, top: y, width: 64, height: 64, period: 2, strength: Strength::Strong };
         let hwnd = create(w.left, w.top, w.width, w.height).expect("made");
         assert!(fill(hwnd, &w), "filled");
+        // What this test thread's lines cover (the bar keeps it on its own thread).
+        NOW.with(|n| *n.borrow_mut() = Some(w));
         // SAFETY: plain queries and the test's own windows.
         unsafe {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-            raise_window(hwnd);
+            place_lines(hwnd, false);
             let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
             let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
             assert_eq!(ex & EX_STYLE, EX_STYLE, "layered, transparent, topmost, tool window, never activated");
@@ -447,8 +510,12 @@ mod tests {
             // A topmost window shown after the lines stands above them, until they are raised.
             let menu = plain("Bevel95TestMenuOverLines", x, y);
             assert!(below(hwnd, menu));
-            raise_window(hwnd);
+            place_lines(hwnd, false);
             assert!(below(menu, hwnd), "the lines back on top");
+            // The tick too, and the menu is Bevel95's own: never counted.
+            place_lines(hwnd, true);
+            assert!(FIGHTS.with(|f| f.borrow().is_empty()));
+            NOW.with(|n| *n.borrow_mut() = None);
             DestroyWindow(menu);
             destroy(hwnd);
             DestroyWindow(under);
