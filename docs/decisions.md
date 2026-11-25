@@ -7084,3 +7084,92 @@ buttons was drawn as a mockup only).
   opened by "Open in New Tab" on a test folder, the next tab, the front closed, in 95 (above the
   menu bar), 98 (under the address bar, over the file list) and 2000 (under the menu bar, the X
   on the tab); the setting switched off and on with the window open.
+
+## Windows XP: the taskbar and Start menu (a first version, 2026-11-25, brief 112)
+
+The owner: "The other thing is xp and win7. I think the way to do those, later on, is to do
+taskbar and start menu only and leave that for a long time. Most people only use those two things
+anyway and only die hard folks want the explorers." and "Yes on xp/7 with no apps etc and for v1
+they could just be measure from good screenshots".
+
+**Where the pictures come from.** Elsewhere these docs say that every picture of Bevel95 comes
+from the owner's own Windows. XP's do NOT yet: they are a FIRST PASS cut from published
+screenshots (GUIdebook's and Toasty Tech's pictures of XP's first release, Luna blue, 800x600:
+`private/probes/xp/survey.md`, `cuts/index.md`, `sources.md`), each checked against a second
+installation where one existed ("confirmed", "single" or a guess, as marked there and in the art
+inventory). The owner's own XP replaces them under the same names (`art/src/xp.rs`, sheet
+`art/assets/xp/luna.rgba`, cut by `private/probes/xp/tools/to-art.ps1`). Two places were painted
+over because no screenshot shows what is under them (the network icon in the notification area's
+left part, the clock's last letter in its right part: the row's colors between); the wallpaper in
+the Start menu's rounded corners was made see-through.
+
+- **A bar style beside the look, not a fourth look**: `theme::Era` stays the three classics
+  everywhere; the taskbar and the Start menu ask a `BarStyle` (`Classic | Xp`; room for
+  `Seven`, painted elsewhere). settings.txt: `bar_style = classic | xp`, default `classic`,
+  written only when changed. With `Classic` every pixel and behaviour is as before (the 924
+  comparisons; the golden pictures changed only where the Theme menu and Bevel95 Settings' General
+  page gained the new entry). The XP bar draws with `theme::WINXP` (the 2000 theme with XP's bar
+  sizes; `bar_theme`), dispatched in `paint::paint_bar`/`bar_layout`, so the bar's clicks, drags,
+  tooltips and reserved space (now 30 high) work through the same `BarLayout`.
+- **One list of looks for a person**: the Theme menus and Bevel95 Settings list Windows XP after
+  Windows 2000 (`theme::LOOKS`); choosing it sets `bar_style = xp` and the look to 2000; choosing
+  95, 98 or 2000 sets `classic`. Settings says in one line under the groups: "Windows XP: taskbar
+  and Start menu only, a first version." (the Look group's rows 17 apart now, the groups below 13
+  lower, Startup 7 lower).
+- **Under XP everything else is the 2000 look** (Taskbar Properties, Date/Time, Settings, Run,
+  Quick Search, the volume control, the menus, tooltips, the Programs cascades): PROVISIONAL, the
+  main session's choice until the owner answers. **No apps** (the owner's word): no classic desktop
+  (the `desktop` setting keeps its value), Bevel95's own programs not listed in the Programs menu
+  or Quick Search and the folders open in Windows' own Explorer (`start_menu::set_own_programs`:
+  as when the folder program is missing), no Quick Launch (XP shipped with it hidden; the setting
+  keeps its value), always True Color (also for the other programs: `look::xp_as_2000`).
+- **The taskbar** (`core::xp`): 30 high; the 1x30 column stretched across; the Start button's
+  picture (normal, and pressed while its menu is open); task buttons from 15 left columns, a
+  middle of two source columns each stretched over half (the first the larger half), 4 right
+  columns, plain and in front, 160 wide at most, no gap, the first at x 106 (8 after the 98-wide
+  button), the last at least 12 short of the notification area (any of 10 to 13 gives
+  desktop-full's 147: PROVISIONAL); the notification area 23 left columns, the fill, 20 right ones,
+  icons 11 in and 18 apart, the clock's part as wide as the widest time plus 18 (one icon: 93, the
+  survey's). `paint_sliced` is the new primitive. Labels and the clock: Tahoma 8, white, plain
+  (the stored letters of the 2000 look), baseline at row 19; the icon at the button's x+10, the
+  label at x+30.
+- **PROVISIONAL on the taskbar**: the word "start" is GUIdebook's smoothing (the survey found
+  three); nothing changes under the pointer; a held task button and a flashing one's other half
+  show the button in front (the platform's classic flashing rate); grouping as today without
+  XP's arrow; no arrow hiding notification icons; Bevel95's speaker, network and battery pictures
+  are 2000's; a bar too full gets the 2000 look's scroll arrows (XP grouped instead).
+- **The Start menu** (`core::xp_start`): an ordinary `Menu` of the bar's menu machinery
+  (`MenuStyle::XpStart`), laid out and painted there, so the pointer, the arrow keys, Enter, Esc
+  and the cascades work as the classic Start menu's. 380x478 as the screenshots: the user band
+  (64), the dark and orange lines (3), the body (370: white left column, blue right one), the
+  bottom band (41). Left: Quick Launch's shortcuts as the pinned programs (bold), a line, up to
+  six programs started most often, a line, All Programs with its green arrow (opens the Programs
+  cascade in the 2000 look beside the menu, PROVISIONAL). Right: My Documents, My Recent Documents
+  (the Documents cascade), My Pictures, My Music, My Computer | Control Panel, Printers and Faxes |
+  Help and Support, Search (Quick Search), Run...; each goes where the classic entry goes, the
+  folders in Windows' Explorer. Bottom: Log Off and Turn Off Computer open the 2000 look's Log Off
+  and Shut Down windows (PROVISIONAL).
+- **The programs started most often**: `often.txt` (`winkit::state_file`, written whole, never
+  replaced unread), counted when a program is started through the Programs menu, the XP menu's
+  own list or Quick Search, only under XP's style; names and shortcuts only, never logged; it
+  starts empty; at most 50 kept (`xp_start::often_counted`, `often_top`).
+- **PROVISIONAL in the Start menu**: the fill under the pointer 316AC5 with white letters (the
+  survey's guess); Log Off and Turn Off show a white frame under the pointer (not seen); square
+  corners (the outside of the rounding shows the band's color: no see-through window here); the
+  user's name in Tahoma 17px bold (the nearest stored face to the survey's ~15 px) with a
+  one-pixel shadow; the user picture the stranger's cut from the screenshot; the pinned programs'
+  pictures are the shell's 16x16 doubled; the menu's size is fixed (XP grew it with its contents).
+- **Proof**: `xp::tests` (slicing, the layout at 800 and other widths and counts, a classic bar
+  reads no XP picture, the setting read back), `xp_start::tests` (every entry by its place, the
+  layout, the keys and the pointer, the often-used list), `properties::windows_xp_is_the_fourth_look`,
+  `bar_menu`'s theme menu test, the golden pictures `winxp-*`, and `core/tests/xp_reference.rs`
+  (ignored: against the screenshots in `private`): the bar's Start button, gap and empty bar 0
+  differing pixels, a plain button 11, the button in front 97-109, the notification area 18
+  (round 2: 12, 109, 18); the Start menu's lines, columns, All Programs and bottom band 0, the top
+  band 141 (round 2: 262; its top rows change slowly from left to right). Toasty Tech's Start
+  button differs by 131 (its "start" smoothing).
+- **Safety**: the XP paint and layout use no unchecked index (`sliced_column` stays inside the
+  picture for any width); a panic on the bar's thread gives Windows' taskbar back by the panic
+  rule (`winkit::panic`), and a killed bar by the watchdog, as for the classic bar: the style
+  changes no part of that. The owner's own bar was never switched to XP: the first live run is
+  theirs.

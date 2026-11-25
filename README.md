@@ -56,6 +56,10 @@ Website: https://madkmedia.github.io/Bevel95/
   and **Open in New Tab** in a folder's menu. The row shows only while a window has two tabs or
   more, so a window looks as always until then; Bevel95 Settings > Folders says where the row goes
   (over the file list unless you choose another place), and **None** switches tabs off.
+- **Windows XP's taskbar and Start menu** (a first version): choose **Windows XP** in the Theme
+  menu or Bevel95 Settings. Only the taskbar and the Start menu are XP's (everything else shows in
+  the 2000 look, and the classic desktop and Bevel95's own programs step aside); their pictures are
+  a first pass from published screenshots.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 
