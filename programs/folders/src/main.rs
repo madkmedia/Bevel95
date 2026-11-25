@@ -1954,6 +1954,40 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
 /// The place's names, space and known folders, read off the window's thread; they reach the
 /// window (by its id) while it still shows that place (`prepared_ready`).
 fn read_place_facts(id: usize, shows: Shows) {
+    read_place_facts_as(id, shows, None);
+}
+
+/// A tab's place's facts reading (window, tab, place's key): one at a time for each, by the
+/// window id it now answers to.
+type FactsFor = (isize, u64, String);
+
+/// The facts readings of tabs coming forward still out, and the window id each answers to now
+/// (the second review's Q1: holding Ctrl+Tab over a place that does not answer started one
+/// blocked thread per repeat).
+static FACTS_OUT: Mutex<Option<HashMap<FactsFor, usize>>> = Mutex::new(None);
+
+/// A tab coming forward wants its place's facts under window id `id`: true if a reading is to
+/// start; false if one for that tab and place is still out (it now answers to `id`).
+fn facts_wanted(out: &mut HashMap<FactsFor, usize>, what: &FactsFor, id: usize) -> bool {
+    out.insert(what.clone(), id).is_none()
+}
+
+/// A tab's facts reading ended: the window id it answers to now (None: no longer wanted).
+fn facts_done(out: &mut HashMap<FactsFor, usize>, what: &FactsFor) -> Option<usize> {
+    out.remove(what)
+}
+
+/// `read_place_facts` for the tab `tab` of window `hwnd` coming forward: at most one reading out
+/// for each tab and place; a later coming forward takes over the reading still out.
+fn read_tab_facts(hwnd: HWND, tab: u64, id: usize, shows: Shows) {
+    let what: FactsFor = (hwnd as isize, tab, shows.key());
+    let start = FACTS_OUT.lock().map(|mut o| facts_wanted(o.get_or_insert_with(HashMap::new), &what, id)).unwrap_or(true);
+    if start {
+        read_place_facts_as(id, shows, Some(what));
+    }
+}
+
+fn read_place_facts_as(id: usize, shows: Shows, tab: Option<FactsFor>) {
     let hub = HUB_FOR_THREADS.load(Ordering::SeqCst);
     let spawned = std::thread::Builder::new().name("folder place".into()).spawn(move || {
         bevel_winkit::com::init();
@@ -1963,6 +1997,11 @@ fn read_place_facts(id: usize, shows: Shows) {
             log("folders: a place of the history is gone");
         }
         let facts = read_facts(&shows);
+        // A tab's reading answers to the id its tab has now (it came forward again meanwhile).
+        let id = match &tab {
+            Some(what) => FACTS_OUT.lock().ok().and_then(|mut o| o.as_mut().and_then(|o| facts_done(o, what))).unwrap_or(id),
+            None => id,
+        };
         REREAD.lock().map(|mut r| r.push((id, facts))).ok();
         // SAFETY: posting to the program's own hidden window.
         unsafe { PostMessageW(hub as HWND, WM_ITEMS.id(), 0, 6) };
@@ -3839,9 +3878,12 @@ fn to_back(h: &mut FolderHost, mut form: FolderWindow) -> TabSlot {
     // coming forward (the early review's D2). The tree's rows owed a reading again stay with the
     // window, as the tree does (eread; the second review's N6: they went with the tab).
     h.settle = None;
+    // The tree's rows belong to the window: the tab behind keeps no copy (the second review's Q3).
+    let mut behind = std::mem::replace(&mut h.form, form);
+    behind.shed_window_parts();
     TabSlot {
         tab: h.tab,
-        form: std::mem::replace(&mut h.form, form),
+        form: behind,
         shows: h.shows.clone(),
         select: h.select.take(),
         history: std::mem::replace(&mut h.history, History::new(h.shows.place())),
@@ -3975,8 +4017,9 @@ fn restart_reader(hwnd: HWND) {
     kit::update::<FolderHost>(|_| {});
     start_reader(id, shows.clone(), era, stop, HUB.with(Cell::get), StartedBy::LookChange);
     // Its place's facts read again too: a reading that came while it was behind was dropped
-    // (its id was another; the early review's finding 4).
-    read_place_facts(id, shows);
+    // (its id was another; the early review's finding 4). One reading out per tab and place.
+    let tab = kit::with::<FolderHost, _>(|h| h.tab).unwrap_or(0);
+    read_tab_facts(hwnd, tab, id, shows);
 }
 
 /// Tab `tab` comes to the front (a press on it, Ctrl+Tab): found by its id, nothing if it is
@@ -5830,6 +5873,23 @@ mod tests {
         // An icon never moved: nothing to write.
         assert!(!renamed_behind(&mut slot, r"Z:\Bevel95 test\a.txt", r"Z:\Bevel95 test\new a.txt", "new a.txt"));
         SAVED.with(|s| *s.borrow_mut() = Saved::default());
+    }
+
+    /// The second review of brief 110, Q1: a tab coming forward again and again (Ctrl+Tab held)
+    /// over a place whose facts reading is still out starts no second reading; the one out
+    /// answers to the id the tab has last; once it ended, the next coming forward reads again.
+    #[test]
+    fn one_facts_reading_out_per_tab_and_place() {
+        use super::{FactsFor, facts_done, facts_wanted};
+        let mut out = std::collections::HashMap::new();
+        let what: FactsFor = (7, 2, r"z:\bevel95 test".into());
+        assert!(facts_wanted(&mut out, &what, 10), "the first starts");
+        assert!(!facts_wanted(&mut out, &what, 11), "a repeat while out starts nothing");
+        assert!(!facts_wanted(&mut out, &what, 12));
+        let other: FactsFor = (7, 3, r"z:\bevel95 test".into());
+        assert!(facts_wanted(&mut out, &other, 13), "another tab reads its own");
+        assert_eq!(facts_done(&mut out, &what), Some(12), "the reading answers to the last id");
+        assert!(facts_wanted(&mut out, &what, 14), "ended: the next coming forward reads again");
     }
 
     /// The second review of brief 110, N2: the "no disc" box answers the tab that asked. Behind

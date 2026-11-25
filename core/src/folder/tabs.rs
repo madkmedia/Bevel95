@@ -488,6 +488,26 @@ mod tests {
         assert!(!behind.tree_shown && behind.bar.checked.is_empty() && !behind.tree_focus);
     }
 
+    /// The second review's Q3: a tab behind keeps no copy of the window's tree; coming forward
+    /// it has the window's tree again.
+    #[test]
+    fn a_tab_behind_keeps_no_copy_of_the_tree() {
+        use crate::folder::FolderWindow;
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let mut front = FolderWindow::new(Era::Win98, "W", icon, true, (560, 380));
+        let mut row = front.tree.nodes[0].clone();
+        for k in 0..200 {
+            row.id = format!("C:\\Bevel95 test\\{k}");
+            row.depth = 1;
+            front.tree.nodes.push(row.clone());
+        }
+        let mut behind = front.clone();
+        behind.shed_window_parts();
+        assert_eq!(behind.tree.nodes.len(), 1, "the Desktop alone");
+        behind.take_window_from(&front);
+        assert_eq!(behind.tree.nodes.len(), 201, "the window's tree again");
+    }
+
     /// The second review's Q2: a new tab copied from a tab that could go Back shows Back
     /// grayed at once (its own history begins at its place).
     #[test]

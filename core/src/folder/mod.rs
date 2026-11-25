@@ -450,6 +450,14 @@ impl FolderWindow {
         self.view.forget_passing();
     }
 
+    /// A tab going behind gives up its copy of what belongs to the window and is given back when
+    /// it comes forward (`take_window_from`): the tree's rows (the second review's Q3: 32 tabs
+    /// kept 32 copies of a deep tree). Its font stays (a few kilobytes of letters; a change of
+    /// look reaches a tab behind through it), the web view's fonts are shared.
+    pub fn shed_window_parts(&mut self) {
+        self.tree = pane::Tree::new();
+    }
+
     pub fn take_window_from(&mut self, other: &FolderWindow) {
         let tree_was = self.tree_shown;
         self.size = other.size;

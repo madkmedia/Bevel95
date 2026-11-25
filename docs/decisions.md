@@ -7037,7 +7037,13 @@ buttons was drawn as a mockup only).
 - **Memory** (the early review's D3): a tab behind keeps its view (its items and their pictures,
   shared with the pictures' store); every switch reads the folder and its pictures again
   (PROVISIONAL: keeping the reader's own record per tab would spare that; not done), and up to
-  32 tabs of large folders can keep their pictures past the store's own limit.
+  32 tabs of large folders can keep their pictures past the store's own limit. A tab behind keeps
+  no copy of the window's tree (`shed_window_parts`; the second review's Q3); its font (a few
+  kilobytes) stays, the web view's fonts are shared. A tab coming forward again and again
+  (Ctrl+Tab held) starts at most one facts reading for each tab and place; the one still out
+  answers to the window id the tab has last (`read_tab_facts`, Q1). Each coming forward still
+  starts a reader for the items (it stops at its flag, but a drive that does not answer can hold
+  it until Windows gives up).
 - **Not done**: a tab's whole path as a tooltip when its name is cut (the folder windows have no
   tooltips to build on); a middle click on a folder opening it in a new tab; a drop ON a tab.
 - **Proof**: `core::folder::tabs` tests (the words, widths, a long row, the X on the tab, the
