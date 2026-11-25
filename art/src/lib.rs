@@ -29,6 +29,7 @@ mod folder;
 mod html_help;
 mod pointers;
 mod quick_launch;
+mod seven;
 mod start;
 mod taskbar;
 mod tray;
@@ -44,6 +45,9 @@ pub enum Look {
     /// Windows XP's taskbar and Start menu only (Bevel95's XP bar style, brief 112): a first pass
     /// from published screenshots (`xp.rs`).
     WinXp,
+    /// Windows 7 with the Windows 7 Basic theme (its taskbar and Start menu only; a first pass
+    /// from published screenshots, `seven.rs`).
+    Win7,
 }
 
 /// The screen it was taken from: True Color, or that Windows on a 16-color or 256-color screen.
@@ -122,6 +126,7 @@ const GROUPS: &[&[Entry]] = &[
     colors16::ENTRIES,
     colors256::ENTRIES,
     xp::ENTRIES,
+    seven::ENTRIES,
 ];
 
 /// The picture `what` of `look` at `depth`, if there is one.
