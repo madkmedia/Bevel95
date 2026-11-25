@@ -1438,8 +1438,10 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
         }
         Page::StartMenuPrograms => parts.extend(PAGE_BUTTONS),
         Page::Bevel95 => {
+            // 15 high: the rows are 15 apart, so no row's click area takes the next one's top row
+            // (the review of brief 114, its small finding).
             for (part, x, y) in LOOK_ROWS {
-                parts.push((part, Rect::new(x, y, 17 + label_w(part) + 1, 16)));
+                parts.push((part, Rect::new(x, y, 17 + label_w(part) + 1, 15)));
             }
             for (depth, x, y) in COLORS_ROWS {
                 let part = Part::Colors(depth);
@@ -2969,6 +2971,17 @@ mod tests {
         assert_eq!(crate::config::parse("bar_style = 7\n").0.bar_style, BarStyle::Seven);
         let font = Font::parse(include_str!("../tests/fixtures/tahoma-11px.font")).unwrap();
         assert!(LOOK_GROUP.x + font.measure(XP_NOTE) <= COLORS_GROUP.right(), "the line fits");
+        // The review of brief 114: the Look buttons' click areas do not overlap; each row's every
+        // pixel row picks its own look.
+        let bold = Font::parse(include_str!("../tests/fixtures/tahoma-11px-bold.font")).unwrap();
+        let l = layout(&p, &Fonts { regular: &font, bold: &bold });
+        let rects: Vec<Rect> = LOOK_ROWS.iter().map(|&(part, ..)| l.rect(part).unwrap()).collect();
+        for pair in rects.windows(2) {
+            assert!(pair[0].bottom() <= pair[1].y, "{:?} {:?}", pair[0], pair[1]);
+        }
+        for &(part, x, y) in &LOOK_ROWS {
+            assert!((y..y + 15).all(|row| l.hit(x + 2, row) == Some(part)), "{part:?}");
+        }
         assert!(CLOCK_GROUP.bottom() < PAGE.bottom(), "the groups still fit the page");
     }
 

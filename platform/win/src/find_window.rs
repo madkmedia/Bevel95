@@ -420,13 +420,14 @@ fn activate(part: Part) {
         Part::TitleClose => close(),
         Part::Divider => save_name_width(),
         Part::Open => {
-            let Some((target, command, name)) =
-                kit::with::<FindHost, _>(|h| h.form.selected().map(|p| (p.target.clone(), p.command, p.name.clone()))).flatten()
+            let Some((target, command, name, kind)) =
+                kit::with::<FindHost, _>(|h| h.form.selected().map(|p| (p.target.clone(), p.command, p.name.clone(), p.kind))).flatten()
             else {
                 return;
             };
-            // A program started: counted for XP's Start menu (brief 112).
-            if command.is_none() {
+            // A program started: counted for XP's and 7's Start menus (brief 112), never a
+            // shortcut read to open a document, a page or a folder (the review of brief 114).
+            if command.is_none() && bevel_core::xp_start::often_counts_found(&target, kind) {
                 crate::often::count(&name, &target);
             }
             // A thing to do: the window closes, then the bar does it as its menus would.

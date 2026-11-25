@@ -412,10 +412,14 @@ pub fn often_counted(text: &str, name: &str, target: &str) -> String {
         None => lines.push((1, name.to_string(), target.to_string())),
     }
     lines.sort_by_key(|l| std::cmp::Reverse(l.0));
-    // At most 50: the least used go, never the one just counted (the review of brief 112, finding
-    // 6: a new program came last among the ones at 1 and was dropped at once, for good).
+    // At most 50: of the least used, the one counted longest ago goes (the first of them: equal
+    // counts keep the file's order, a newcomer joins at their end), never the one just counted.
+    // The review of brief 112, finding 6: a new program was dropped at once; the review of brief
+    // 114: then the newcomer before it was, so a program started once lasted only until the next.
     while lines.len() > 50 {
-        match lines.iter().rposition(|(_, _, t)| !t.eq_ignore_ascii_case(target)) {
+        let others = lines.iter().enumerate().filter(|(_, (_, _, t))| !t.eq_ignore_ascii_case(target));
+        let Some(least) = others.clone().map(|(_, l)| l.0).min() else { break };
+        match others.clone().find(|(_, l)| l.0 == least).map(|(k, _)| k) {
             Some(k) => {
                 lines.remove(k);
             }
@@ -432,6 +436,14 @@ pub fn often_counts(target: &str) -> bool {
     let lower = target.to_ascii_lowercase();
     target.starts_with(crate::programs::APP_PREFIX)
         || [".lnk", ".exe", ".appref-ms", ".url", ".com", ".bat", ".cmd"].iter().any(|e| lower.ends_with(e))
+}
+
+/// Whether a row Quick Search found, `target` of kind `kind` (what the shortcut was read to open),
+/// counts: a program's name alone is not enough, a shortcut to a document, a web page or a folder
+/// never counts (the review of brief 114, Job 1 item 7: Quick Search's "everything" lists them).
+pub fn often_counts_found(target: &str, kind: crate::find::Target) -> bool {
+    use crate::find::Target;
+    often_counts(target) && matches!(kind, Target::Program | Target::Unknown)
 }
 
 /// The `n` programs started most often (name, target), the most first; equal counts in the file's
@@ -471,9 +483,26 @@ mod tests {
         assert!(text.contains("C:\\new.lnk"), "the one just counted stays");
         text = often_counted(&text, "New", "C:\\new.lnk");
         assert_eq!(often_top(&text, 1), [("New".into(), "C:\\new.lnk".into())], "and climbs");
+        // The review of brief 114: a program started once survives the next newcomers; the one
+        // counted longest ago among the least used goes first.
+        text = often_counted(&text, "Once", "C:\\once.lnk");
+        assert!(!text.contains("C:\\p0.lnk") && !text.contains("C:\\p1.lnk"), "the oldest ones at 1 went");
+        for i in 0..5 {
+            text = often_counted(&text, "Next", &format!("C:\\next{i}.lnk"));
+        }
+        assert!(text.contains("C:\\once.lnk"), "the one started once is still there");
+        assert!((0..5).all(|i| text.contains(&format!("C:\\next{i}.lnk"))), "and so are the newcomers after it");
+        assert!(!text.contains("C:\\p6.lnk") && text.contains("C:\\p7.lnk"));
+        assert_eq!(text.lines().count(), 50);
         // Finding 7: programs only.
         assert!(often_counts("C:\\Users\\x\\Start Menu\\Notes.lnk") && often_counts("C:\\Tools\\tool.EXE"));
         assert!(!often_counts("C:\\Users\\x\\Documents\\letter.docx") && !often_counts("C:\\Users\\x\\Pictures"));
+        // Quick Search's rows go by what the shortcut was read to open.
+        use crate::find::Target;
+        assert!(often_counts_found("C:\\s\\Notes.lnk", Target::Program) && often_counts_found("C:\\s\\Panel.lnk", Target::Unknown));
+        for kind in [Target::Document, Target::Folder, Target::Web] {
+            assert!(!often_counts_found("C:\\s\\Letter.lnk", kind), "{kind:?}");
+        }
     }
 
     fn names(n: usize) -> Vec<(String, Option<Icon>)> {

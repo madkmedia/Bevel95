@@ -607,10 +607,10 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
         let want = match &parent.kind {
             Kind::BarMenu(clock) if bar_menu::entry(app.era, *clock, index) == Some(BarEntry::Bevel95) => {
                 let own = bar_menu::Own { desktop: app.desktop, desktop_key: crate::bar::desktop_key() };
-                Want::Ready(Kind::BarOwn(own), bar_menu::own_menu(own), MenuStyle::Popup)
+                Want::Ready(Kind::BarOwn(own), bar_menu::own_menu_in(own, app.xp()), MenuStyle::Popup)
             }
             Kind::BarMenu(clock) if bar_menu::entry(app.era, *clock, index) == Some(BarEntry::Toolbars) => {
-                Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu(app.quick_launch_on()), MenuStyle::Popup)
+                Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu_in(app.quick_launch_on(), app.xp()), MenuStyle::Popup)
             }
             Kind::Band if bevel_core::quick_launch::band_entry(app.era, index) == Some(bevel_core::quick_launch::BandEntry::Toolbars) => {
                 Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu(app.quick_launch_on()), MenuStyle::Popup)

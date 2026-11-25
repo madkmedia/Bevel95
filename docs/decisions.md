@@ -7201,7 +7201,11 @@ the Start menu's rounded corners was made see-through.
   short for 478 rows the menu shortens (`xp_start::fit`: the often-used programs go first, then the
   pinned ones, then the right column's entries from its bottom; All Programs and the bottom band
   stay; finding 3); often.txt takes new programs past 50 and counts programs only, never documents
-  or folders (`often_counts`, findings 6 and 7); the folder entries open as the classic menu's do,
+  or folders (`often_counts`, findings 6 and 7; since the review of brief 114 the one of the least
+  used counted longest ago goes, not the newcomer before, and a Quick Search row counts only when
+  its shortcut was read to open a program or something unknown, never a document, page or folder:
+  `often_counts_found`); the Bevel95 menu's Colors and classic desktop entries and Toolbars >
+  Quick Launch are greyed under XP and 7 (`own_menu_in`, `toolbars_menu_in`); the folder entries open as the classic menu's do,
   while its vanished window still holds the focus (finding 8); a long user name ends in three dots
   (doubt 13).
 - **The user's picture**: XP's default, the chess pieces (the owner), with its frame, cut from
@@ -7226,7 +7230,8 @@ here; its two comparisons still show 0 differing pixels in every part (`core/tes
 
 - **The style**: `BarStyle::Seven`, `bar_style = 7`; the Theme menus and Bevel95 Settings list
   "Windows 7" after Windows XP (`theme::LOOKS`); the Settings line names both: "XP and 7: their
-  taskbar and Start menu only, a first version." (the Look rows 15 apart now). Everything decided
+  taskbar and Start menu only, a first version." (the Look rows 15 apart now, their click areas 15 high so that none takes the next one's top
+  row: the review of brief 114). Everything decided
   for XP holds (`BarStyle::is_later`): the 2000 look for Bevel95's own windows (PROVISIONAL), no
   classic desktop, Bevel95's own programs not listed, folders in Windows' Explorer, always True
   Color, the switches that show nothing do nothing, the way back after a failure (one mark for

@@ -11,8 +11,8 @@ fn path() -> std::path::PathBuf {
     data_dir().join("often.txt")
 }
 
-/// Program `target` (shown as `name`) was started once more. Counted only under XP's bar style:
-/// a classic look writes no new file and behaves as before.
+/// Program `target` (shown as `name`) was started once more. Counted only under XP's and 7's bar
+/// styles: a classic look writes no new file and behaves as before.
 pub fn count(name: &str, target: &str) {
     // Programs only, never a document or folder (the review of brief 112, finding 7).
     if name.is_empty() || !bevel_core::xp_start::often_counts(target) || !crate::bar::with_app(|app| app.xp()).unwrap_or(false) {

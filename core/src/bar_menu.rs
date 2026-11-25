@@ -200,6 +200,31 @@ pub fn own_menu(own: Own) -> Menu {
     menu_of(own_entries(own).iter())
 }
 
+/// The Bevel95 submenu under a bar style (`later`: XP or 7): there the classic desktop's entry
+/// and Colors are greyed, as they show nothing (the review of brief 112, finding 4, which asked
+/// for them greyed; the review of brief 114). The entries stay where they are.
+pub fn own_menu_in(own: Own, later: bool) -> Menu {
+    let mut m = own_menu(own);
+    if later {
+        for (entry, e) in own_entries(own).iter().zip(m.entries.iter_mut()) {
+            let greyed = match entry {
+                Some((_, BarEntry::Colors)) => true,
+                Some((_, BarEntry::Command(c))) => c.shows_nothing_under_later().is_some(),
+                _ => false,
+            };
+            e.disabled |= greyed;
+        }
+    }
+    m
+}
+
+/// The Toolbars submenu under a bar style (`later`: XP or 7, where its Quick Launch is greyed).
+pub fn toolbars_menu_in(quick_launch: bool, later: bool) -> Menu {
+    let mut m = toolbars_menu(quick_launch);
+    m.entries[TOOLBARS_QUICK_LAUNCH].disabled |= later;
+    m
+}
+
 /// What entry `index` of `own_menu(own)` does (`None` for a separator).
 pub fn own_entry(own: Own, index: usize) -> Option<BarEntry> {
     own_entries(own).get(index).copied().flatten().map(|(_, entry)| entry)
@@ -663,5 +688,19 @@ mod tests {
             })
             .collect();
         assert_eq!(quick_desktop, [BarCommand::DesktopOn, BarCommand::DesktopOff], "Quick Search's two desktop entries");
+        // And greyed in the menus under XP and 7 (only there).
+        for desktop in [false, true] {
+            let own = Own { desktop, desktop_key: true };
+            let greyed = |later: bool| -> Vec<String> {
+                own_menu_in(own, later).entries.iter().filter(|e| e.disabled).map(|e| e.label.clone()).collect()
+            };
+            assert!(greyed(false).is_empty());
+            let under = greyed(true);
+            assert_eq!(under.len(), 2, "{under:?}");
+            assert_eq!(under[0], "Colors");
+            assert!(under[1].contains("desktop"));
+        }
+        assert!(!toolbars_menu_in(true, false).entries[TOOLBARS_QUICK_LAUNCH].disabled);
+        assert!(toolbars_menu_in(true, true).entries[TOOLBARS_QUICK_LAUNCH].disabled);
     }
 }
