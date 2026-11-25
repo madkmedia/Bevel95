@@ -29,6 +29,7 @@ mod folder;
 mod html_help;
 mod pointers;
 mod quick_launch;
+mod seven;
 mod start;
 mod taskbar;
 mod tray;
@@ -40,6 +41,9 @@ pub enum Look {
     Win95,
     Win98,
     Win2000,
+    /// Windows 7 with the Windows 7 Basic theme (its taskbar only; a first pass from published
+    /// screenshots, `seven.rs`).
+    Win7,
 }
 
 /// The screen it was taken from: True Color, or that Windows on a 16-color or 256-color screen.
@@ -117,6 +121,7 @@ const GROUPS: &[&[Entry]] = &[
     calculator::ENTRIES,
     colors16::ENTRIES,
     colors256::ENTRIES,
+    seven::ENTRIES,
 ];
 
 /// The picture `what` of `look` at `depth`, if there is one.
