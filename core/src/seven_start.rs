@@ -161,6 +161,13 @@ pub fn layout(menu: &Menu) -> MenuLayout {
     MenuLayout { width: sm::W, height: seven.height, rects, shortcut_x: 0, frame: 0, columns: vec![(0, sm::W)], lines: Vec::new(), scroll: None }
 }
 
+/// The 1x boxes of the program rows' pictures (32×32), by entry index: above size 1 the caller
+/// draws a true picture of the final size there (the owner, 2026-11-25).
+pub fn live_icon_boxes(menu: &Menu) -> Vec<(usize, Rect)> {
+    let seven = seven_of(menu);
+    sm::layout(&seven, seven.height).program_icons.into_iter().enumerate().collect()
+}
+
 /// Paints the 7 Start menu (`fb` as `layout` makes it).
 pub fn paint(fb: &mut Framebuffer, fonts: &Fonts, menu: &Menu, layout: &MenuLayout) {
     let seven = seven_of(menu);

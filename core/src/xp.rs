@@ -12,7 +12,7 @@ use std::cell::Cell;
 use crate::art::{self, Look};
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::layout::{self, BarLayout};
-use crate::paint::{Bar, TaskState};
+use crate::paint::{Bar, LiveIcon, TaskState};
 use crate::text::{Font, Fonts};
 use crate::theme::{Theme, WINXP};
 
@@ -175,8 +175,10 @@ pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) 
         .map(|(i, (task, &r))| (i, task, Rect { x: bar.task_x.get(i).copied().unwrap_or(r.x), ..r }))
         .collect();
     let on_top = |i: usize| bar.task_on_top == Some(i);
-    for &(_, task, r) in shown.iter().filter(|s| !on_top(s.0)).chain(shown.iter().filter(|s| on_top(s.0))) {
-        paint_task(fb, fonts, r, task);
+    for &(i, task, r) in shown.iter().filter(|s| !on_top(s.0)).chain(shown.iter().filter(|s| on_top(s.0))) {
+        // A picture the caller draws at the final size is left out (`Bar::drawn_later`).
+        let later = bar.drawn_later.contains(&LiveIcon::Task(layout.first_task + i));
+        paint_task(fb, fonts, r, task, later);
     }
     if let Some(s) = layout.scroll {
         crate::paint::paint_scroll_arrows(fb, theme, s, bar.scroll_pressed);
@@ -185,9 +187,26 @@ pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) 
     layout
 }
 
+/// The 1x boxes of the task buttons' program pictures (16×16 at 10, 4 in each button shown with a
+/// picture; a dragged button where it is drawn).
+pub fn live_icon_boxes(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> Vec<(LiveIcon, Rect)> {
+    let layout = bar_layout(theme, fonts, width, bar);
+    bar.tasks
+        .iter()
+        .skip(layout.first_task)
+        .zip(&layout.tasks)
+        .enumerate()
+        .filter(|(_, (task, _))| task.icon.is_some())
+        .map(|(i, (_, &r))| {
+            let x = bar.task_x.get(i).copied().unwrap_or(r.x);
+            (LiveIcon::Task(layout.first_task + i), Rect::new(x + TASK_ICON_X, r.y + TASK_ICON_Y, 16, 16))
+        })
+        .collect()
+}
+
 /// A task button: plain, or in front (also for a flashing one: `TaskState::Flashing` is the half
 /// of its flashing that shows in front), the icon and the white label.
-fn paint_task(fb: &mut Framebuffer, fonts: &Fonts, r: Rect, task: &crate::paint::Task) {
+fn paint_task(fb: &mut Framebuffer, fonts: &Fonts, r: Rect, task: &crate::paint::Task, icon_later: bool) {
     let front = task.state != TaskState::Normal;
     let names = if front { ["task_front_left", "task_front_mid", "task_front_right"] } else { ["task_plain_left", "task_plain_mid", "task_plain_right"] };
     let parts: Vec<Icon> = names.iter().filter_map(|n| picture(n)).collect();
@@ -203,7 +222,9 @@ fn paint_task(fb: &mut Framebuffer, fonts: &Fonts, r: Rect, task: &crate::paint:
     }
     let x = match &task.icon {
         Some(icon) => {
-            fb.draw_icon(icon, r.x + TASK_ICON_X, r.y + TASK_ICON_Y);
+            if !icon_later {
+                fb.draw_icon(icon, r.x + TASK_ICON_X, r.y + TASK_ICON_Y);
+            }
             r.x + TASK_LABEL_X
         }
         None => r.x + TASK_ICON_X,

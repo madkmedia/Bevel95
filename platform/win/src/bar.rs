@@ -259,8 +259,11 @@ pub struct App {
     pub theme: &'static Theme,
     regular: Font,
     bold: Font,
-    /// Scale from the settings file; `None` = automatic.
+    /// Scale from the settings file for the bar style in use; `None` = automatic.
     scale_setting: Option<Scale>,
+    /// Each bar style's own size as settings.txt keeps it (`config::scale_key`; the owner,
+    /// 2026-11-25): a switch of style puts its own size on.
+    style_scales: bevel_core::config::Config,
     /// How a size between whole numbers is drawn (the "scaling" setting).
     scaling: bevel_core::scale::Way,
     /// A size between whole numbers chosen in the Size menu or Quick Search, on but not saved
@@ -290,6 +293,10 @@ pub struct App {
     pub groups: Vec<Group>,
     programs: window_list::Programs,
     pub icons: HashMap<u64, Option<Icon>>,
+    /// Under XP's and 7's styles: each window's own large picture at its own size
+    /// (`window_list::window_big_icon`), for the live pictures above size 1 and 7's slots of a
+    /// window whose program file has no picture (the owner, 2026-11-25).
+    big_window_icons: HashMap<u64, Option<Icon>>,
     /// Windows that asked for attention and have not been activated since.
     flashing: HashSet<u64>,
     active: Option<u64>,
@@ -485,6 +492,16 @@ impl App {
             Some(kind) => Some(window_icons::icon(self.era, kind)),
             None => self.icons.get(&id).cloned().flatten(),
         }
+    }
+
+    /// A button's large live picture: its first window's own large one (`big_window_icons`);
+    /// none for a window Bevel95 shows a classic picture for (those stay enlarged).
+    fn group_big_icon(&self, group: &Group) -> Option<Icon> {
+        let first = *group.windows.first()?;
+        if self.windows.iter().find(|w| w.id == first).and_then(|w| w.classic).is_some() {
+            return None;
+        }
+        self.big_window_icons.get(&first).cloned().flatten()
     }
 
     /// A button's picture: its first window's, except that a button holding several of
@@ -691,7 +708,8 @@ pub fn run() -> u32 {
             theme,
             regular,
             bold,
-            scale_setting: settings.scale,
+            scale_setting: settings.scale_of(settings.bar_style),
+            style_scales: settings,
             scaling: settings.scaling,
             size_asking: bar_menu::SizeAsking::default(),
             scale: Scale::ONE,
@@ -716,6 +734,7 @@ pub fn run() -> u32 {
             groups: Vec::new(),
             programs: window_list::Programs::default(),
             icons: HashMap::new(),
+            big_window_icons: HashMap::new(),
             flashing: HashSet::new(),
             active: None,
             front: 0,
@@ -781,7 +800,7 @@ pub fn run() -> u32 {
     // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
     // Lines back above them as they come up (brief 102).
     bevel_winkit::on_top::set(crate::monitor_lines::raise);
-    let scale = settings.scale.map_or_else(|| "auto".to_string(), |s| s.label());
+    let scale = settings.scale_of(settings.bar_style).map_or_else(|| "auto".to_string(), |s| s.label());
     log(&format!("started: {} look in {}, scale setting {scale}, {:?}", theme.slug, settings.colors.title(), settings.options));
 
     let shell_hook = wide("SHELLHOOK");
@@ -1232,9 +1251,14 @@ fn run_desktop_command_now(code: usize, by_keyboard: bool, ticket: u32) {
 fn refresh(bar: HWND) {
     let hwnds = window_list::taskbar_windows();
     let front = window_list::active_window() as u64;
-    let Some((mut programs, known_icons)) =
-        with_app(|app| (std::mem::take(&mut app.programs), app.icons.keys().copied().collect::<HashSet<u64>>()))
-    else {
+    let Some((mut programs, known_icons, known_big, later)) = with_app(|app| {
+        (
+            std::mem::take(&mut app.programs),
+            app.icons.keys().copied().collect::<HashSet<u64>>(),
+            app.big_window_icons.keys().copied().collect::<HashSet<u64>>(),
+            app.bar_style.is_later(),
+        )
+    }) else {
         return;
     };
     let mut infos: Vec<WindowInfo> = hwnds.iter().map(|&h| window_list::window_info(h, &mut programs)).collect();
@@ -1244,11 +1268,19 @@ fn refresh(bar: HWND) {
         .filter(|&&h| !known_icons.contains(&(h as u64)))
         .map(|&h| (h as u64, window_list::icon(h, &programs.of(h).path)))
         .collect();
+    // The windows' large pictures, under XP and 7 only (asked as the small ones are).
+    let new_big: Vec<(u64, Option<Icon>)> = if later {
+        hwnds.iter().filter(|&&h| !known_big.contains(&(h as u64))).map(|&h| (h as u64, window_list::window_big_icon(h))).collect()
+    } else {
+        Vec::new()
+    };
     let changed = with_app(|app| {
         app.programs = programs;
-        let icons_changed = !new_icons.is_empty();
+        let icons_changed = !new_icons.is_empty() || !new_big.is_empty();
         app.icons.extend(new_icons);
         app.icons.retain(|id, _| infos.iter().any(|w| w.id == *id));
+        app.big_window_icons.extend(new_big);
+        app.big_window_icons.retain(|id, _| infos.iter().any(|w| w.id == *id));
         // The person left the program in front for the classic desktop: its button is not drawn
         // pressed while it stays in front (brief 90).
         app.left_for_desktop = tasks::still_left(app.left_for_desktop, front);
@@ -2826,7 +2858,16 @@ fn paint_bar(bar: HWND) {
                 .zip(tasks_of)
                 .map(|(link, task)| bevel_core::paint::Pinned { icon: crate::seven_store::picture(link), task })
                 .collect();
-            state.big_icons = programs.iter().map(|p| crate::seven_store::picture(p)).collect();
+            // A true 32×32 for every slot (the owner, 2026-11-25): the program file's, else the
+            // window's own large one shrunk to 32, and only then its 16×16 doubled.
+            state.big_icons = app
+                .groups
+                .iter()
+                .map(|g| {
+                    crate::seven_store::picture(&g.key)
+                        .or_else(|| app.group_big_icon(g).filter(|i| i.width >= 32).map(|i| i.downscaled(32)))
+                })
+                .collect();
             state.date = if app.options.show_clock { short_date(app.clock_offset) } else { String::new() };
         }
         if let Some((_, frames, _)) = app.motion_on.as_mut() {
@@ -2848,9 +2889,16 @@ fn paint_bar(bar: HWND) {
             state.task_x = app.motion.frame(&keys, &row, dragged, now);
             state.task_on_top = dragged.map(|(at, _)| at);
         }
+        let finals = final_pictures(app, &mut state, width_1x);
         let layout = paint::paint_bar(&mut fb, app.theme, &app.fonts(), &state);
         app.task_row = layout.scroll.map_or(0, |s| s.row); // within the rows there are now
-        blit(hdc, &app.scale.enlarge(&fb), width);
+        let mut screen = app.scale.enlarge(&fb);
+        // XP's and 7's live pictures at their final size over the enlarged bar (the owner,
+        // 2026-11-25: a deliberate exception to "paint at 1x and enlarge").
+        for (r, icon) in &finals {
+            paint::draw_final_icon(&mut screen, app.scale, *r, icon);
+        }
+        blit(hdc, &screen, width);
         // Where the icons and the well are on the screen: for programs that ask where their
         // icon is, and for the stand-in windows (only moved when that changed).
         app.tray_keys = own.iter().map(|(key, _)| *key).chain(icons.iter().map(tray::TrayIcon::key)).collect();
@@ -2882,6 +2930,47 @@ fn paint_bar(bar: HWND) {
             tray::place(placed, well);
         }
     }
+}
+
+/// The live program pictures drawn at their final size over the enlarged bar, under XP's and 7's
+/// styles above size 1 (the owner, 2026-11-25: "icons at 2x on 7" looked enlarged): each box's
+/// true picture of `Scale::rect(box)`'s size, from the store (a shortcut's or a program file's,
+/// read off the bar's thread) or the window's own large one; those found are put in
+/// `Bar::drawn_later`, so the 1x painting leaves them out. A box with no picture that large keeps
+/// its enlarged 1x one. The classic looks never get here.
+fn final_pictures(app: &App, state: &mut Bar, width_1x: i32) -> Vec<(Rect, Icon)> {
+    use bevel_core::paint::LiveIcon;
+    use crate::seven_store::{self, Asker};
+    if !app.bar_style.is_later() || app.scale.quarters() == 4 {
+        seven_store::want_sized(Asker::BarSized, &[]);
+        return Vec::new();
+    }
+    let boxes = paint::live_icon_boxes(app.theme, &app.fonts(), width_1x, state);
+    let mut wanted: Vec<(String, i32)> = Vec::new();
+    let mut out = Vec::new();
+    for (which, r) in boxes {
+        let side = app.scale.rect(r).w;
+        let window = |t: usize| app.groups.get(t).and_then(|g| app.group_big_icon(g)).filter(|i| i.width >= side);
+        let mut file = |path: String| {
+            let found = seven_store::picture_at(&path, side);
+            wanted.push((path, side));
+            found
+        };
+        let picture = match which {
+            LiveIcon::Pinned(k) => app.ql.shortcuts.get(k).and_then(|s| file(s.path.display().to_string())),
+            LiveIcon::Task(t) if app.bar_style == theme::BarStyle::Seven => {
+                let key = app.groups.get(t).map(|g| g.key.clone()).filter(|k| seven_store::is_file(k));
+                key.and_then(&mut file).or_else(|| window(t))
+            }
+            LiveIcon::Task(t) => window(t),
+        };
+        if let Some(p) = picture {
+            state.drawn_later.push(which);
+            out.push((r, p));
+        }
+    }
+    seven_store::want_sized(Asker::BarSized, &wanted);
+    out
 }
 
 /// Carries out a chosen menu entry (`code`: its `BarCommand::code`).
@@ -3067,7 +3156,13 @@ fn size_answered(bar: HWND, ticket: usize, keep: bool) {
     });
     match answer.flatten() {
         Some(bar_menu::SizeAnswer::Keep(scale)) => {
-            save_setting("scale", &scale.label());
+            let style = with_app(|app| {
+                let style = app.bar_style;
+                app.style_scales.set_scale_of(style, Some(scale));
+                style
+            })
+            .unwrap_or_default();
+            save_setting(config::scale_key(style), &scale.label());
             log(&format!("size: {scale}x kept"));
             // Bevel95's other programs read the size from settings.txt: now it is there.
             kit::tell_programs_look_changed();
@@ -3087,9 +3182,15 @@ fn set_size(bar: HWND, scale: Scale) {
     if with_app(|app| app.size_asking.forget()).unwrap_or(false) {
         bevel_winkit::confirm::close_asked();
     }
-    with_app(|app| app.scale_setting = Some(scale));
-    save_setting("scale", &scale.label());
-    log(&format!("size: {scale}x"));
+    // The size of the bar style in use, in its own line (the owner, 2026-11-25).
+    let style = with_app(|app| {
+        app.scale_setting = Some(scale);
+        app.style_scales.set_scale_of(app.bar_style, Some(scale));
+        app.bar_style
+    })
+    .unwrap_or_default();
+    save_setting(config::scale_key(style), &scale.label());
+    log(&format!("size: {scale}x ({})", config::scale_key(style)));
     size_changed(bar);
 }
 
@@ -3135,7 +3236,19 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     if !apply {
         return;
     }
-    with_app(|app| app.bar_style = style);
+    // Each style has its own size (the owner, 2026-11-25): a Size question still open belongs to
+    // the style left (its answer does nothing now), and the new style's size goes on
+    // (`reposition` below reserves the screen's strip for it).
+    let forgot = with_app(|app| {
+        let forgot = app.size_asking.forget();
+        app.bar_style = style;
+        app.scale_setting = app.style_scales.scale_of(style);
+        forgot
+    })
+    .unwrap_or(false);
+    if forgot {
+        log("size: the question about a size was left unanswered by a change of style; nothing saved");
+    }
     crate::failsafe::style_now(style);
     start_menu::set_own_programs(!style.is_later());
     // Windows 7 always combines a program's windows (brief 114); the setting is kept as it is.

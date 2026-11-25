@@ -148,6 +148,9 @@ pub struct Popup {
     previous: HWND,
     /// WM_MOUSELEAVE tracking is armed.
     tracking: bool,
+    /// XP's and 7's Start menus above size 1: the program pictures drawn at their final size over
+    /// the enlarged menu (1x box, true picture; `start_finals`).
+    finals: Vec<(Rect, bevel_core::fb::Icon)>,
 }
 
 impl Popup {
@@ -514,13 +517,59 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
     show_root(bar, kind, menu, style, layout, Rect::new(left, top, w, h), previous);
 }
 
+/// XP's and 7's Start menus above size 1 (the owner, 2026-11-25): each program row's true picture
+/// at its final size (`Scale::rect` of its 1x box), as far as the store has read it (never read
+/// here, on the bar's thread); those found are taken out of `menu`, so the 1x painting leaves
+/// their boxes empty. The ones not read yet keep their enlarged 1x picture this time; the next
+/// opening has them. The classic menus and the submenus never get here.
+fn start_finals(kind: &Kind, menu: &mut Menu, layout: &MenuLayout) -> Vec<(Rect, bevel_core::fb::Icon)> {
+    use crate::seven_store::{self, Asker};
+    let Some(scale) = with_app(|app| app.scale).filter(|s| s.quarters() != 4) else {
+        return Vec::new();
+    };
+    let boxes: Vec<(usize, Rect, String)> = match kind {
+        Kind::XpStart(pinned, often) => bevel_core::xp_start::live_icon_boxes(menu, layout)
+            .into_iter()
+            .filter_map(|(i, r)| {
+                let target = match bevel_core::xp_start::item_at(menu, i)? {
+                    bevel_core::xp_start::Item::Pinned(j) => pinned.get(j)?,
+                    bevel_core::xp_start::Item::Often(j) => often.get(j)?,
+                    _ => return None,
+                };
+                Some((i, r, target.clone()))
+            })
+            .collect(),
+        Kind::SevenStart(often) => bevel_core::seven_start::live_icon_boxes(menu)
+            .into_iter()
+            .filter_map(|(i, r)| Some((i, r, often.get(i)?.clone())))
+            .collect(),
+        _ => return Vec::new(),
+    };
+    let mut wanted = Vec::new();
+    let mut finals = Vec::new();
+    for (i, r, target) in boxes {
+        let side = scale.rect(r).w;
+        if let Some(icon) = seven_store::picture_at(&target, side) {
+            if let Some(entry) = menu.entries.get_mut(i) {
+                entry.icon = None;
+            }
+            finals.push((r, icon));
+        }
+        wanted.push((target, side));
+    }
+    seven_store::want_sized(Asker::MenuSized, &wanted);
+    finals
+}
+
 /// Shows a root menu laid out and placed (screen pixels), taking the focus.
 fn show_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, layout: MenuLayout, rect: Rect, previous: HWND) {
     let Some(hwnd) = create(bar, rect, false) else {
         return;
     };
     let start = matches!(kind, Kind::Start | Kind::XpStart(..) | Kind::SevenStart(..) | Kind::QuickList(_));
-    let popup = Popup { hwnd, kind, menu, style, layout, rect, parent_entry: None, previous, tracking: false };
+    let mut menu = menu;
+    let finals = start_finals(&kind, &mut menu, &layout);
+    let popup = Popup { hwnd, kind, menu, style, layout, rect, parent_entry: None, previous, tracking: false, finals };
     with_app(|app| app.menus.push(popup));
     // SAFETY: our own windows.
     unsafe {
@@ -771,6 +820,7 @@ fn open_child(level: usize, index: usize, highlight_first: bool) {
         parent_entry: Some(index),
         previous: null_mut(),
         tracking: false,
+        finals: Vec::new(),
     };
     with_app(|app| app.menus.push(popup));
     // Opened by a key on its first entry: a scrolling menu shows it.
@@ -1612,7 +1662,11 @@ fn paint_menu(hwnd: HWND) {
         };
         let mut fb = Framebuffer::new(popup.layout.width, popup.layout.height, 0);
         paint::paint_menu(&mut fb, app.theme, &app.fonts(), &popup.menu, popup.style, &popup.layout);
-        let big = app.scale.enlarge(&fb);
+        let mut big = app.scale.enlarge(&fb);
+        // XP's and 7's program pictures at their final size (the owner, 2026-11-25).
+        for (r, icon) in &popup.finals {
+            paint::draw_final_icon(&mut big, app.scale, *r, icon);
+        }
         blit(hdc, &big, big.width);
     });
     // SAFETY: see above.

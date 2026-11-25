@@ -388,6 +388,73 @@ pub fn read_big_icon(path: &str) -> Option<Icon> {
     }
 }
 
+/// The shell's picture of a file at exactly `size`×`size` (XP's and 7's live pictures above size
+/// 1: the owner, 2026-11-25): from the system's 48×48 list up to 48, else its 256×256 one, shrunk
+/// by averaging, its soft edges kept. `None` when the file has no picture that large (a program
+/// whose largest is smaller: the shell puts it in the corner of the larger list's square), so the
+/// enlarged 1x picture stays. Read only on the Windows 7 store's own thread (`seven_store`).
+pub fn read_icon_at(path: &str, size: i32) -> Option<Icon> {
+    use windows_sys::Win32::UI::Controls::{HIMAGELIST, ILD_TRANSPARENT, ImageList_GetIcon};
+    use windows_sys::Win32::UI::Shell::{SHGFI_SYSICONINDEX, SHGetImageList, SHIL_EXTRALARGE, SHIL_JUMBO};
+    /// IImageList's interface id.
+    const IID_IMAGE_LIST: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x46eb5926_582e_4017_9fdf_e8998daa0950);
+    if path.is_empty() || !(1..=256).contains(&size) {
+        return None;
+    }
+    let (list_kind, native, smaller) = if size <= 48 { (SHIL_EXTRALARGE, 48, 32) } else { (SHIL_JUMBO, 256, 48) };
+    let wide_path = wide(path);
+    let mut info = SHFILEINFOW::default();
+    // SAFETY: a correctly sized out-struct; with SHGFI_SYSICONINDEX only the index is filled.
+    let ok = unsafe { SHGetFileInfoW(wide_path.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX) };
+    if ok == 0 {
+        return None;
+    }
+    let mut list: *mut c_void = null_mut();
+    // SAFETY: a valid interface id and out-pointer; the reference is released below. An
+    // IImageList pointer is the image list's handle (documented).
+    let icon = unsafe {
+        if SHGetImageList(list_kind as i32, &IID_IMAGE_LIST, &mut list) < 0 || list.is_null() {
+            return None;
+        }
+        let handle = ImageList_GetIcon(list as HIMAGELIST, info.iIcon, ILD_TRANSPARENT);
+        bevel_winkit::com::release(list);
+        if handle.is_null() {
+            return None;
+        }
+        let pixels = bevel_winkit::icon::icon_pixels_at(handle, native);
+        DestroyIcon(handle);
+        pixels?
+    };
+    // A smaller picture in the square's corner: nothing outside its top-left `smaller` square.
+    let outside_corner = (0..native).flat_map(|y| (0..native).map(move |x| (x, y))).filter(|&(x, y)| x >= smaller || y >= smaller);
+    if outside_corner.clone().all(|(x, y)| icon.pixels[(y * native + x) as usize] >> 24 == 0) {
+        return None;
+    }
+    Some(icon.downscaled(size))
+}
+
+/// A window's own large picture at its own size (32×32 mostly; larger where the program gives
+/// one), for XP's task buttons above size 1 and 7's slots of a window whose program file has no
+/// picture (the owner, 2026-11-25). Asked with the same 50 ms patience as its small one.
+pub fn window_big_icon(hwnd: HWND) -> Option<Icon> {
+    let mut result = 0usize;
+    // SAFETY: asking another program for its icon, giving up after 50 ms if it hangs.
+    let ok = unsafe { SendMessageTimeoutW(hwnd, WM_GETICON, ICON_BIG as usize, 0, SMTO_ABORTIFHUNG, 50, &mut result) };
+    let handle = if ok != 0 && result != 0 {
+        result as HICON
+    } else {
+        // SAFETY: a read-only query.
+        let class = unsafe { GetClassLongPtrW(hwnd, GCLP_HICON) };
+        if class == 0 {
+            return None;
+        }
+        class as HICON
+    };
+    // The window's own icon: not ours to destroy.
+    let size = bevel_winkit::icon::icon_size(handle)?.clamp(16, 256);
+    bevel_winkit::icon::icon_pixels_at(handle, size)
+}
+
 fn window_icon(hwnd: HWND) -> Option<HICON> {
     for kind in [ICON_SMALL2, ICON_SMALL, ICON_BIG] {
         let mut result = 0usize;
@@ -624,6 +691,21 @@ pub fn log_all() {
 #[cfg(test)]
 mod tests {
     use super::window_kind;
+
+    /// The owner, 2026-11-25: a program's true picture at each final size (Notepad has one up
+    /// to 256), its soft edges and see-through corners kept; a file that is not there has none.
+    #[test]
+    fn a_programs_picture_at_its_final_size() {
+        bevel_winkit::com::init();
+        let notepad = bevel_winkit::shell::system_program("notepad.exe");
+        for size in [24, 28, 32, 48, 56, 64, 96] {
+            let icon = super::read_icon_at(&notepad, size).unwrap_or_else(|| panic!("{size}"));
+            assert_eq!((icon.width, icon.height), (size, size));
+            assert_eq!(icon.pixels[0] >> 24, 0, "a see-through corner at {size}");
+            assert!(icon.pixels.iter().any(|p| (1..255).contains(&(p >> 24))), "soft edges at {size}");
+        }
+        assert!(super::read_icon_at("C:\\nothing here\\Some program.exe", 64).is_none());
+    }
 
     /// The log says a window's kind from a fixed list, never its class (the review of brief 90,
     /// R5): a class that carries a program's name comes out as "another program's window".

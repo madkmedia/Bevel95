@@ -13,7 +13,7 @@ use crate::config::MENU_SCALES;
 use crate::fb::Icon;
 use crate::monitor_lines::Strength;
 use crate::start::{StartEntry, Target};
-use crate::theme::{Depth, Era};
+use crate::theme::{BarStyle, Depth, Era};
 use crate::window_icons::{self, ClassicWindow};
 
 /// What a command does. The platform layer carries it out as the bar's menus do.
@@ -21,8 +21,8 @@ use crate::window_icons::{self, ClassicWindow};
 pub enum Action {
     /// A command of the bar (the menu's own, and those only Quick Search offers).
     Bar(BarCommand),
-    /// The Theme menu's choice.
-    Look(Era),
+    /// The Theme menu's choice (`theme::LOOKS`: a classic look, Windows XP or Windows 7).
+    Look(Era, BarStyle),
     /// The Size menu's choice (its way of drawing is the bar's own, not this one's).
     Size(crate::scale::Scale),
     /// The Colors menu's choice: True Color or 16 Colors.
@@ -48,6 +48,8 @@ pub const FOLDER: &str = "Bevel95";
 
 /// The words of a look and of a size.
 const LOOK_WORDS: &[&str] = &["theme", "look", "style", "classic", "era"];
+const XP_WORDS: &[&str] = &["theme", "look", "style", "xp", "luna"];
+const SEVEN_WORDS: &[&str] = &["theme", "look", "style", "7", "seven"];
 const SIZE_WORDS: &[&str] = &["size", "scale", "zoom", "bigger", "smaller", "dpi"];
 const COLORS_WORDS: &[&str] = &["color", "colors", "colour", "colours", "vga"];
 const MONITOR_LINES_WORDS: &[&str] = &["monitor lines", "monitor", "lines", "crt", "scanlines", "scan lines"];
@@ -67,12 +69,19 @@ pub fn commands() -> Vec<Command> {
         bar("Taskbar Properties", &["taskbar", "start menu", "properties", "options", "clock"], Properties, "taskbar-properties"),
         bar("Date/Time Properties", &["date", "time", "clock", "time zone", "calendar"], AdjustDateTime, "date-time"),
     ];
-    for era in Era::ALL {
+    // Every look the Theme menu offers, Windows XP and Windows 7 after the classic ones (the review
+    // of brief 114, a taste point the owner met: "I don't see the new themes in quick search").
+    for (era, style) in crate::theme::LOOKS {
+        let (words, key) = match style {
+            BarStyle::Classic => (LOOK_WORDS, era.setting()),
+            BarStyle::Xp => (XP_WORDS, style.setting()),
+            BarStyle::Seven => (SEVEN_WORDS, style.setting()),
+        };
         out.push(Command {
-            name: format!("{} look", era.title()),
-            words: LOOK_WORDS,
-            action: Action::Look(era),
-            key: format!("bevel95:look-{}", era.setting()),
+            name: format!("{} look", crate::theme::look_title(era, style)),
+            words,
+            action: Action::Look(era, style),
+            key: format!("bevel95:look-{key}"),
         });
     }
     for scale in MENU_SCALES {
@@ -149,6 +158,8 @@ mod tests {
                 "Windows 95 look",
                 "Windows 98 look",
                 "Windows 2000 look",
+                "Windows XP look",
+                "Windows 7 look",
                 "Size 1\u{d7}",
                 "Size 1.25\u{d7}",
                 "Size 1.5\u{d7}",
@@ -189,9 +200,12 @@ mod tests {
         assert_eq!(keys.len(), all.len());
         assert!(all.iter().all(|c| c.key.starts_with("bevel95:")));
         // Each look and size the menus offer.
-        for era in Era::ALL {
-            assert!(all.iter().any(|c| c.action == Action::Look(era)));
+        for (era, style) in crate::theme::LOOKS {
+            assert!(all.iter().any(|c| c.action == Action::Look(era, style)));
         }
+        let seven = all.iter().find(|c| c.action == Action::Look(Era::Win2000, BarStyle::Seven)).unwrap();
+        assert_eq!(seven.key, "bevel95:look-7");
+        assert!(seven.words.contains(&"seven") && !seven.words.contains(&"classic"));
         for s in MENU_SCALES {
             assert!(all.iter().any(|c| c.action == Action::Size(s)));
         }

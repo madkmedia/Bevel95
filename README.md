@@ -160,7 +160,8 @@ Edition, more classic programs (Notepad, Paint), other languages than English. S
 All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95.exe`):
 
 - `bevel95.exe` and the `programs` folder: the programs.
-- `settings.txt`: the look, the size and every other setting (Bevel95 Settings and Taskbar
+- `settings.txt`: the look, the size (the classic looks', Windows XP's and Windows 7's each kept
+  apart) and every other setting (Bevel95 Settings and Taskbar
   Properties change it; it explains each line). Edit it in Notepad if you like and save it as UTF-8. A
   file Bevel95 cannot read (UTF-16, say) is left exactly as it is: Bevel95 runs on its defaults
   until it can read it again, and saves no setting into it.

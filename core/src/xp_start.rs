@@ -385,6 +385,16 @@ pub fn paint(fb: &mut Framebuffer, fonts: &Fonts, menu: &Menu, layout: &MenuLayo
     }
 }
 
+/// The 1x boxes of the menu's live program pictures (the pinned and the often-used programs': 32×32
+/// at 6, 4 in their entry), by entry index: above size 1 the caller draws a true picture of the
+/// final size there (the owner, 2026-11-25).
+pub fn live_icon_boxes(menu: &Menu, layout: &MenuLayout) -> Vec<(usize, Rect)> {
+    (0..menu.entries.len())
+        .filter(|&i| matches!(item_at(menu, i), Some(Item::Pinned(_) | Item::Often(_))))
+        .filter_map(|i| layout.rects.get(i).map(|r| (i, Rect::new(r.x + 6, r.y + 4, 32, 32))))
+        .collect()
+}
+
 /// The programs started most often (brief 112), as their file keeps them: a line each, how many
 /// times, the name shown, the program's shortcut or file ("3\tNotepad\tC:\...\Notepad.lnk").
 /// Lines that do not read are left out.

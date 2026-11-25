@@ -62,13 +62,46 @@ pub struct Config {
     /// How the taskbar and the Start menu are drawn (brief 112): `classic` (the look's own) or
     /// `xp` (Windows XP's; the look is then 2000's for everything else). Written only when changed.
     pub bar_style: crate::theme::BarStyle,
+    /// The sizes of Windows XP's and Windows 7's styles (`scale_xp`, `scale_7`; the owner,
+    /// 2026-11-25: "Both XP and especially 7 are huge when they first come on"). `scale` is the
+    /// classic looks' only. `None`, a file without the line: the screen's own size (`auto`), never
+    /// the classic looks' size. Written only when the person chooses a size in that style.
+    pub scale_xp: Option<Scale>,
+    pub scale_7: Option<Scale>,
+}
+
+/// The line of settings.txt that keeps the size of the bar style `style`.
+pub fn scale_key(style: crate::theme::BarStyle) -> &'static str {
+    match style {
+        crate::theme::BarStyle::Classic => "scale",
+        crate::theme::BarStyle::Xp => "scale_xp",
+        crate::theme::BarStyle::Seven => "scale_7",
+    }
 }
 
 impl Config {
     /// The size in force on a main screen of `dpi` (the automatic size, a whole number, from
-    /// it), with the way a quarter size is drawn.
+    /// it), with the way a quarter size is drawn: the size of the bar style settings.txt names.
     pub fn scale_at(&self, dpi: u32) -> Scale {
-        scale_in_force(self.scale, self.scaling, dpi)
+        scale_in_force(self.scale_of(self.bar_style), self.scaling, dpi)
+    }
+
+    /// The size set for the bar style `style` (`None`: automatic).
+    pub fn scale_of(&self, style: crate::theme::BarStyle) -> Option<Scale> {
+        match style {
+            crate::theme::BarStyle::Classic => self.scale,
+            crate::theme::BarStyle::Xp => self.scale_xp,
+            crate::theme::BarStyle::Seven => self.scale_7,
+        }
+    }
+
+    /// Sets the size of the bar style `style` (the others kept).
+    pub fn set_scale_of(&mut self, style: crate::theme::BarStyle, scale: Option<Scale>) {
+        match style {
+            crate::theme::BarStyle::Classic => self.scale = scale,
+            crate::theme::BarStyle::Xp => self.scale_xp = scale,
+            crate::theme::BarStyle::Seven => self.scale_7 = scale,
+        }
     }
 
     /// Whether Quick Launch shows in `era` (the look in use, which may differ from `self.era`
@@ -206,6 +239,8 @@ impl Default for Config {
             folder_tabs: crate::folder::tabs::Place::OverFiles,
             folder_tabs_close: crate::folder::tabs::CloseAt::Tab,
             bar_style: crate::theme::BarStyle::Classic,
+            scale_xp: None,
+            scale_7: None,
         }
     }
 }
@@ -427,18 +462,25 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 Some(way) => config.scaling = way,
                 None => warn("scaling must be even, even-light, nearest or smooth"),
             },
-            "scale" => match value.as_str() {
-                "auto" => config.scale = None,
-                number => match Scale::parse(number) {
-                    Some((s, exact)) => {
-                        config.scale = Some(s);
-                        if !exact {
-                            warn(&format!("scale {number} is not a quarter step: using {}", s.label()));
+            "scale" | "scale_xp" | "scale_7" => {
+                let style = match key.as_str() {
+                    "scale_xp" => crate::theme::BarStyle::Xp,
+                    "scale_7" => crate::theme::BarStyle::Seven,
+                    _ => crate::theme::BarStyle::Classic,
+                };
+                match value.as_str() {
+                    "auto" => config.set_scale_of(style, None),
+                    number => match Scale::parse(number) {
+                        Some((s, exact)) => {
+                            config.set_scale_of(style, Some(s));
+                            if !exact {
+                                warn(&format!("{key} {number} is not a quarter step: using {}", s.label()));
+                            }
                         }
-                    }
-                    None => warn("scale must be auto or a number from 1 to 8 in quarter steps (1, 1.25, 1.5, ...)"),
-                },
-            },
+                        None => warn(&format!("{key} must be auto or a number from 1 to 8 in quarter steps (1, 1.25, 1.5, ...)")),
+                    },
+                }
+            }
             _ => warn(&format!("unknown setting `{key}`")),
         }
     }
@@ -757,5 +799,36 @@ mod tests {
         assert_eq!(flag_settings(&Config::default())[0], ("always_on_top", "yes"));
         assert_eq!(flag_settings(&Config::default())[5], ("log_off", "yes"));
         assert_eq!(flag_settings(&config)[6], ("desktop", "no"));
+    }
+
+    /// The owner, 2026-11-25: XP and 7 were "huge when they first come on". Each bar style keeps
+    /// its own size: the classic looks `scale`, XP `scale_xp`, 7 `scale_7`; a style without its
+    /// line is at the screen's own size, never the classic looks' one; each line is read back.
+    #[test]
+    fn each_bar_style_keeps_its_own_size() {
+        use crate::theme::BarStyle;
+        let text = "scale = 3\nbar_style = 7\n";
+        let (c, w) = parse(text);
+        assert!(w.is_empty());
+        assert_eq!((c.scale_of(BarStyle::Classic), c.scale_of(BarStyle::Xp), c.scale_of(BarStyle::Seven)), (Some(Scale::whole(3)), None, None));
+        // 7 without its line: the screen's own size (1 at 96 DPI, 2 at 144), not the classic 3.
+        assert_eq!(c.scale_at(96).quarters(), 4);
+        assert_eq!(c.scale_at(144).quarters(), 8);
+        // Chosen under each style: its own line only.
+        let text = with_setting(text, scale_key(BarStyle::Seven), "1.75");
+        let text = with_setting(&text, scale_key(BarStyle::Xp), "2");
+        let (c, w) = parse(&text);
+        assert!(w.is_empty(), "{w:?}");
+        assert_eq!(c.scale_of(BarStyle::Classic), Some(Scale::whole(3)), "the classic looks' size untouched");
+        assert_eq!(c.scale_of(BarStyle::Seven), Some(Scale::from_quarters(7)));
+        assert_eq!(c.scale_of(BarStyle::Xp), Some(Scale::whole(2)));
+        assert_eq!(c.scale_at(96).quarters(), 7, "7 in use: its size");
+        assert_eq!(parse(&with_setting(&text, "bar_style", "xp")).0.scale_at(96).quarters(), 8);
+        assert_eq!(parse(&with_setting(&text, "bar_style", "classic")).0.scale_at(96).quarters(), 12);
+        let (c, _) = parse("scale_xp = auto\nscale_7 = 9\n");
+        assert_eq!((c.scale_xp, c.scale_7), (None, None));
+        let mut c = Config::default();
+        c.set_scale_of(BarStyle::Xp, Some(Scale::whole(4)));
+        assert_eq!((c.scale, c.scale_xp, c.scale_7), (Some(DEFAULT_SCALE), Some(Scale::whole(4)), None));
     }
 }

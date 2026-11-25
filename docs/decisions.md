@@ -7305,3 +7305,75 @@ here; its two comparisons still show 0 differing pixels in every part (`core/tes
   choice resetting it, `bar_style = 7` read), `bar_menu`'s theme menu test, the golden pictures
   `win7-bar-slots` and `win7-start-menu`, the branch's comparisons. The owner's bar was never
   switched to 7: the first live run is theirs.
+
+### After the owner's first live runs of XP and 7 (2026-11-25)
+
+The owner: "Both XP and especially 7 are huge when they first come on. I think 7 should start in
+1x by default and XP maybe 1.75 but it distorts more than the old interface. The XP start button
+looks a bit chunky. ... I don't see the new themes in quick search. | The icons in 7 look a bit
+odd." Then, with a capture of their 7 bar: "Sorry I meant icons at 2x on 7", and "sorry 1x bleh".
+
+- **A size per style** (`config::scale_key`, `Config::scale_of`): the classic looks keep `scale`
+  as before (untouched); XP has `scale_xp`, 7 `scale_7`, each written only when the person chooses
+  a size while in that style (the Size menu, Quick Search, Bevel95 Settings: they show and change
+  the size of the style in use). Without its line a style starts at the screen's own size
+  (`auto`: the whole number nearest the screen's scale, 1 on an ordinary screen), never at the
+  classic looks' size. Decided by the main session: both XP and 7 start there (the owner said
+  "maybe 1.75" for XP and in the same breath that quarter sizes distort it more; they can choose
+  it). A switch of style puts that style's size on at once (`set_era`: `App::style_scales`; the
+  reserved strip of the screen follows in `reposition`); a Size question still open belongs to
+  the style left and is forgotten. Bevel95's other programs read the size of the style
+  settings.txt names (`Config::scale_at`). Proof: `config::tests::each_bar_style_keeps_its_own_size`.
+- **Quick Search lists every look** (`quick::commands` over `theme::LOOKS`): "Windows XP look"
+  (found also by "xp", "luna") and "Windows 7 look" ("7", "seven") after the classic three, which
+  keep "classic" among their words. Its sizes follow the size of the style in use (they go through
+  the Size menu's way). Proof: `quick::tests`, `find::tests::commands_show_once_something_typed_matches_them`.
+- **What a 7 slot shows** (point 3 of the feedback, as asked): a pinned slot: the shell's true
+  32×32 of the shortcut (`SHGFI_LARGEICON`, drawn at 32 with its soft edges: `read_big_icon`). A
+  running slot: the pinned shortcut's picture when it is pinned; else the shell's true 32×32 of
+  the program file; else (no file, `frame:` and `class:` windows, or no picture) the window's own
+  large picture (`WM_GETICON ICON_BIG`, else its class's; `window_big_icon`) shrunk to 32 by
+  averaging when it is at least 32; only then its 16×16 doubled. At size 1 that is a true 32×32 in
+  every slot that has one anywhere.
+- **The face under a running icon** (the "1x bleh"): the owner's capture showed a lighter
+  rectangle behind each running icon's see-through corners, plainest on the first slot, which
+  stands over the bar's left fade. The cause, found by reading and by the capture's pixels: the
+  running button's left 14 columns are see-through over the bar, while the worker's made-up
+  pixels from column 14 on (under the icon, no screenshot shows them) were opaque, guessed against
+  the body's color; over the darker fade they showed as a box (in the body the guess and the
+  see-through columns agree within a step). The icons themselves were drawn with their true
+  see-through share (`unblend`, straight alpha; `draw_icon`). Now the face under the box is made at
+  paint time (`seven::face_under_icon`): each row carried smoothly from the column just left of the
+  box to the column just right of it, as both stand on the bar, then the icon over it with its own
+  share. PROVISIONAL until the owner's own Windows 7 shows an empty running button. Proof:
+  `seven::tests::no_rectangle_shows_under_a_running_icon`, the golden picture
+  `win7-bar-soft-icons` (made-up round pictures with soft edges and see-through corners, the first
+  over the fade); the 7 comparisons unchanged (0 differing pixels: the icon boxes are masked
+  there); `seven-bar-running`, `win7-bar-slots` and `win7-start-menu` redrawn for it.
+- **Live pictures at their final size: a deliberate exception to "paint at 1x and enlarge"**, for
+  XP's and 7's live program and shortcut pictures only (the owner, 2026-11-25: the 32×32 enlarged
+  nearest-neighbour looked wrong at 2x on 7; Windows XP and 7 themselves drew a program's picture
+  from its larger sizes). Above size 1, under XP and 7: the bar and the Start menus are painted at
+  1x and enlarged as always, except that each live picture's box is left empty
+  (`Bar::drawn_later`; the menu entry's picture taken out); then a true picture of exactly
+  `Scale::rect(box)`'s size (7's slots and both Start menus' program rows 32 × the size, 56 at
+  1.75, 64 at 2; XP's task buttons 16 × the size) is drawn there with its soft edges
+  (`paint::live_icon_boxes`, `xp_start::live_icon_boxes`, `seven_start::live_icon_boxes`,
+  `paint::draw_final_icon`). The pictures: a shortcut's or a program file's from the shell's 48×48
+  list up to 48, else its 256×256 one, shrunk by averaging (`window_list::read_icon_at`; read on
+  the store's thread, keyed by file and size, the sizes no longer in use dropped); a window without
+  a file (and XP's task buttons, whose 1x picture is the window's own) the window's own large
+  picture shrunk to fit when it is at least that large. A box with no picture that large keeps its
+  enlarged 1x picture (a program whose largest is 32 or 48: the shell puts it in the corner of the
+  larger list's square, which is detected). Not changed: everything else (frames, fills, letters,
+  the orb, the cut pictures of the old Windows, the classic pictures Bevel95 has for Explorer and
+  Notepad windows), and the three classic looks entirely (enlarged pixels are right there). The
+  Start menu's pictures not read yet when it opens are enlarged this time and true the next.
+  Proof: `seven_bar::tests::live_pictures_take_their_boxes_enlarged_place` (place and size at 1,
+  1.5, 1.75, 2 and 3, 7's and XP's boxes, a larger picture shrunk, a smaller one refused, no box
+  under the classic looks), `window_list::tests::a_programs_picture_at_its_final_size`,
+  `seven_store::tests`, the golden picture `win7-bar-2x-true-icons` (made-up pictures given at
+  64); the classic and XP 1x golden pictures unchanged.
+- Left for later (in the to-do list, with the owner's words): "smooth yet faithful" drawing of XP
+  and 7 above size 1 (pictures and letters drawn at the final size, equal to the original at 1x);
+  the XP Start button looks chunky enlarged.

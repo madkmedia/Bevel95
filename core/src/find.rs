@@ -1142,10 +1142,13 @@ mod tests {
         let w = FindWindow::new(Era::Win98, programs(&menu()), true);
         assert_eq!(w.found.len(), 8);
         assert!(w.found.iter().all(|&i| w.programs[i].command.is_none()));
-        // "theme" and "look": the three looks, found by their other words.
+        // "theme" and "look": the five looks, found by their other words (XP and 7 since the
+        // owner's "I don't see the new themes in quick search", 2026-11-25).
         let names = |w: &FindWindow| rows(w).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-        assert_eq!(names(&typed(Era::Win98, "theme")), ["Windows 2000 look", "Windows 95 look", "Windows 98 look"]);
-        assert_eq!(names(&typed(Era::Win98, "look")), ["Windows 2000 look", "Windows 95 look", "Windows 98 look"]);
+        let looks = ["Windows 2000 look", "Windows 7 look", "Windows 95 look", "Windows 98 look", "Windows XP look"];
+        assert_eq!(names(&typed(Era::Win98, "theme")), looks);
+        assert_eq!(names(&typed(Era::Win98, "look")), looks);
+        assert_eq!(names(&typed(Era::Win98, "seven")), ["Windows 7 look"]);
         // "size" and "scale": each size the Size menu offers; names beginning with it come first.
         // In their own order, the quarter steps between the whole sizes.
         let sizes: Vec<String> = crate::config::MENU_SCALES.iter().map(|s| format!("Size {s}\u{d7}")).collect();
@@ -1161,7 +1164,7 @@ mod tests {
         assert!(rows(&w).iter().all(|(_, f)| f == "Bevel95"));
         assert_eq!(rows(&w)[0].0, "Bevel95 Settings", "its name begins with it");
         assert_eq!(w.selected().unwrap().command, Some(Action::Bar(crate::bar_menu::BarCommand::Settings)));
-        assert_eq!(status(w.found.len()), "37 item(s) found", "with Check for updates (brief 100) and Monitor Lines (brief 102)");
+        assert_eq!(status(w.found.len()), "39 item(s) found", "with Check for updates (brief 100), Monitor Lines (brief 102), XP and 7");
         // Monitor Lines by its other words (brief 102), its four by their names' order.
         let lines = ["Monitor Lines Light", "Monitor Lines Medium", "Monitor Lines Off", "Monitor Lines Strong"];
         for word in ["crt", "scanlines", "lines", "monitor lines"] {

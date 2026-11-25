@@ -24,7 +24,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use bevel_core::quick::Action;
-use bevel_core::theme::{Depth, Era};
+use bevel_core::theme::Depth;
 
 use crate::bar::{BAR_HWND, WM_BAR_COLORS, WM_BAR_COMMAND, WM_BAR_SIZE, WM_BAR_THEME, with_app};
 use crate::kit::{self, Hosted};
@@ -384,7 +384,7 @@ fn run_command(action: Action) {
     log(&format!("Quick Search: {action:?}"));
     let (msg, wparam, lparam) = match action {
         Action::Bar(command) => (WM_BAR_COMMAND.id(), command.code(), 0),
-        Action::Look(era) => (WM_BAR_THEME.id(), Era::ALL.iter().position(|&e| e == era).unwrap_or(0), 0),
+        Action::Look(era, style) => (WM_BAR_THEME.id(), bevel_core::theme::LOOKS.iter().position(|&l| l == (era, style)).unwrap_or(0), 0),
         Action::Size(scale) => {
             let (wparam, lparam) = crate::bar::size_message(scale);
             (WM_BAR_SIZE.id(), wparam, lparam)

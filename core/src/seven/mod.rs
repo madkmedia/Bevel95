@@ -229,6 +229,30 @@ pub fn background(l: &Layout, x: i32, y: i32) -> u32 {
     px(FADE_PIC, 40, 0, y)
 }
 
+/// The button's face under its icon box, made up (no screenshot shows an empty running button):
+/// each row carried smoothly from the column just left of the box to the column just right of it,
+/// as they stand on the bar (the left columns are see-through over the bar, which is darker in
+/// its left fade). The pictures' own guess there was opaque and showed as a lighter rectangle
+/// behind see-through icon corners, plainest on the first slot over the fade (the owner's capture,
+/// 2026-11-25). PROVISIONAL until an empty running button of the owner's own Windows 7 is seen.
+fn face_under_icon(fb: &mut Framebuffer, slot_x: i32, slot_y: i32) {
+    let (left, right) = (slot_x + ICON_X - 1, slot_x + ICON_X + ICON);
+    if left < 0 || right >= fb.width {
+        return;
+    }
+    let channel = |c: u32, s: u32| ((c >> s) & 0xFF) as i32;
+    for y in slot_y + ICON_Y..slot_y + ICON_Y + ICON {
+        if y < 0 || y >= fb.height {
+            continue;
+        }
+        let (a, b) = (fb.get(left, y), fb.get(right, y));
+        for i in 1..=ICON {
+            let mix = |s: u32| ((channel(a, s) * (ICON + 1 - i) + channel(b, s) * i + (ICON + 1) / 2) / (ICON + 1)) as u32;
+            fb.set(left + i, y, 0xFF00_0000 | (mix(16) << 16) | (mix(8) << 8) | mix(0));
+        }
+    }
+}
+
 /// Paints the bar into `fb` (at least `l.width` x 40) at 1x. `font` draws the clock.
 pub fn paint(fb: &mut Framebuffer, bar: &SevenBar, l: &Layout, font: &Font) {
     for y in 0..HEIGHT {
@@ -247,8 +271,14 @@ pub fn paint(fb: &mut Framebuffer, bar: &SevenBar, l: &Layout, font: &Font) {
     for (slot, r) in bar.slots.iter().zip(&l.slots) {
         match slot.kind {
             SlotKind::Pinned => {}
-            SlotKind::Running => fb.draw_icon(&running, r.x, r.y),
-            SlotKind::Front => fb.draw_icon(&front, r.x, r.y),
+            SlotKind::Running => {
+                fb.draw_icon(&running, r.x, r.y);
+                face_under_icon(fb, r.x, r.y);
+            }
+            SlotKind::Front => {
+                fb.draw_icon(&front, r.x, r.y);
+                face_under_icon(fb, r.x, r.y);
+            }
         }
         if let Some(icon) = &slot.icon {
             fb.draw_icon(icon, r.x + ICON_X, r.y + ICON_Y);
@@ -326,6 +356,32 @@ mod tests {
         // the left fade mirrors the right one
         for i in 0..FADE {
             assert_eq!(background(&l, LEFT_ZONE_END + 1 + i, 20), background(&l, l.zone - 1 - i, 20));
+        }
+    }
+
+    /// The owner's capture (2026-11-25): a lighter rectangle showed behind each icon's see-through
+    /// corners, plainest on the first slot over the left fade. Now the face under the box carries
+    /// each row across from the columns just outside it: no step at the box's edges, in the fade
+    /// or in the body, for a running and a front button.
+    #[test]
+    fn no_rectangle_shows_under_a_running_icon() {
+        let font = Font::parse(include_str!("../../tests/fixtures/tahoma-11px.font")).unwrap();
+        let channel = |c: u32, s: u32| ((c >> s) & 0xFF) as i32;
+        let step = |a: u32, b: u32| [0, 8, 16].iter().map(|&s| (channel(a, s) - channel(b, s)).abs()).max().unwrap();
+        for kind in [SlotKind::Running, SlotKind::Front] {
+            let bar = SevenBar { slots: vec![Slot { kind, icon: None }; 3], clock_space: 70, ..SevenBar::default() };
+            let l = layout(800, 3, 0, 70);
+            let mut fb = Framebuffer::new(800, HEIGHT, 0);
+            paint(&mut fb, &bar, &l, &font);
+            for r in &l.slots {
+                for y in ICON_Y..ICON_Y + ICON {
+                    let (left, right) = (r.x + ICON_X - 1, r.x + ICON_X + ICON);
+                    // Within the box no step is larger than the whole change across it allows.
+                    let across = step(fb.get(left, y), fb.get(right, y));
+                    let most = (left..right).map(|x| step(fb.get(x, y), fb.get(x + 1, y))).max().unwrap();
+                    assert!(most <= across / (ICON + 1) + 1, "{kind:?} slot {} row {y}: a step of {most}", r.x);
+                }
+            }
         }
     }
 }

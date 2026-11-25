@@ -16,7 +16,7 @@
 
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::layout::BarLayout;
-use crate::paint::{Bar, TaskState};
+use crate::paint::{Bar, LiveIcon, TaskState};
 use crate::seven::{self, Orb, SevenBar, Slot, SlotKind};
 use crate::text::Fonts;
 
@@ -194,6 +194,22 @@ pub fn start_due(last: Option<(&str, std::time::Instant)>, link: &str, now: std:
     !last.is_some_and(|(l, at)| l == link && now.saturating_duration_since(at) < wait)
 }
 
+/// The live picture a slot shows: a pinned program's own (also while it runs), else the task's.
+fn live_icon_of(s: &SlotOf) -> LiveIcon {
+    match *s {
+        SlotOf::Pinned(k, _) => LiveIcon::Pinned(k),
+        SlotOf::Task(t) => LiveIcon::Task(t),
+    }
+}
+
+/// The 1x boxes of the slots' program pictures (32×32 at 14, 4 in each slot shown).
+pub fn live_icon_boxes(fonts: &Fonts, width: i32, bar: &Bar) -> Vec<(LiveIcon, Rect)> {
+    let (_, room) = room_of(fonts, width, bar);
+    let p = plan(&slots(bar), room, bar.row);
+    let l = seven::layout(width, p.shown.len(), bar.tray.len(), clock_space(fonts, bar));
+    p.shown.iter().zip(&l.slots).map(|(s, r)| (live_icon_of(s), Rect::new(r.x + seven::ICON_X, r.y + seven::ICON_Y, seven::ICON, seven::ICON))).collect()
+}
+
 /// Paints the 7 bar (the framebuffer 40 tall) and returns where everything went.
 pub fn paint_bar(fb: &mut Framebuffer, fonts: &Fonts, bar: &Bar) -> BarLayout {
     PAINTED.with(|p| p.set(p.get() + 1));
@@ -207,13 +223,18 @@ pub fn paint_bar(fb: &mut Framebuffer, fonts: &Fonts, bar: &Bar) -> BarLayout {
         Some(TaskState::Active | TaskState::Flashing) => SlotKind::Front,
         _ => SlotKind::Running,
     };
+    // A picture the caller draws at the final size is left out here (`Bar::drawn_later`).
+    let later = |s: &SlotOf| bar.drawn_later.contains(&live_icon_of(s));
     let seven_slots: Vec<Slot> = p
         .shown
         .iter()
-        .map(|s| match *s {
-            SlotOf::Pinned(k, None) => Slot { kind: SlotKind::Pinned, icon: bar.pinned[k].icon.clone() },
-            SlotOf::Pinned(k, Some(t)) => Slot { kind: kind_of(t), icon: bar.pinned[k].icon.clone().or_else(|| task_icon(t)) },
-            SlotOf::Task(t) => Slot { kind: kind_of(t), icon: task_icon(t) },
+        .map(|s| {
+            let slot = match *s {
+                SlotOf::Pinned(k, None) => Slot { kind: SlotKind::Pinned, icon: bar.pinned[k].icon.clone() },
+                SlotOf::Pinned(k, Some(t)) => Slot { kind: kind_of(t), icon: bar.pinned[k].icon.clone().or_else(|| task_icon(t)) },
+                SlotOf::Task(t) => Slot { kind: kind_of(t), icon: task_icon(t) },
+            };
+            if later(s) { Slot { icon: None, ..slot } } else { slot }
         })
         .collect();
     let blank = Icon { width: 16, height: 16, pixels: vec![0; 256] };
@@ -361,6 +382,47 @@ mod tests {
         assert!(!start_due(Some(("a.lnk", t0)), "a.lnk", t0 + std::time::Duration::from_millis(200), wait));
         assert!(start_due(Some(("a.lnk", t0)), "b.lnk", t0 + std::time::Duration::from_millis(200), wait));
         assert!(start_due(Some(("a.lnk", t0)), "a.lnk", t0 + std::time::Duration::from_millis(900), wait));
+    }
+
+    /// The owner, 2026-11-25 ("icons at 2x on 7"): a live picture's 1x box and the place and size
+    /// of its true picture on the enlarged bar at 1, 1.5, 1.75, 2 and 3: 7's 32 and XP's 16 boxes.
+    #[test]
+    fn live_pictures_take_their_boxes_enlarged_place() {
+        use crate::paint::{draw_final_icon, live_icon_boxes};
+        use crate::scale::Scale;
+        let seven = Rect::new(73, 4, 32, 32);
+        let xp = Rect::new(108, 4, 16, 16);
+        for (q, s7, sxp) in [
+            (4, Rect::new(73, 4, 32, 32), Rect::new(108, 4, 16, 16)),
+            (6, Rect::new(109, 6, 48, 48), Rect::new(162, 6, 24, 24)),
+            (7, Rect::new(128, 7, 56, 56), Rect::new(189, 7, 28, 28)),
+            (8, Rect::new(146, 8, 64, 64), Rect::new(216, 8, 32, 32)),
+            (12, Rect::new(219, 12, 96, 96), Rect::new(324, 12, 48, 48)),
+        ] {
+            let scale = Scale::from_quarters(q);
+            assert_eq!((scale.rect(seven), scale.rect(xp)), (s7, sxp), "{q} quarters");
+            assert_eq!(scale.len(32), s7.w);
+        }
+        // A picture of the final size is drawn as it is; a larger one shrunk; a smaller one not.
+        let pic = |side: i32| Icon { width: side, height: side, pixels: vec![0xFF11_2233; (side * side) as usize] };
+        let mut fb = Framebuffer::new(400, 80, 0);
+        assert!(draw_final_icon(&mut fb, Scale::whole(2), seven, &pic(64)));
+        assert_eq!((fb.get(146, 8), fb.get(209, 71), fb.get(210, 71)), (0xFF11_2233, 0xFF11_2233, 0));
+        assert!(draw_final_icon(&mut fb, Scale::from_quarters(7), seven, &pic(64)));
+        assert!(!draw_final_icon(&mut fb, Scale::whole(2), seven, &pic(32)), "the enlarged one stays");
+        // The bar's boxes: each slot's 32 at 14, 4.
+        let regular = crate::text::Font::parse(include_str!("../tests/fixtures/tahoma-11px.font")).unwrap();
+        let bold = crate::text::Font::parse(include_str!("../tests/fixtures/tahoma-11px-bold.font")).unwrap();
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        let bar = Bar {
+            tasks: vec![task(TaskState::Normal)],
+            pinned: vec![crate::paint::Pinned { icon: None, task: None }],
+            ..Bar::default()
+        };
+        let boxes = live_icon_boxes(&crate::theme::WIN7, &fonts, 800, &bar);
+        assert_eq!(boxes, [(LiveIcon::Pinned(0), Rect::new(73, 4, 32, 32)), (LiveIcon::Task(0), Rect::new(135, 4, 32, 32))]);
+        // Under the classic looks: none.
+        assert!(live_icon_boxes(&crate::theme::WIN2000, &fonts, 800, &bar).is_empty());
     }
 
     /// The room in which exactly `n` slots stand.

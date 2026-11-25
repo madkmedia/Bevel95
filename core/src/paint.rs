@@ -68,6 +68,43 @@ pub struct Bar {
     pub big_icons: Vec<Option<Icon>>,
     /// Windows 7's bar style: the clock's second line, the short date.
     pub date: String,
+    /// XP's and 7's styles at sizes above 1: the program pictures the caller draws at the final
+    /// size over the enlarged bar (`live_icon_boxes`, `draw_final_icon`); the 1x painting leaves
+    /// their boxes as they are under them (the owner, 2026-11-25).
+    pub drawn_later: Vec<LiveIcon>,
+}
+
+/// A live program picture on the bar (not one of the old Windows' own cut pictures): a pinned
+/// program's (by its index into `Bar::pinned`) or a task's (by its index into `Bar::tasks`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LiveIcon {
+    Pinned(usize),
+    Task(usize),
+}
+
+/// The 1x boxes of the live program pictures `bar` shows, under XP's and 7's styles (none under
+/// the classic looks, whose enlarged pixels are right: the owner, 2026-11-25). The caller draws a
+/// true picture of `Scale::rect(box)`'s size there over the enlarged bar.
+pub fn live_icon_boxes(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> Vec<(LiveIcon, Rect)> {
+    match theme.bar_style {
+        crate::theme::BarStyle::Xp => crate::xp::live_icon_boxes(theme, fonts, width, bar),
+        crate::theme::BarStyle::Seven => crate::seven_bar::live_icon_boxes(fonts, width, bar),
+        crate::theme::BarStyle::Classic => Vec::new(),
+    }
+}
+
+/// Draws `icon` (a true picture of the final size) over the enlarged picture `screen` at the place
+/// of the 1x box `r`, with its own see-through share. A larger picture is shrunk to fit by
+/// averaging; a smaller one is not drawn (the enlarged 1x picture stays: the caller then does not
+/// put it in `Bar::drawn_later`). True if it was drawn.
+pub fn draw_final_icon(screen: &mut Framebuffer, scale: crate::scale::Scale, r: Rect, icon: &Icon) -> bool {
+    let place = scale.rect(r);
+    if icon.width < place.w || icon.height < place.h || place.w != place.h {
+        return false;
+    }
+    let icon = if icon.width == place.w { icon.clone() } else { icon.downscaled(place.w) };
+    screen.draw_icon(&icon, place.x, place.y);
+    true
 }
 
 /// A pinned program on Windows 7's bar (brief 114).

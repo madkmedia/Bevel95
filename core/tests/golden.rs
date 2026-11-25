@@ -2453,7 +2453,69 @@ fn xp_scenes() -> Vec<Scene> {
             image: seven_bar_scene(),
         },
         Scene { section: "Windows 7 (bar style)", name: "win7-start-menu".into(), caption: "7 bar style: the Start menu over the bar (made-up names; the user \"User\")", image: seven_start_scene() },
+        Scene {
+            section: "Windows 7 (bar style)",
+            name: "win7-bar-soft-icons".into(),
+            caption: "7 bar style at 1x: made-up round pictures with soft edges and see-through corners in running slots (the first over the left fade): no rectangle behind them (the owner's capture, 2026-11-25)",
+            image: seven_soft_scene(1),
+        },
+        Scene {
+            section: "Windows 7 (bar style)",
+            name: "win7-bar-2x-true-icons".into(),
+            caption: "7 bar style at 2x: the same pictures given at 64 and drawn at their final size over the enlarged bar (the owner, 2026-11-25: a deliberate exception to enlarging)",
+            image: seven_soft_scene(2),
+        },
     ]
+}
+
+/// A made-up round picture `side` wide: a disc of `color` with a soft edge one pixel wide (its
+/// see-through share by how much of each pixel the circle covers) and see-through corners.
+fn soft_disc(side: i32, color: u32) -> Icon {
+    let r = side as f64 / 2.0 - 0.5;
+    let c = (side as f64 - 1.0) / 2.0;
+    let pixels = (0..side * side)
+        .map(|i| {
+            let (x, y) = ((i % side) as f64, (i / side) as f64);
+            let d = ((x - c).powi(2) + (y - c).powi(2)).sqrt();
+            let a = (r - d + 0.5).clamp(0.0, 1.0);
+            ((a * 255.0).round() as u32) << 24 | (color & 0xFF_FFFF)
+        })
+        .collect();
+    Icon { width: side, height: side, pixels }
+}
+
+/// The 7 bar with three running programs whose pictures are soft discs, at size `n`: at 1 painted
+/// as the bar paints it; above 1 enlarged with the pictures given at 32·n and drawn at their final
+/// size over it, as the bar does (`paint::live_icon_boxes`, `draw_final_icon`).
+fn seven_soft_scene(n: i32) -> Framebuffer {
+    let theme = &bevel_core::theme::WIN7;
+    let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let colors = [0x2A7DE1, 0xE14B2A, 0x3BA55C];
+    let mut bar = Bar {
+        tasks: colors.iter().enumerate().map(|(i, _)| task("W", &DOCUMENT, if i == 1 { TaskState::Active } else { TaskState::Normal })).collect(),
+        big_icons: colors.iter().map(|&c| Some(soft_disc(32, c))).collect(),
+        tray: vec![Some(icon(&COMPUTER, 1))],
+        clock: "3:45 PM".into(),
+        clock_widest: WIDEST.into(),
+        date: "11/25/2026".into(),
+        ..Bar::default()
+    };
+    let width = 560;
+    let scale = bevel_core::scale::Scale::whole(n);
+    let boxes = paint::live_icon_boxes(theme, &fonts, width, &bar);
+    if n > 1 {
+        bar.drawn_later = boxes.iter().map(|&(which, _)| which).collect();
+    }
+    let mut fb = Framebuffer::new(width, theme.bar.height, 0);
+    paint::paint_bar(&mut fb, theme, &fonts, &bar);
+    let mut screen = scale.enlarge(&fb);
+    if n > 1 {
+        for (k, &(_, r)) in boxes.iter().enumerate() {
+            assert!(paint::draw_final_icon(&mut screen, scale, r, &soft_disc(32 * n, colors[k])));
+        }
+    }
+    screen
 }
 
 /// The 7 bar from made-up data through the bar's own path (`paint::paint_bar` with `WIN7`).

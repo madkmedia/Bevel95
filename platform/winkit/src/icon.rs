@@ -35,7 +35,7 @@ pub fn icon_pixels_at(icon: HICON, size: i32) -> Option<Icon> {
 }
 
 /// An icon's width in pixels, from its color bitmap (or its mask for a black-and-white one).
-fn icon_size(icon: HICON) -> Option<i32> {
+pub fn icon_size(icon: HICON) -> Option<i32> {
     let mut info = ICONINFO::default();
     // SAFETY: valid out-structs; the two bitmaps GetIconInfo makes are ours to delete.
     unsafe {
