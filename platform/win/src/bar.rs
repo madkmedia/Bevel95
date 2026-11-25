@@ -648,6 +648,8 @@ pub fn run() -> u32 {
     TELL_FAILURE.store(tell, Ordering::SeqCst);
     settings.bar_style = style;
     crate::failsafe::style_now(style);
+    // The picture store of XP and 7 takes wishes only under those styles (brief 115).
+    crate::seven_store::set_later(style.is_later());
     // Windows XP's bar style goes with the 2000 look for everything else (brief 112).
     if settings.bar_style.is_later() {
         settings.era = Era::Win2000;
@@ -2952,8 +2954,8 @@ fn final_pictures(app: &App, state: &mut Bar, width_1x: i32) -> Vec<(Rect, Icon)
     use crate::seven_store::{self, Asker};
     // Also at size 1 (the owner, 2026-11-25: "1x still isn't what I'd expect"): the shell's own
     // small pictures come at the screen's scale and were shrunk crudely; these are averaged.
+    // The classic looks never touch the store (brief 115; `seven_store::set_later`).
     if !app.bar_style.is_later() {
-        seven_store::want_sized(Asker::BarSized, &[]);
         return Vec::new();
     }
     let boxes = paint::live_icon_boxes(app.theme, &app.fonts(), width_1x, state);
@@ -3271,6 +3273,8 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
         log("size: the question about a size was left unanswered by a change of style; nothing saved");
     }
     crate::failsafe::style_now(style);
+    // Back to a classic look: the picture store forgets everything and sleeps (brief 115).
+    crate::seven_store::set_later(style.is_later());
     start_menu::set_own_programs(!style.is_later());
     // Windows 7 always combines a program's windows (brief 114); the setting is kept as it is.
     with_app(|app| app.task_list.group = app.group || style == theme::BarStyle::Seven);

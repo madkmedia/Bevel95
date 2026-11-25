@@ -68,9 +68,39 @@ pub fn want(asker: Asker, files: &[String]) {
     want_sized(asker, &files.iter().map(|f| (f.clone(), ONE_X)).collect::<Vec<_>>());
 }
 
+/// The bar is in Windows XP's or 7's style (`set_later`): only then does the store take wishes and
+/// its thread start.
+static LATER: AtomicBool = AtomicBool::new(false);
+/// The thread sleeps with no timer (nothing wanted).
+static IDLE: AtomicBool = AtomicBool::new(false);
+
+/// The bar's style changed (or was decided at its start): `later`, XP or 7. Under the classic
+/// style the store takes no wish, its thread never starts, and a thread already started forgets
+/// everything and sleeps with no timer until XP or 7 wants something again (brief 115: a person
+/// of the classic looks gets nothing of XP or 7 running).
+pub fn set_later(later: bool) {
+    LATER.store(later, Ordering::SeqCst);
+    if later {
+        return;
+    }
+    if let Ok(mut wanted) = WANTED.lock() {
+        wanted.iter_mut().for_each(Vec::clear);
+    }
+    if RUNNING.load(Ordering::SeqCst)
+        && let Ok(mut flag) = WAKE.0.lock()
+    {
+        *flag = true;
+        WAKE.1.notify_all();
+    }
+}
+
 /// `asker` now wants these files' pictures at these sizes. Only a lock and a comparison on the
-/// caller's thread; the reading thread is started at the first call and woken by a change.
+/// caller's thread; the reading thread is started at the first call under XP or 7 and woken by
+/// a change. Under the classic style nothing happens (`set_later`).
 pub fn want_sized(asker: Asker, files: &[Key]) {
+    if !LATER.load(Ordering::SeqCst) {
+        return;
+    }
     let files: Vec<Key> = files.iter().filter(|(f, size)| is_file(f) && (1..=256).contains(size)).cloned().collect();
     let changed = match WANTED.lock() {
         Ok(mut wanted) => {
@@ -189,11 +219,20 @@ fn run() {
             log(&format!("Windows 7's slots: reading {arrived} of {} pictures took {took} ms", wanted.len()));
         }
         if let Ok(flag) = WAKE.0.lock() {
-            let (mut flag, _) = match WAKE.1.wait_timeout_while(flag, EVERY, |changed| !*changed) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            *flag = false;
+            if wanted.is_empty() {
+                // Nothing wanted (the classic style, or no slot): asleep with no timer until a
+                // wish comes (brief 115).
+                IDLE.store(true, Ordering::SeqCst);
+                let Ok(mut flag) = WAKE.1.wait_while(flag, |changed| !*changed) else { continue };
+                IDLE.store(false, Ordering::SeqCst);
+                *flag = false;
+            } else {
+                let (mut flag, _) = match WAKE.1.wait_timeout_while(flag, EVERY, |changed| !*changed) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                *flag = false;
+            }
         }
     }
 }
@@ -225,11 +264,20 @@ mod tests {
     /// caller's thread (a network place that does not answer, TEST-NET-1, is wanted beside a real
     /// program); the real program's picture arrives from the store's thread, at 32 and at 64
     /// (the owner, 2026-11-25: a true larger picture, its soft edges kept); what is no longer
-    /// wanted is forgotten, a size no longer in use too.
+    /// wanted is forgotten, a size no longer in use too. Brief 115: under the classic style the
+    /// store takes no wish and its thread never starts; back to the classic style, it forgets
+    /// everything and sleeps with no timer. (One test: the store is one for the whole process.)
     #[test]
     fn the_bars_thread_never_waits_for_a_file() {
         let program = bevel_winkit::shell::system_program("notepad.exe");
         let dead = "\\\\192.0.2.1\\nothing here\\Some program.lnk".to_string();
+        // The classic style: nothing taken, nothing started.
+        set_later(false);
+        want(Asker::Bar, std::slice::from_ref(&program));
+        want_sized(Asker::BarSized, &[(program.clone(), 64)]);
+        assert!(!RUNNING.load(Ordering::SeqCst), "no thread under the classic style");
+        assert!(WANTED.lock().unwrap().iter().all(Vec::is_empty), "no wish taken");
+        set_later(true);
         let t0 = Instant::now();
         want(Asker::Menu, &[program.clone(), dead.clone()]);
         want_sized(Asker::BarSized, &[(program.clone(), 64)]);
@@ -254,5 +302,20 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(!is_read(&program, ONE_X) && !is_read(&program, 64), "what is no longer wanted is forgotten");
+        // Wanted again, then the classic style: everything forgotten, asleep with no timer, and
+        // a wish under the classic style changes nothing.
+        want(Asker::Bar, std::slice::from_ref(&program));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !is_read(&program, ONE_X) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        set_later(false);
+        want(Asker::Bar, std::slice::from_ref(&program));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !(IDLE.load(Ordering::SeqCst) && !is_read(&program, ONE_X)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(IDLE.load(Ordering::SeqCst), "asleep with no timer");
+        assert!(!is_read(&program, ONE_X) && WANTED.lock().unwrap().iter().all(Vec::is_empty), "everything forgotten");
     }
 }
