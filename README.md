@@ -172,10 +172,11 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
 - `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
   of recent file operations, the order of the task buttons, the commands typed into Run, the
   width of Quick Search's Name column.
-- `often.txt`: under the Windows XP style, the programs you start most often through the Start
-  menu and Quick Search (their names and shortcuts), for the XP Start menu's list.
-- `style-failed.txt`: left when the bar stopped with an error in the Windows XP style; the next
-  start is then classic once and says so. Choosing any look takes it away.
+- `often.txt`: under the Windows XP and 7 styles, the programs you start most often through the
+  Start menu and Quick Search (their names and shortcuts), for their Start menus' list.
+- `style-failed.txt`: left when the bar stopped with an error in the Windows XP or 7 style; every
+  start after that is classic and says so, until you choose a look (the classic one shown, or XP
+  or 7 to try again). Choosing a look takes it away and is remembered.
 - `quick-launch.txt`: the built-in Quick Launch icons you took off the band (your own shortcuts
   stay in Windows' own Quick Launch folder), and the band's width once you have dragged it.
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options

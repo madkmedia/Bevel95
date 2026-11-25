@@ -413,6 +413,9 @@ pub struct App {
     /// How the taskbar and the Start menu are drawn (`bar_style`, brief 112): Windows XP's goes
     /// with the 2000 look (`era`) for everything else, always in True Color.
     pub bar_style: theme::BarStyle,
+    /// The style settings.txt says (in the run after a failure the bar runs classic while this is
+    /// still XP or 7: `theme::look_chosen`).
+    pub saved_style: theme::BarStyle,
 }
 
 impl App {
@@ -608,9 +611,11 @@ pub fn run() -> u32 {
     }
 
     let mut settings = load_settings();
+    let saved_style = settings.bar_style;
     // The way back after a failure (the review of brief 112): the bar stopped by an error in a
-    // style other than the classic one last time: the classic style for this run, said once;
-    // settings.txt is left as it is. A mark under the classic style is old: it goes.
+    // style other than the classic one last time: the classic style for this run, said at every
+    // start until a look is chosen (the mark stays till then); settings.txt is left as it is. A
+    // mark under the classic style is old: it goes.
     let (style, tell) = theme::style_after_failure(settings.bar_style, crate::failsafe::marked());
     if !tell {
         crate::failsafe::clear();
@@ -770,6 +775,7 @@ pub fn run() -> u32 {
             monitor_lines_paused: None,
             folder_tabs: (settings.folder_tabs, settings.folder_tabs_close),
             bar_style: settings.bar_style,
+            saved_style,
         });
     });
     // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
@@ -1111,16 +1117,18 @@ fn toggle_desktop() {
     set_desktop(!on);
 }
 
-/// Under Windows XP's bar style, a switch that shows nothing there but would change what a classic
-/// look gets (Quick Launch, the classic desktop, 16 or 256 colors) does nothing, and the log says
-/// why once per run (the review of brief 112, finding 4). True if it was refused.
+/// Under Windows XP's or 7's bar style, a switch that shows nothing there but would change what a
+/// classic look gets (Quick Launch, the classic desktop, 16 or 256 colors) does nothing, and the
+/// log says why once per run (the review of brief 112, finding 4; the style named: the review of
+/// brief 114, doubt 9). True if it was refused.
 fn xp_refuses(what: &str) -> bool {
     static SAID: AtomicBool = AtomicBool::new(false);
-    if !with_app(|app| app.xp()).unwrap_or(false) {
+    let Some(style) = with_app(|app| app.bar_style).filter(|s| s.is_later()) else {
         return false;
-    }
+    };
     if !SAID.swap(true, Ordering::SeqCst) {
-        log(&format!("{what}: ignored under the Windows XP style (it shows nothing there; choose a classic look first; said once)"));
+        let name = theme::look_title(Era::Win2000, style);
+        log(&format!("{what}: ignored under the {name} style (it shows nothing there; choose a classic look first; said once)"));
     }
     true
 }
@@ -2589,7 +2597,7 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     if with_app(|app| app.scale.quarters() != values.scale.quarters()).unwrap_or(false) {
         set_size(bar, values.scale);
     }
-    if with_app(|app| app.era != values.era || app.bar_style != values.bar_style).unwrap_or(false) {
+    if with_app(|app| app.era != values.era || app.bar_style != values.bar_style || app.saved_style != values.bar_style).unwrap_or(false) {
         crate::failsafe::clear();
         set_era(bar, values.era, values.bar_style);
     }
@@ -2881,6 +2889,14 @@ fn run_command(bar: HWND, code: usize, shift: bool) {
     let Some(command) = BarCommand::from_code(code) else {
         return;
     };
+    // Under XP and 7 a switch nobody sees there would only surprise at the way back (the review
+    // of brief 112, finding 4: it put back deleted icons); every route to it, the menus' and
+    // Quick Search's (the review of brief 114, finding 5).
+    if let Some(what) = command.shows_nothing_under_later()
+        && xp_refuses(what)
+    {
+        return;
+    }
     let ours = with_app(|app| app.ours).unwrap_or(false);
     match command {
         BarCommand::AdjustDateTime => datetime_window::open(),
@@ -2916,11 +2932,6 @@ fn run_command(bar: HWND, code: usize, shift: bool) {
             about_window::open_page(bevel_core::about::Part::Updates);
         }
         BarCommand::QuickLaunch => {
-            // Under XP the band never shows: a switch nobody sees would only surprise at the way
-            // back (the review of brief 112, finding 4: it put back deleted icons).
-            if xp_refuses("Toolbars > Quick Launch") {
-                return;
-            }
             let on = with_app(|app| app.quick_launch_on()).unwrap_or(false);
             set_quick_launch(!on);
         }
@@ -3110,10 +3121,21 @@ fn size_changed(bar: HWND) {
 fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     // Windows XP's bar style goes with the 2000 look (brief 112).
     let era = if style.is_later() { Era::Win2000 } else { era };
-    if with_app(|app| app.era == era && app.bar_style == style).unwrap_or(true) {
+    let Some((apply, write_style)) = with_app(|app| theme::look_chosen((app.era, app.bar_style), app.saved_style, (era, style))) else {
+        return;
+    };
+    // Written only when it differs from what settings.txt says, so a settings.txt that never had
+    // the line does not get one; also when nothing changes on screen (the classic look shown
+    // chosen in the run after a failure: the review of brief 114, finding 5).
+    if write_style {
+        with_app(|app| app.saved_style = style);
+        save_setting("bar_style", style.setting());
+        log(&format!("look: the {} style is kept for the next start", theme::look_title(era, style)));
+    }
+    if !apply {
         return;
     }
-    let style_changed = with_app(|app| std::mem::replace(&mut app.bar_style, style) != style).unwrap_or(false);
+    with_app(|app| app.bar_style = style);
     crate::failsafe::style_now(style);
     start_menu::set_own_programs(!style.is_later());
     // Windows 7 always combines a program's windows (brief 114); the setting is kept as it is.
@@ -3151,10 +3173,6 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     // there to see on the way back.
     if !style.is_later() {
         save_setting("era", era.setting());
-    }
-    // Written only when changed, so a settings.txt that never had the line does not get one.
-    if style_changed {
-        save_setting("bar_style", style.setting());
     }
     log(&format!("look: {}", theme::look_title(era, style)));
     // The desktop takes the new look's color.

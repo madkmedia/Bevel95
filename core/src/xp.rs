@@ -346,12 +346,27 @@ mod tests {
     /// the classic one starts classic for the run and says so; without it, as asked; a mark under
     /// the classic style says nothing.
     #[test]
-    fn a_failed_style_starts_classic_once() {
-        use crate::theme::{BarStyle, style_after_failure};
+    fn a_failed_style_starts_classic_until_a_look_is_chosen() {
+        use crate::theme::{BarStyle, Era, look_chosen, style_after_failure};
         assert_eq!(style_after_failure(BarStyle::Xp, true), (BarStyle::Classic, true));
+        assert_eq!(style_after_failure(BarStyle::Seven, true), (BarStyle::Classic, true));
         assert_eq!(style_after_failure(BarStyle::Xp, false), (BarStyle::Xp, false));
         assert_eq!(style_after_failure(BarStyle::Classic, true), (BarStyle::Classic, false));
         assert_eq!(style_after_failure(BarStyle::Classic, false), (BarStyle::Classic, false));
+        // The review of brief 114, finding 5: in the run after a failure (classic 98 shown,
+        // settings.txt still says XP), choosing the classic look shown changes nothing on screen
+        // and writes `bar_style = classic`; choosing XP again switches and writes nothing (the
+        // file says XP already); another classic look switches and writes.
+        let fallback = ((Era::Win98, BarStyle::Classic), BarStyle::Xp);
+        assert_eq!(look_chosen(fallback.0, fallback.1, (Era::Win98, BarStyle::Classic)), (false, true));
+        assert_eq!(look_chosen(fallback.0, fallback.1, (Era::Win98, BarStyle::Xp)), (true, false));
+        assert_eq!(look_chosen(fallback.0, fallback.1, (Era::Win2000, BarStyle::Classic)), (true, true));
+        assert_eq!(look_chosen(fallback.0, BarStyle::Seven, (Era::Win98, BarStyle::Seven)), (true, false));
+        // An ordinary run: the look shown chosen again does nothing; XP runs over 2000.
+        let xp = ((Era::Win2000, BarStyle::Xp), BarStyle::Xp);
+        assert_eq!(look_chosen(xp.0, xp.1, (Era::Win95, BarStyle::Xp)), (false, false));
+        assert_eq!(look_chosen(xp.0, xp.1, (Era::Win2000, BarStyle::Seven)), (true, true));
+        assert_eq!(look_chosen((Era::Win95, BarStyle::Classic), BarStyle::Classic, (Era::Win95, BarStyle::Classic)), (false, false));
     }
 
     #[test]

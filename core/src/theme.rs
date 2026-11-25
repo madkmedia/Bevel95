@@ -173,6 +173,16 @@ pub fn style_after_failure(wanted: BarStyle, marked: bool) -> (BarStyle, bool) {
     }
 }
 
+/// What choosing the look `chosen` does while the bar runs `running` and settings.txt says
+/// `saved` for the style: whether the bar changes (the later styles run over 2000), and whether
+/// `bar_style` is written. In a run after a failure the bar runs classic while settings.txt still
+/// says XP or 7: choosing the classic look shown changes nothing on screen but must be written,
+/// or the next start would try the failed style again (the review of brief 114, finding 5).
+pub fn look_chosen(running: (Era, BarStyle), saved: BarStyle, chosen: (Era, BarStyle)) -> (bool, bool) {
+    let era = if chosen.1.is_later() { Era::Win2000 } else { chosen.0 };
+    ((era, chosen.1) != running, chosen.1 != saved)
+}
+
 /// The theme the bar draws with: the look's in `depth` colors, or XP's (always True Color).
 pub fn bar_theme(era: Era, depth: Depth, style: BarStyle) -> &'static Theme {
     match style {

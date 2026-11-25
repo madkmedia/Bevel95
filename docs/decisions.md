@@ -7178,11 +7178,17 @@ the Start menu's rounded corners was made see-through.
   (`style-failed.txt`, `failsafe.rs`); the next start finds it, runs the classic style for that
   run without changing settings.txt (`theme::style_after_failure`), says so once in a message
   window ("The Windows XP style stopped with an error last time. The classic look is shown. Choose
-  Windows XP again under Theme to try again.") and logs it. Choosing any look (the Theme menu,
-  Bevel95 Settings) takes the mark away; a mark found under the classic style is old and goes.
-  `--restore` gives Windows' taskbar back as always and leaves the mark: the next start of the bar
-  is classic once. The message is in the look the fallback runs (the classic look settings.txt
-  keeps), not always 2000's.
+  Windows XP again under Theme to try again.") and logs it. The mark stays until a look is
+  chosen, so EVERY start until then is classic and shows the message (the review of brief 114,
+  finding 5: the docs said "once"). Choosing any look (the Theme menu, Quick Search, Bevel95
+  Settings' OK) takes the mark away and is written: choosing the classic look shown writes
+  `bar_style = classic` although nothing changes on screen (`theme::look_chosen`, against
+  `App::saved_style`, what settings.txt says; before, the choice changed nothing and the next start
+  tried the failed style again). An OK in Bevel95 Settings in such a run counts as choosing the
+  look its Look buttons show. A mark found under the classic style is old and goes. `--restore`
+  gives Windows' taskbar back as always and leaves the mark. The message is in the look the
+  fallback runs (the classic look settings.txt keeps), not always 2000's. Proof:
+  `xp::tests::a_failed_style_starts_classic_until_a_look_is_chosen`.
 - **The review's repairs** (2026-11-25): an open Bevel95 Settings follows the style switched from
   the Theme menu (`Properties::follow_style`), and the switch tells it Quick Launch's setting, not
   whether the band shows (finding 1); under XP, Toolbars > Quick Launch, the classic desktop entry
@@ -7249,6 +7255,11 @@ here; its two comparisons still show 0 differing pixels in every part (`core/tes
   show at its next opening). Proof: `seven_store::tests` (a TEST-NET network shortcut wanted
   beside Notepad: wanting and looking up return at once, timed under `BEVEL95_TIMED=1`; Notepad's
   32x32 arrives; what is no longer wanted goes).
+- **Every route refused** (finding 5): the classic desktop and Quick Launch's switches are refused
+  under XP and 7 in `run_command`, whichever menu or Quick Search entry posted them
+  (`BarCommand::shows_nothing_under_later`: DesktopOn, DesktopOff, QuickLaunch, QuickLaunchClose),
+  besides the key; the log names the style in use (doubt 9). Proof:
+  `bar_menu::tests::switches_that_show_nothing_under_xp_and_7`.
 - **When the slots do not fit** (finding 1, `seven_bar::plan`): a running program is never hidden
   for a pinned shortcut that is not running: those are dropped first, from the right. When the
   running programs still do not fit, they go into rows with the scroll arrows at the room's right

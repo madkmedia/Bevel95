@@ -91,6 +91,18 @@ impl BarCommand {
     pub fn from_code(code: usize) -> Option<BarCommand> {
         BarCommand::ALL.get(code).copied()
     }
+
+    /// What the command switches, when it switches something that shows nothing under the XP
+    /// and 7 styles but would change what a classic look gets (the bar then refuses it, whichever
+    /// menu or Quick Search entry asked: the review of brief 114, finding 5).
+    pub fn shows_nothing_under_later(self) -> Option<&'static str> {
+        match self {
+            BarCommand::DesktopOn | BarCommand::DesktopOff => Some("the classic desktop"),
+            BarCommand::QuickLaunch => Some("Toolbars > Quick Launch"),
+            BarCommand::QuickLaunchClose => Some("Quick Launch's Close"),
+            _ => None,
+        }
+    }
 }
 
 /// What choosing a top-level entry does.
@@ -635,5 +647,21 @@ mod tests {
         assert_eq!(xp.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, true, false]);
         let seven = theme_menu(Era::Win2000, BarStyle::Seven);
         assert_eq!(seven.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, false, true]);
+    }
+
+    /// The review of brief 114, finding 5: every route to the classic desktop and to Quick
+    /// Launch's switches is refused under XP and 7, Quick Search's entries among them.
+    #[test]
+    fn switches_that_show_nothing_under_xp_and_7() {
+        let refused: Vec<BarCommand> = BarCommand::ALL.iter().copied().filter(|c| c.shows_nothing_under_later().is_some()).collect();
+        assert_eq!(refused, [BarCommand::DesktopOn, BarCommand::DesktopOff, BarCommand::QuickLaunch, BarCommand::QuickLaunchClose]);
+        let quick_desktop: Vec<BarCommand> = crate::quick::commands()
+            .iter()
+            .filter_map(|e| match e.action {
+                crate::quick::Action::Bar(c) if c.shows_nothing_under_later().is_some() => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(quick_desktop, [BarCommand::DesktopOn, BarCommand::DesktopOff], "Quick Search's two desktop entries");
     }
 }
