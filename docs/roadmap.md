@@ -27,6 +27,8 @@ here is promised, and an issue is the place to say what matters to you.
 ## Folder windows and Explorer
 - Thumbnails, Choose Columns, Customize this Folder, the other Explorer bars (Search, Favorites,
   History), Find, Send To, Format, Rename in the tree, dragging folders in the tree.
+- Tabs (Bevel95's own): a cut name's whole path as a tooltip, a middle click on a folder opening
+  it in a new tab, dropping on a tab, putting tabs in another order.
 - The web view's picture preview; Control Panel, Printers, the Recycle Bin and network places
   open Windows' own windows.
 

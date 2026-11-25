@@ -6925,3 +6925,95 @@ and client implementation are in [wire.rs](../core/src/help/wire.rs) and
 [help.rs](../platform/winkit/src/help.rs). For a working caller, see
 [Minesweeper's catalogs](../core/src/minefield/html_help_catalog.rs) and its
 [Help menu handler](../programs/minefield/src/main.rs).
+
+## Tabs in folder windows (Bevel95's own, 2026-11-25, brief 110)
+
+The owner: "It would be an optional add on. The tabs should probably look like tabs in the
+systems elsewhere." No old Windows had tabs in a folder window
+(brief 109's references from the Reference PCs: Find's and Task Manager's tab pages, File
+Manager's maximized documents; `private/probes/tabs/notes.md`). After the mockups the owner
+chose: every place as an option, along with none, a fifth place above the menu bar, the small
+flat X (never the square title-bar button), and "tabs for all, never buttons" (a row of task
+buttons was drawn as a mockup only).
+- **Off unless chosen**: `folder_tabs = off | under_address | over_files | under_menu |
+  above_menu` (default off) and `folder_tabs_close = end | tab` (default end) in settings.txt,
+  written only when changed; Bevel95 Settings' fifth page, Folders: the group "Tabs in folder
+  windows" with the lists Tabs and Close button (the second greyed while Tabs is None). OK or
+  Apply writes them and tells the open folder windows (`kit::tell_programs_look_changed`), which
+  follow at once; switched off, a window keeps only its tab in front. With `off` every folder
+  window is as before: no row, no new menu entries, no new keys, the same pixels (the golden
+  pictures and the 924 comparison cases unchanged; the Bevel95 Settings pictures changed only
+  in their tab row, which gained the Folders tab).
+- **The places** (`core::folder::tabs::Place`, `FolderWindow::set_tabs`, `row_shifts`,
+  `tab_strip`): under the address bar (95: under the menu bar, since Bevel95's 95 Explorer has
+  no toolbar), over both panes; over the file list only (the tree's pane from the row's top; no
+  tree: as under the address bar); between the menu bar and the toolbar (98, 2000: inside the
+  rebar, between its menu band and its toolbar band, `explorer::layout_shifted`; 95: as under
+  the address bar); above the menu bar, right under the title bar. The row is 24 high: a gap
+  of 2, the chosen tab's rise of 2, the tabs' 18, the page's top line of 2 (brief 109's
+  measurements).
+- **The row**: the look's ordinary tabs exactly as the property sheets paint them
+  (`properties::tab`; against 2000's Task Manager 0 pixels differ, brief 109), no pictures, the
+  line under them running on to the row's end, nothing framed round the panes. A tab is as wide
+  as its name plus 12, up to 160 (the taskbar's longest button); a longer name ends in three
+  dots. A row too long: all tabs shrink alike down to 48; still too long, the row begins further
+  along so that the tab in front is whole; no arrows (PROVISIONAL: the old arrows were never
+  captured). The X at the row's end always stays in view.
+- **The small X**: 98 and 2000 the tree pane's own close button (its glyph, raised under the
+  pointer, sunken when pressed); 95 had no flat X: its title bar close glyph's shape alone,
+  raised and sunken the same way (PROVISIONAL). At the row's end (20 by 17) it closes the tab
+  in front; on the tab in front (`tab`) it stands right of the name.
+- **What a tab is**: one view of a folder inside the window: its place, its history, its view,
+  its selection, its scroll place, its web view; the title bar, the task button, the menus,
+  the toolbar, the address bar and the status bar belong to the window and show the tab in
+  front; the tree is one per window and follows the tab in front (`FolderWindow::
+  take_window_from`). Opening a folder as today does what it did (95: a new window; 98 and
+  2000: the same view); a folder opened from outside gets a window of its own.
+- **Opening, switching, closing**: Ctrl+T and a double-click on the row's empty part: a new
+  tab on My Computer, in front; "Open in New Tab" in a folder's menu in the file list and in a
+  folder's or a drive's row of the tree, right under the entries that open it; a press on a tab
+  brings it to the front at once (as the old tabs did, on the press); Ctrl+Tab and
+  Ctrl+Shift+Tab go round the row; the X, Ctrl+W and a middle click on a tab close it; the last
+  tab closes the window; closing the window closes every tab without a question; the right
+  button on the row: New Tab, Close Tab, Close Other Tabs. A rename under way ends first (a
+  press elsewhere, brief 98). At most 32 tabs: a 33rd is refused with the default sound.
+- **Remembered by what it is**: every command acts on the tab in front, found by its id; the
+  row's menu and the middle click carry the tab's id; a tab behind has no reader (its reader
+  stops when it goes behind; a new one, with a new window id, reads its place and its facts
+  again when it comes forward), so a reading that comes late can only reach the tab that asked.
+  A finished rename and a selection a paste or a new shortcut asked for go by window and tab to
+  the tab that asked, in front or behind. A file job outlives its tab as it outlives a window; a
+  question acts on the items by their ids. A tab whose rename's extension question is up does not
+  go behind.
+- **Passing states never travel** (the early review's finding 1): when a tab goes behind, comes
+  forward, or starts as a copy of the front, every passing press, hover, rename and drag state
+  goes (`FolderWindow::forget_passing`: the list of fields is in its comment); the window's
+  waiting slow click and a drag's resting place go too. Else a slow second click made just before
+  a switch opened a rename box by itself when the tab came back.
+- **A change of look** with tabs behind: their names in the row are the new look's at once;
+  when such a tab comes forward its place is shown anew in the new look and laid out as the new
+  look remembers it (`relook`, `load_places`), as the tab in front was at the change (each look
+  stays pure; the early review's finding 2).
+- **A drive found locked** in a new tab: that tab closes; with one tab the window closes, as
+  before. A new tab whose place is refused (a drive known locked) goes again at once.
+- **Dragging over a tab**: a drag resting on a tab for the look's delay of opening a tree row
+  brings it to the front, so the drop goes into its list; nothing is dropped on the row itself
+  (the no-drop pointer); a drag out of the window whose front tab changed is then decided as one
+  from another window. Tabs cannot be dragged to another order or out of the window.
+- **folders.txt**: tabs add no record. A window with several tabs saves at its close what it
+  would save today for the tab in front; the moved-icons records stay per folder.
+- **Memory** (the early review's D3): a tab behind keeps its view (its items and their pictures,
+  shared with the pictures' store); every switch reads the folder and its pictures again
+  (PROVISIONAL: keeping the reader's own record per tab would spare that; not done), and up to
+  32 tabs of large folders can keep their pictures past the store's own limit.
+- **Not done**: a tab's whole path as a tooltip when its name is cut (the folder windows have no
+  tooltips to build on); a middle click on a folder opening it in a new tab; a drop ON a tab.
+- **Proof**: `core::folder::tabs` tests (the words, widths, a long row, the X on the tab, the
+  window's parts, keys and buttons with a row, a waiting slow click never following a tab),
+  `properties` (the Folders page), the folders program's tests (test commands in test folders
+  only, the window's passing states at a change of front tab), 16 golden pictures
+  (`*-folder-tabs-*`) and `*-bevel95-settings-folders`. Live (`private/probes/tabs110/try.ps1`,
+  a scratch copy of the installed folders.exe, made-up test folders, test messages only): tabs
+  opened by "Open in New Tab" on a test folder, the next tab, the front closed, in 95 (above the
+  menu bar), 98 (under the address bar, over the file list) and 2000 (under the menu bar, the X
+  on the tab); the setting switched off and on with the window open.

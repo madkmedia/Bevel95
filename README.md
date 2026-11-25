@@ -51,6 +51,10 @@ Website: https://madkmedia.github.io/Bevel95/
 - **Quick Search**: press the Windows key, type a few letters of a program's name, press Enter.
 - **Monitor Lines** (right-click the taskbar, then **Bevel95**): the faint dark lines of an old
   monitor over the screen the taskbar is on, Light, Medium or Strong, at sizes 2× and up. Off unless you choose it.
+- **Tabs in folder windows**, Bevel95's own (no old Windows had them): several folders in one
+  window, as a row of the look's own tabs in the place you choose (under the address bar, over
+  the file list, under or above the menu bar). Ctrl+T, Ctrl+W, Ctrl+Tab and **Open in New Tab**
+  in a folder's menu. Off unless you choose it (Bevel95 Settings > Folders).
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 
