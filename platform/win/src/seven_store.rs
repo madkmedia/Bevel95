@@ -133,7 +133,11 @@ fn is_shortcut(file: &str) -> bool {
 fn read((file, size): &Key, stamp: Option<(u64, u64)>) -> Entry {
     if *size == ONE_X {
         let program = if is_shortcut(file) { crate::find_window::read_shortcut_program(file) } else { None };
-        Entry { stamp, program, icon: crate::window_list::read_big_icon(file) }
+        // The large picture averaged down to 32 (the owner, 2026-11-25: the shell's own 32 comes
+        // at the screen's scale, 48 at 150%, and was shrunk crudely); the shell's own only for a
+        // program with nothing larger.
+        let icon = crate::window_list::read_icon_at(file, ONE_X).or_else(|| crate::window_list::read_big_icon(file));
+        Entry { stamp, program, icon }
     } else {
         Entry { stamp, program: None, icon: crate::window_list::read_icon_at(file, *size) }
     }

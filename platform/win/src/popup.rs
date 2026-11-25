@@ -517,14 +517,15 @@ fn open_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, at: At) {
     show_root(bar, kind, menu, style, layout, Rect::new(left, top, w, h), previous);
 }
 
-/// XP's and 7's Start menus above size 1 (the owner, 2026-11-25): each program row's true picture
-/// at its final size (`Scale::rect` of its 1x box), as far as the store has read it (never read
-/// here, on the bar's thread); those found are taken out of `menu`, so the 1x painting leaves
-/// their boxes empty. The ones not read yet keep their enlarged 1x picture this time; the next
-/// opening has them. The classic menus and the submenus never get here.
+/// XP's and 7's Start menus at every size (the owner, 2026-11-25; at size 1 too: the shell's own
+/// small pictures come at the screen's scale and were shrunk crudely): each program row's picture
+/// at its final size (`Scale::rect` of its 1x box), averaged from the large one, as far as the
+/// store has read it (never read here, on the bar's thread); those found are taken out of `menu`,
+/// so the 1x painting leaves their boxes empty. The ones not read yet keep their 1x picture this
+/// time; the next opening has them. The classic menus and the submenus never get here.
 fn start_finals(kind: &Kind, menu: &mut Menu, layout: &MenuLayout) -> Vec<(Rect, bevel_core::fb::Icon)> {
     use crate::seven_store::{self, Asker};
-    let Some(scale) = with_app(|app| app.scale).filter(|s| s.quarters() != 4) else {
+    let Some(scale) = with_app(|app| app.scale) else {
         return Vec::new();
     };
     let boxes: Vec<(usize, Rect, String)> = match kind {

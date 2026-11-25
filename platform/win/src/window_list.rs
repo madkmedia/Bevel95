@@ -381,27 +381,28 @@ pub fn read_big_icon(path: &str) -> Option<Icon> {
         if info.hIcon.is_null() {
             None
         } else {
-            let pixels = bevel_winkit::icon::icon_pixels_at(info.hIcon, 32);
+            // At its own size (the screen's scale: 48 at 150%), then averaged down to 32: drawn
+            // straight at 32 it was shrunk crudely (the owner, 2026-11-25).
+            let native = bevel_winkit::icon::icon_size(info.hIcon).unwrap_or(32).clamp(32, 256);
+            let pixels = bevel_winkit::icon::icon_pixels_at(info.hIcon, native).map(|i| i.downscaled(32));
             DestroyIcon(info.hIcon);
             pixels
         }
     }
 }
 
-/// The shell's picture of a file at exactly `size`×`size` (XP's and 7's live pictures above size
-/// 1: the owner, 2026-11-25): from the system's 48×48 list up to 48, else its 256×256 one, shrunk
-/// by averaging, its soft edges kept. `None` when the file has no picture that large (a program
-/// whose largest is smaller: the shell puts it in the corner of the larger list's square), so the
-/// enlarged 1x picture stays. Read only on the Windows 7 store's own thread (`seven_store`).
+/// The shell's picture of a file at exactly `size`×`size` (XP's and 7's live pictures at every
+/// size: the owner, 2026-11-25, "2x looks great. 1x still isn't what I'd expect": today's programs
+/// ship a careless small picture and a careful large one): the file's largest real picture, the
+/// system's 256×256 list's, else its 48×48 one's (only for `size` up to 48), shrunk by averaging,
+/// its soft edges kept. `None` when the file has no picture larger than `size` asks (a program whose
+/// largest is smaller: the shell puts it in the corner of the larger list's square), so its own
+/// picture stays. Read only on the Windows 7 store's own thread (`seven_store`).
 pub fn read_icon_at(path: &str, size: i32) -> Option<Icon> {
-    use windows_sys::Win32::UI::Controls::{HIMAGELIST, ILD_TRANSPARENT, ImageList_GetIcon};
-    use windows_sys::Win32::UI::Shell::{SHGFI_SYSICONINDEX, SHGetImageList, SHIL_EXTRALARGE, SHIL_JUMBO};
-    /// IImageList's interface id.
-    const IID_IMAGE_LIST: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x46eb5926_582e_4017_9fdf_e8998daa0950);
+    use windows_sys::Win32::UI::Shell::{SHGFI_SYSICONINDEX, SHIL_EXTRALARGE, SHIL_JUMBO};
     if path.is_empty() || !(1..=256).contains(&size) {
         return None;
     }
-    let (list_kind, native, smaller) = if size <= 48 { (SHIL_EXTRALARGE, 48, 32) } else { (SHIL_JUMBO, 256, 48) };
     let wide_path = wide(path);
     let mut info = SHFILEINFOW::default();
     // SAFETY: a correctly sized out-struct; with SHGFI_SYSICONINDEX only the index is filled.
@@ -409,6 +410,19 @@ pub fn read_icon_at(path: &str, size: i32) -> Option<Icon> {
     if ok == 0 {
         return None;
     }
+    let large = list_picture(info.iIcon, SHIL_JUMBO, 256, 48);
+    let large = large.or_else(|| if size <= 48 { list_picture(info.iIcon, SHIL_EXTRALARGE, 48, 32) } else { None });
+    large.map(|icon| icon.downscaled(size))
+}
+
+/// Picture `index` of the system's image list `list_kind` (`native` square), `None` when only its
+/// top-left `smaller` square holds anything (a smaller picture in the corner).
+fn list_picture(index: i32, list_kind: u32, native: i32, smaller: i32) -> Option<Icon> {
+    use windows_sys::Win32::UI::Controls::{HIMAGELIST, ILD_TRANSPARENT, ImageList_GetIcon};
+    use windows_sys::Win32::UI::Shell::SHGetImageList;
+    /// IImageList's interface id.
+    const IID_IMAGE_LIST: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x46eb5926_582e_4017_9fdf_e8998daa0950);
+    let info_icon = index;
     let mut list: *mut c_void = null_mut();
     // SAFETY: a valid interface id and out-pointer; the reference is released below. An
     // IImageList pointer is the image list's handle (documented).
@@ -416,7 +430,7 @@ pub fn read_icon_at(path: &str, size: i32) -> Option<Icon> {
         if SHGetImageList(list_kind as i32, &IID_IMAGE_LIST, &mut list) < 0 || list.is_null() {
             return None;
         }
-        let handle = ImageList_GetIcon(list as HIMAGELIST, info.iIcon, ILD_TRANSPARENT);
+        let handle = ImageList_GetIcon(list as HIMAGELIST, info_icon, ILD_TRANSPARENT);
         bevel_winkit::com::release(list);
         if handle.is_null() {
             return None;
@@ -430,7 +444,7 @@ pub fn read_icon_at(path: &str, size: i32) -> Option<Icon> {
     if outside_corner.clone().all(|(x, y)| icon.pixels[(y * native + x) as usize] >> 24 == 0) {
         return None;
     }
-    Some(icon.downscaled(size))
+    Some(icon)
 }
 
 /// A window's own large picture at its own size (32×32 mostly; larger where the program gives
@@ -698,13 +712,121 @@ mod tests {
     fn a_programs_picture_at_its_final_size() {
         bevel_winkit::com::init();
         let notepad = bevel_winkit::shell::system_program("notepad.exe");
-        for size in [24, 28, 32, 48, 56, 64, 96] {
+        for size in [16, 24, 28, 32, 48, 56, 64, 96] {
             let icon = super::read_icon_at(&notepad, size).unwrap_or_else(|| panic!("{size}"));
             assert_eq!((icon.width, icon.height), (size, size));
             assert_eq!(icon.pixels[0] >> 24, 0, "a see-through corner at {size}");
             assert!(icon.pixels.iter().any(|p| (1..255).contains(&(p >> 24))), "soft edges at {size}");
         }
         assert!(super::read_icon_at("C:\\nothing here\\Some program.exe", 64).is_none());
+    }
+
+    /// The owner, 2026-11-25 ("1x still isn't what I'd expect"): a picture for the eye, never run by
+    /// default: programs of this PC (no file of the owner's), the shell's own 32 and 16 beside the
+    /// ones shrunk from the large picture, on 7's button face and on white, six times enlarged.
+    /// Writes private/probes/win7/icons-1x-compare.bmp.
+    #[test]
+    #[ignore = "writes a comparison picture for the eye; run it on request"]
+    fn compare_small_pictures() {
+        use bevel_core::fb::{Framebuffer, Icon};
+        bevel_winkit::com::init();
+        // As the bar runs: aware of the screen's scale (its shell pictures come at that scale).
+        // SAFETY: plain call for this thread.
+        unsafe {
+            windows_sys::Win32::UI::HiDpi::SetThreadDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+        };
+        {
+            use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
+            let w = super::wide(&bevel_winkit::shell::system_program("notepad.exe"));
+            let mut info = SHFILEINFOW::default();
+            // SAFETY: a sized out-struct; the icon is ours to destroy.
+            unsafe {
+                SHGetFileInfoW(w.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_LARGEICON);
+                println!("the shell's large picture as the bar gets it: {:?}", bevel_winkit::icon::icon_size(info.hIcon));
+                windows_sys::Win32::UI::WindowsAndMessaging::DestroyIcon(info.hIcon);
+            }
+        }
+        let windows = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        let candidates = [
+            bevel_winkit::shell::system_program("notepad.exe"),
+            format!("{windows}\\explorer.exe"),
+            bevel_winkit::shell::system_program("taskmgr.exe"),
+            bevel_winkit::shell::system_program("cmd.exe"),
+            "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe".into(),
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".into(),
+            "C:\\Program Files\\Mozilla Firefox\\firefox.exe".into(),
+        ];
+        let programs: Vec<String> = candidates.into_iter().filter(|p| std::path::Path::new(p).exists()).collect();
+        let small = |path: &str| -> Option<Icon> {
+            use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGetFileInfoW};
+            let w = super::wide(path);
+            let mut info = SHFILEINFOW::default();
+            // SAFETY: a correctly sized out-struct; the icon we get is ours to destroy.
+            unsafe {
+                SHGetFileInfoW(w.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | SHGFI_SMALLICON);
+                if info.hIcon.is_null() {
+                    return None;
+                }
+                let p = bevel_winkit::icon::icon_pixels_at(info.hIcon, 16);
+                windows_sys::Win32::UI::WindowsAndMessaging::DestroyIcon(info.hIcon);
+                p
+            }
+        };
+        let from_list = |path: &str, kind: u32, native: i32, smaller: i32, size: i32| -> Option<Icon> {
+            use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_SYSICONINDEX, SHGetFileInfoW};
+            let w = super::wide(path);
+            let mut info = SHFILEINFOW::default();
+            // SAFETY: a correctly sized out-struct.
+            unsafe { SHGetFileInfoW(w.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_SYSICONINDEX) };
+            super::list_picture(info.iIcon, kind, native, smaller).map(|i| i.downscaled(size))
+        };
+        use windows_sys::Win32::UI::Shell::{SHIL_EXTRALARGE, SHIL_JUMBO};
+        const CELL: i32 = 40;
+        // On the face: the shell's 32, 256 shrunk to 32, 48 shrunk to 32, the shell's 16, 256 and
+        // 48 shrunk to 16; the same on white.
+        let columns = 12;
+        let mut fb = Framebuffer::new(CELL * columns, CELL * programs.len() as i32, 0xFFFF_FFFF);
+        for (row, p) in programs.iter().enumerate() {
+            let pics = [
+                super::read_big_icon(p),
+                from_list(p, SHIL_JUMBO, 256, 48, 32),
+                from_list(p, SHIL_EXTRALARGE, 48, 32, 32),
+                small(p),
+                from_list(p, SHIL_JUMBO, 256, 48, 16),
+                from_list(p, SHIL_EXTRALARGE, 48, 32, 16),
+            ];
+            for (half, bg) in [0xFFAE_C5DFu32, 0xFFFF_FFFF].into_iter().enumerate() {
+                for (k, pic) in pics.iter().enumerate() {
+                    let (x, y) = ((half * 6 + k) as i32 * CELL, row as i32 * CELL);
+                    fb.fill(bevel_core::fb::Rect::new(x, y, CELL, CELL), bg);
+                    if let Some(pic) = pic {
+                        fb.draw_icon(pic, x + (CELL - pic.width) / 2, y + (CELL - pic.height) / 2);
+                    }
+                }
+            }
+        }
+        let big = bevel_core::scale::upscale(&fb, 6);
+        // A 24-bit bottom-up BMP (no encoder needed).
+        let (w, h) = (big.width, big.height);
+        let stride = ((w * 3 + 3) / 4) * 4;
+        let mut out = Vec::new();
+        let size = 54 + stride * h;
+        out.extend_from_slice(b"BM");
+        out.extend_from_slice(&(size as u32).to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0, 54, 0, 0, 0, 40, 0, 0, 0]);
+        out.extend_from_slice(&(w as u32).to_le_bytes());
+        out.extend_from_slice(&(h as u32).to_le_bytes());
+        out.extend_from_slice(&[1, 0, 24, 0]);
+        out.extend_from_slice(&[0; 24]);
+        for y in (0..h).rev() {
+            let mut line: Vec<u8> = (0..w).flat_map(|x| { let c = big.get(x, y); [c as u8, (c >> 8) as u8, (c >> 16) as u8] }).collect();
+            line.resize(stride as usize, 0);
+            out.extend_from_slice(&line);
+        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..\\..\\private\\probes\\win7");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("icons-1x-compare.bmp"), out).unwrap();
+        println!("{} programs", programs.len());
     }
 
     /// The log says a window's kind from a fixed list, never its class (the review of brief 90,

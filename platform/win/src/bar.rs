@@ -498,10 +498,15 @@ impl App {
     /// none for a window Bevel95 shows a classic picture for (those stay enlarged).
     fn group_big_icon(&self, group: &Group) -> Option<Icon> {
         let first = *group.windows.first()?;
-        if self.windows.iter().find(|w| w.id == first).and_then(|w| w.classic).is_some() {
+        if self.group_is_classic(group) {
             return None;
         }
         self.big_window_icons.get(&first).cloned().flatten()
+    }
+
+    /// Whether a button shows a classic picture Bevel95 has for its first window.
+    fn group_is_classic(&self, group: &Group) -> bool {
+        group.windows.first().is_some_and(|&first| self.windows.iter().find(|w| w.id == first).and_then(|w| w.classic).is_some())
     }
 
     /// A button's picture: its first window's, except that a button holding several of
@@ -2941,7 +2946,9 @@ fn paint_bar(bar: HWND) {
 fn final_pictures(app: &App, state: &mut Bar, width_1x: i32) -> Vec<(Rect, Icon)> {
     use bevel_core::paint::LiveIcon;
     use crate::seven_store::{self, Asker};
-    if !app.bar_style.is_later() || app.scale.quarters() == 4 {
+    // Also at size 1 (the owner, 2026-11-25: "1x still isn't what I'd expect"): the shell's own
+    // small pictures come at the screen's scale and were shrunk crudely; these are averaged.
+    if !app.bar_style.is_later() {
         seven_store::want_sized(Asker::BarSized, &[]);
         return Vec::new();
     }
@@ -2962,7 +2969,17 @@ fn final_pictures(app: &App, state: &mut Bar, width_1x: i32) -> Vec<(Rect, Icon)
                 let key = app.groups.get(t).map(|g| g.key.clone()).filter(|k| seven_store::is_file(k));
                 key.and_then(&mut file).or_else(|| window(t))
             }
-            LiveIcon::Task(t) => window(t),
+            // XP: a window Bevel95 shows a classic picture for keeps it; else the program file's
+            // picture, else the window's own large one.
+            LiveIcon::Task(t) => {
+                let group = app.groups.get(t);
+                if group.is_none_or(|g| app.group_is_classic(g)) {
+                    None
+                } else {
+                    let key = group.map(|g| g.key.clone()).filter(|k| seven_store::is_file(k));
+                    key.and_then(&mut file).or_else(|| window(t))
+                }
+            }
         };
         if let Some(p) = picture {
             state.drawn_later.push(which);
