@@ -18,6 +18,10 @@
 //! 8 pt standing in for Windows 7's smoothed Segoe UI 9 pt), the clock's width (given by the
 //! caller), the button's see-through share on its right 24 columns and under its icon, the front
 //! button's see-through share.
+//!
+//! The Start menu is in [`menu`].
+
+pub mod menu;
 
 use crate::art::Look;
 use crate::fb::{Framebuffer, Icon, Rect};

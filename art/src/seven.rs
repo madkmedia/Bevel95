@@ -8,9 +8,13 @@
 //! own captures (the project's rule: every picture from the owner's own Windows). The private
 //! list of where each one came from is `private/probes/win7/art-inventory-7.md`.
 //!
-//! All are RGBA, straight alpha, rows top to bottom. Only the running button has a see-through
-//! share, solved where the screenshots show it over two backgrounds; the rest are opaque (the
-//! orb and the arrow with the bar's end zone behind them).
+//! All are RGBA, straight alpha, rows top to bottom. Only the running button and the Start menu's
+//! right-column separator have a see-through share, solved where the screenshots show them over
+//! two backgrounds; the rest are opaque (the orb and the arrow with the bar's end zone behind
+//! them).
+//!
+//! The Start menu's pictures (`seven/menu-...`, used by `core::seven::menu`) come from the 1440x900
+//! screenshot alone, with the menu at its measured height of 485 rows.
 
 use crate::{Art, Depth, Entry, Look};
 
@@ -66,5 +70,89 @@ pub(crate) const ENTRIES: &[Entry] = &[
         looks: SEVEN,
         depth: Depth::TrueColor,
         art: Art::Bytes(include_bytes!("../assets/seven/show-desktop.rgba")),
+    },
+    // 411x13: the menu's top rows (its rounded corners, the top of both panes).
+    Entry {
+        what: "seven/menu-top",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-top.rgba")),
+    },
+    // 9x485: the left frame's columns (border, light line, frame, light and dark line).
+    Entry {
+        what: "seven/menu-frame-left",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-frame-left.rgba")),
+    },
+    // 2x485: the two columns between the panes.
+    Entry {
+        what: "seven/menu-pane-edge",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-pane-edge.rgba")),
+    },
+    // 1x485: the right column's gradient (the same across its 148 columns).
+    Entry {
+        what: "seven/menu-right-column",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-right-column.rgba")),
+    },
+    // 2x485: the right edge's columns.
+    Entry {
+        what: "seven/menu-right-edge",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-right-edge.rgba")),
+    },
+    // 250x8: the left pane's bottom rows (a dark line, a light line, the frame).
+    Entry {
+        what: "seven/menu-pane-bottom",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-pane-bottom.rgba")),
+    },
+    // 250x45: the search band with its empty box and the magnifier.
+    Entry {
+        what: "seven/menu-search-band",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-search-band.rgba")),
+    },
+    // 94x22: the Shut down button without its letters, with its arrow part.
+    Entry {
+        what: "seven/menu-shutdown",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-shutdown.rgba")),
+    },
+    // 124x2: a right-column separator, its see-through share solved.
+    Entry {
+        what: "seven/menu-separator",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-separator.rgba")),
+    },
+    // 72x70: the user's picture in its frame (the screenshot's own flower picture).
+    Entry {
+        what: "seven/menu-user-tile",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-user-tile.rgba")),
+    },
+    // 4x7: the arrow of a program row with a submenu, on white.
+    Entry {
+        what: "seven/menu-submenu-arrow",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-submenu-arrow.rgba")),
+    },
+    // 7x11: All Programs' arrow, on white.
+    Entry {
+        what: "seven/menu-all-programs-arrow",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/menu-all-programs-arrow.rgba")),
     },
 ];
