@@ -157,6 +157,10 @@ pub enum Part {
     TabNew,
     TabNext,
     TabPrev,
+    /// A tab closed by a middle click (its id); the row's menu (the right button), on a tab (its
+    /// id) or on the row (0).
+    TabCloseOf(u64),
+    TabMenu(u64),
 }
 
 /// Where a drag of files over a folder window would drop (`FolderWindow::drop_at`).
@@ -2786,10 +2790,18 @@ impl Form for FolderWindow {
         if down {
             self.click_activated = false;
         }
+        let part = self.hit(x, y);
+        // Tabs (brief 110): a middle click on a tab closes it; the right button on the row opens
+        // its menu at the release (a rename under way ends first, below).
+        if button == Button::Middle {
+            return match part {
+                Some(Part::Tab(id)) if !down && self.view.renaming().is_none() => vec![Effect::Activate(Part::TabCloseOf(id))],
+                _ => Vec::new(),
+            };
+        }
         if button != Button::Right {
             return Vec::new();
         }
-        let part = self.hit(x, y);
         // On the rename box the right button is the box's own: it keeps the rename and its
         // selection, and opens its menu when it comes up (brief 95).
         if part == Some(Part::List) && self.rename_hit(x, y) {
@@ -2804,6 +2816,13 @@ impl Form for FolderWindow {
         }
         if !down && std::mem::take(&mut self.skip_right_up) {
             return Vec::new();
+        }
+        if let Some(p @ (Part::Tab(_) | Part::TabRow | Part::TabClose)) = part {
+            if down {
+                return Vec::new();
+            }
+            self.menu_at = (x, y);
+            return vec![Effect::Activate(Part::TabMenu(if let Part::Tab(id) = p { id } else { 0 }))];
         }
         if !down {
             // No right-button drag came of the press.

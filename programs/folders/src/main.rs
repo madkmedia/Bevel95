@@ -2971,7 +2971,19 @@ fn tree_menu(hwnd: HWND) {
         kit::with::<FolderHost, _>(|h| h.form.menu_row = None);
         return;
     };
-    let menu = pane::row_menu(era, kind, can_paste, locked);
+    let mut menu = pane::row_menu(era, kind, can_paste, locked);
+    // Tabs (brief 110): a folder's or a drive's row: "Open in New Tab" right under the entries
+    // that open it.
+    let new_tab_at = (TAB_SETTINGS.with(Cell::get).0 != tabs::Place::Off && matches!(kind, NodeKind::Folder | NodeKind::Drive(_)) && !locked)
+        .then(|| menu.entries.iter().position(|e| e.kind == bevel_core::paint::EntryKind::Separator).unwrap_or(menu.entries.len()));
+    let node_id = kit::with::<FolderHost, _>(|h| h.form.menu_node().map(|n| n.id.clone())).flatten();
+    if let Some(k) = new_tab_at {
+        menu.entries.insert(k, bevel_core::paint::MenuEntry::item("Open in New &Tab", None));
+    }
+    let entries: Vec<_> = match new_tab_at {
+        Some(k) => entries[..k].iter().copied().chain(std::iter::once(None)).chain(entries[k..].iter().copied()).collect(),
+        None => entries,
+    };
     let at = to_screen(hwnd, at, scale);
     // 95 and 98 blanked the status bar while an entry of this menu was lit (no words for any);
     // 2000 left it as it was (`private/probes/measure17`, G).
@@ -2982,6 +2994,12 @@ fn tree_menu(hwnd: HWND) {
     });
     kit::update::<FolderHost>(|h| h.form.help = None);
     match ended.outcome {
+        Outcome::Chosen(i) if Some(i) == new_tab_at => {
+            kit::with::<FolderHost, _>(|h| h.form.menu_row = None);
+            if let Some(id) = node_id {
+                new_tab(hwnd, Shows::Folder(PathBuf::from(id)));
+            }
+        }
         Outcome::Chosen(i) => match entries.get(i).copied().flatten() {
             Some(c) => tree_command(hwnd, c, ended.keyboard),
             None => {
@@ -3081,6 +3099,8 @@ impl Hosted for FolderHost {
             Part::TabNew => new_tab(hwnd, Shows::MyComputer),
             Part::TabNext => step_tab(hwnd, true),
             Part::TabPrev => step_tab(hwnd, false),
+            Part::TabCloseOf(tab) => close_tab(hwnd, tab),
+            Part::TabMenu(tab) => tab_menu(hwnd, tab),
             Part::Open => open_selected(hwnd),
             Part::ItemMenu => item_menu(hwnd),
             Part::BackgroundMenu => background_menu(hwnd),
@@ -3847,6 +3867,40 @@ fn close_tab(hwnd: HWND, tab: u64) {
         }
         Some(Some(None)) => kit::update::<FolderHost>(|_| {}),
         None => {}
+    }
+}
+
+/// The row's menu (the right button on a tab, `tab`, or on the row, 0), in the look's style: New
+/// Tab, Close Tab, Close Other Tabs. Each acts on its tab by id; a tab gone meanwhile is left.
+fn tab_menu(hwnd: HWND, tab: u64) {
+    use bevel_core::paint::{Menu, MenuEntry};
+    let Some(scale) = kit::look_of::<FolderHost>().map(|l| l.scale) else { return };
+    let Some((_, look)) = the_look() else { return };
+    let Some((era, at, front, count)) = kit::with::<FolderHost, _>(|h| (h.form.era, h.form.menu_at, h.tab, h.order.len())) else { return };
+    let tab = if tab == 0 { front } else { tab };
+    let mut menu = Menu::new(vec![MenuEntry::item("New &Tab", None), MenuEntry::item("&Close Tab", None), MenuEntry::item("Close &Other Tabs", None)]);
+    menu.entries[2].disabled = count < 2;
+    menu.show_keys = era.always_shows_keys();
+    let at = to_screen(hwnd, at, scale);
+    let ended = menu::track_with_selection(&look, Request { owner: hwnd, menu, style: MenuStyle::Popup, at, above: None, titles: &[] }, |_| {});
+    match ended.outcome {
+        Outcome::Chosen(0) => new_tab(hwnd, Shows::MyComputer),
+        Outcome::Chosen(1) => close_tab(hwnd, tab),
+        Outcome::Chosen(2) if count >= 2 => {
+            switch_tab(hwnd, tab);
+            kit::update::<FolderHost>(|h| {
+                if h.tab == tab {
+                    h.back.clear();
+                    h.order = vec![tab];
+                    show_row(h);
+                }
+            });
+        }
+        _ => {
+            if let Some(msg) = ended.pending {
+                menu::dispatch(&msg);
+            }
+        }
     }
 }
 
@@ -4650,18 +4704,43 @@ fn item_menu(hwnd: HWND) {
     let held = held_selection();
     let Some((_, look)) = the_look() else { return };
     let mut menu = bevel_core::desktop::item_menu(era, &kinds, false);
+    // Tabs (brief 110): one folder chosen: "Open in New Tab" right under the entries that open
+    // it (before the menu's first line).
+    let new_tab_at = (TAB_SETTINGS.with(Cell::get).0 != tabs::Place::Off && matches!(kinds.as_slice(), [ItemKind::Folder]))
+        .then(|| menu.entries.iter().position(|e| e.kind == bevel_core::paint::EntryKind::Separator).unwrap_or(menu.entries.len()));
+    if let Some(k) = new_tab_at {
+        menu.entries.insert(k, bevel_core::paint::MenuEntry::item("Open in New &Tab", None));
+    }
+    let kinds_at = |i: usize| match new_tab_at {
+        Some(k) if i == k => None,
+        Some(k) if i > k => bevel_core::desktop::item_at(&kinds, i - 1),
+        _ => bevel_core::desktop::item_at(&kinds, i),
+    };
     // Windows 95 underlined the access keys in every menu (the Reference PC's -c-rmenu-file).
     menu.show_keys = era.always_shows_keys();
     let at = to_screen(hwnd, at, scale);
     // The lit entry's words in the status bar, as the shell's menus showed them.
     let ended = menu::track_with_selection(&look, Request { owner: hwnd, menu, style: MenuStyle::Popup, at, above: None, titles: &[] }, |row| {
-        let text = row.and_then(|i| bevel_core::desktop::item_at(&kinds, i)).map(|c| menus::item_help(era, c)).unwrap_or("");
+        let text = match row {
+            Some(i) if Some(i) == new_tab_at => "Opens the selected folder in a new tab.",
+            _ => row.and_then(kinds_at).map(|c| menus::item_help(era, c)).unwrap_or(""),
+        };
         kit::update::<FolderHost>(|h| h.form.help = Some(text.to_string()));
     });
     kit::update::<FolderHost>(|h| h.form.help = None);
     match ended.outcome {
+        Outcome::Chosen(i) if Some(i) == new_tab_at => {
+            // The folder chosen, by its id (the menu's own: `held`).
+            let into = kit::with::<FolderHost, _>(|h| {
+                held.first().and_then(|id| h.form.view.index_of(id)).and_then(|i| h.form.view.items.get(i)).filter(|i| i.folder).map(|i| PathBuf::from(&i.id))
+            })
+            .flatten();
+            if let Some(p) = into {
+                new_tab(hwnd, Shows::Folder(p));
+            }
+        }
         Outcome::Chosen(i) => {
-            if let Some(c) = bevel_core::desktop::item_at(&kinds, i).map(Command::Shared)
+            if let Some(c) = kinds_at(i).map(Command::Shared)
                 && c.runs_after_menu(|| reselect(&held))
             {
                 run(hwnd, c, ended.keyboard);

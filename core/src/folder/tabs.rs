@@ -401,7 +401,14 @@ mod tests {
                 assert_eq!(w.key(Key::Other(0x57), ctrl), Some(vec![Effect::Activate(Part::TabClose)]));
                 assert_eq!(w.key(Key::Tab, ctrl), Some(vec![Effect::Activate(Part::TabNext)]));
                 assert_eq!(w.key(Key::Tab, Mods { ctrl: true, shift: true }), Some(vec![Effect::Activate(Part::TabPrev)]));
+                // A middle click on a tab closes it; the right button opens the row's menu.
+                use crate::kit::Button;
+                assert_eq!(w.button(Button::Middle, true, maps.x + 4, maps.y + 8), Vec::new());
+                assert_eq!(w.button(Button::Middle, false, maps.x + 4, maps.y + 8), vec![Effect::Activate(Part::TabCloseOf(9))]);
+                assert_eq!(w.button(Button::Right, true, maps.x + 4, maps.y + 8), Vec::new());
+                assert_eq!(w.button(Button::Right, false, maps.x + 4, maps.y + 8), vec![Effect::Activate(Part::TabMenu(9))]);
                 let empty = (l.strip.right() - 40, l.strip.y + 6);
+                assert_eq!(w.button(Button::Right, false, empty.0, empty.1), vec![Effect::Activate(Part::TabMenu(0))]);
                 assert_eq!(w.hit(empty.0, empty.1), Some(Part::TabRow));
                 assert_eq!(w.double_click(empty.0, empty.1), Some(vec![Effect::Activate(Part::TabNew)]));
                 // Another tab's window takes the window's own state (its size, the row).
