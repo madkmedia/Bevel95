@@ -170,6 +170,8 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
   width of Quick Search's Name column.
 - `often.txt`: under the Windows XP style, the programs you start most often through the Start
   menu and Quick Search (their names and shortcuts), for the XP Start menu's list.
+- `style-failed.txt`: left when the bar stopped with an error in the Windows XP style; the next
+  start is then classic once and says so. Choosing any look takes it away.
 - `quick-launch.txt`: the built-in Quick Launch icons you took off the band (your own shortcuts
   stay in Windows' own Quick Launch folder), and the band's width once you have dragged it.
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options

@@ -146,6 +146,17 @@ pub const fn look_title(era: Era, style: BarStyle) -> &'static str {
     }
 }
 
+/// The style a start uses when settings.txt asks `wanted` and the mark of a failure is there or
+/// not (`marked`: the bar ended by the panic rule under a style other than the classic one): the
+/// classic style for this run, and whether to say so (the review of brief 112: a way back after a
+/// failure). A mark under the classic style asks nothing (it is taken away).
+pub fn style_after_failure(wanted: BarStyle, marked: bool) -> (BarStyle, bool) {
+    match (wanted, marked) {
+        (BarStyle::Classic, _) | (_, false) => (wanted, false),
+        (_, true) => (BarStyle::Classic, true),
+    }
+}
+
 /// The theme the bar draws with: the look's in `depth` colors, or XP's (always True Color).
 pub fn bar_theme(era: Era, depth: Depth, style: BarStyle) -> &'static Theme {
     match style {

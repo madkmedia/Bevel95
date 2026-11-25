@@ -244,6 +244,8 @@ pub static BAR_HWND: AtomicUsize = AtomicUsize::new(0);
 /// Whether `bar_menu::DESKTOP_KEY` was registered at the start (another program may hold it):
 /// the menus show it beside their desktop entry only then.
 static DESKTOP_KEY: AtomicBool = AtomicBool::new(false);
+/// This start fell back to the classic style after a failure (`failsafe`): it says so once.
+static TELL_FAILURE: AtomicBool = AtomicBool::new(false);
 /// The "TaskbarCreated" message Explorer broadcasts when it (re)starts.
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 /// The "SHELLHOOK" message: windows opening, closing, activating, changing, flashing.
@@ -606,6 +608,16 @@ pub fn run() -> u32 {
     }
 
     let mut settings = load_settings();
+    // The way back after a failure (the review of brief 112): the bar stopped by an error in a
+    // style other than the classic one last time: the classic style for this run, said once;
+    // settings.txt is left as it is. A mark under the classic style is old: it goes.
+    let (style, tell) = theme::style_after_failure(settings.bar_style, crate::failsafe::marked());
+    if !tell {
+        crate::failsafe::clear();
+    }
+    TELL_FAILURE.store(tell, Ordering::SeqCst);
+    settings.bar_style = style;
+    crate::failsafe::style_now(style);
     // Windows XP's bar style goes with the 2000 look for everything else (brief 112).
     if settings.bar_style == theme::BarStyle::Xp {
         settings.era = Era::Win2000;
@@ -794,6 +806,10 @@ pub fn run() -> u32 {
     // the icons read ahead (3 s from now) have its Store-style apps.
     apps::refresh();
     start_menu::read_icons_ahead(settings.era);
+    if TELL_FAILURE.load(Ordering::SeqCst) {
+        log("the last bar stopped with an error in the Windows XP style: this run is classic (settings.txt is as it was)");
+        crate::confirm_window::message("Bevel95", crate::failsafe::MESSAGE);
+    }
 
     let mut msg = MSG::default();
     // SAFETY: the standard message loop.
@@ -2480,6 +2496,7 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
         set_size(bar, values.scale);
     }
     if with_app(|app| app.era != values.era || app.bar_style != values.bar_style).unwrap_or(false) {
+        crate::failsafe::clear();
         set_era(bar, values.era, values.bar_style);
     }
     if with_app(|app| app.colors != values.colors).unwrap_or(false) {
@@ -2983,6 +3000,7 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
         return;
     }
     let style_changed = with_app(|app| std::mem::replace(&mut app.bar_style, style) != style).unwrap_or(false);
+    crate::failsafe::style_now(style);
     start_menu::set_own_programs(style != theme::BarStyle::Xp);
     start_menu::set_era(era);
     let theme = theme::bar_theme(era, with_app(|app| app.colors).unwrap_or_default(), style);
@@ -3720,6 +3738,8 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         m if m == WM_BAR_THEME.id() => {
             // The Theme menu's entry (`theme::LOOKS`: 3 is Windows XP).
             if let Some(&(era, style)) = theme::LOOKS.get(wparam) {
+                // A look chosen: the mark of a failed style goes (`failsafe`).
+                crate::failsafe::clear();
                 set_era(bar, era, style);
             }
             return 0;

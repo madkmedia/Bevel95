@@ -28,6 +28,7 @@ mod desktop;
 mod desktop_items;
 mod dialogs;
 mod explorer;
+mod failsafe;
 mod file_ops;
 mod find_window;
 mod fullscreen;
@@ -278,6 +279,8 @@ fn install_panic_hook() {
             appbar::remove(bar as HWND);
         }
         explorer::restore();
+        // Under a style other than the classic one, the next start is classic once (`failsafe`).
+        failsafe::bar_failed();
         if bar != 0 {
             // SAFETY: a message posted to the bar's window (a stale handle is harmless).
             unsafe { PostMessageW(bar as HWND, WM_CLOSE, 0, 0) };

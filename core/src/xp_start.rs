@@ -286,8 +286,10 @@ pub fn paint(fb: &mut Framebuffer, fonts: &Fonts, menu: &Menu, layout: &MenuLayo
         let big = crate::text::stored("Tahoma", 17, true);
         let font = big.as_ref().unwrap_or(fonts.bold);
         let y = 21;
-        font.draw(fb, 68, y + 1, &menu.user, rgb(0x0F3D8C));
-        font.draw(fb, 67, y, &menu.user, rgb(0xFFFFFF));
+        // A long name ends in three dots before the band's edge (the review's doubt 13).
+        let name = font.elide(&menu.user, WIDTH - 67 - 10);
+        font.draw(fb, 68, y + 1, &name, rgb(0x0F3D8C));
+        font.draw(fb, 67, y, &name, rgb(0xFFFFFF));
     }
     // The body: one row of the left column, its line, the right column and its shade, the frame.
     let bottom_y = BODY_Y + shape(menu).0;

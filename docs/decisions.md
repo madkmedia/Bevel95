@@ -7173,3 +7173,34 @@ the Start menu's rounded corners was made see-through.
   rule (`winkit::panic`), and a killed bar by the watchdog, as for the classic bar: the style
   changes no part of that. The owner's own bar was never switched to XP: the first live run is
   theirs.
+- **The way back after a failure** (the main session's addition after the review of brief 112):
+  when the bar ends by the panic rule in a style other than the classic one, a mark is left
+  (`style-failed.txt`, `failsafe.rs`); the next start finds it, runs the classic style for that
+  run without changing settings.txt (`theme::style_after_failure`), says so once in a message
+  window ("The Windows XP style stopped with an error last time. The classic look is shown. Choose
+  Windows XP again under Theme to try again.") and logs it. Choosing any look (the Theme menu,
+  Bevel95 Settings) takes the mark away; a mark found under the classic style is old and goes.
+  `--restore` gives Windows' taskbar back as always and leaves the mark: the next start of the bar
+  is classic once. The message is in the look the fallback runs (the classic look settings.txt
+  keeps), not always 2000's.
+- **The review's repairs** (2026-11-25): an open Bevel95 Settings follows the style switched from
+  the Theme menu (`Properties::follow_style`), and the switch tells it Quick Launch's setting, not
+  whether the band shows (finding 1); under XP, Toolbars > Quick Launch, the classic desktop entry
+  and its key, and the Colors choices do nothing and say why once in the log, and Settings greys
+  the Colors (finding 4); "only the classic programs" means everything under XP, and an OK on the
+  Programs page keeps programs.txt's lines of Bevel95's own programs (`programs::places_not_listed`,
+  finding 5); choosing XP leaves `era` in settings.txt as the person had it (finding 9, the cheap
+  form: it is there on the way back; the bar runs 2000 under XP whatever it says); the pinned
+  programs are read from Quick Launch's folder whatever its band shows (finding 2); on a screen too
+  short for 478 rows the menu shortens (`xp_start::fit`: the often-used programs go first, then the
+  pinned ones, then the right column's entries from its bottom; All Programs and the bottom band
+  stay; finding 3); often.txt takes new programs past 50 and counts programs only, never documents
+  or folders (`often_counts`, findings 6 and 7); the folder entries open as the classic menu's do,
+  while its vanished window still holds the focus (finding 8); a long user name ends in three dots
+  (doubt 13).
+- **The user's picture**: XP's default, the chess pieces (the owner), with its frame, cut from
+  GUIdebook's `firstrun-2.png` (a single source) in place of Toasty Tech's guitar. That shot is the
+  second witness in `xp_reference.rs`: the band outside the name differs in the same 141 pixels of
+  its top rows, the frame with its picture, the lines and the columns in 0. The name there ("Jim
+  Midnite") is 13 rows of ink from band row 25, at x 67, as ours; 94 wide where Tahoma 17 bold is
+  98: XP's face is a little narrower (PROVISIONAL).

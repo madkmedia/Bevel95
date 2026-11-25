@@ -329,6 +329,18 @@ mod tests {
         assert_eq!(crate::theme::bar_theme(crate::theme::Era::Win95, crate::theme::Depth::Sixteen, BarStyle::Classic).slug, "win95");
     }
 
+    /// The way back after a failure (the review of brief 112): with the mark, a style other than
+    /// the classic one starts classic for the run and says so; without it, as asked; a mark under
+    /// the classic style says nothing.
+    #[test]
+    fn a_failed_style_starts_classic_once() {
+        use crate::theme::{BarStyle, style_after_failure};
+        assert_eq!(style_after_failure(BarStyle::Xp, true), (BarStyle::Classic, true));
+        assert_eq!(style_after_failure(BarStyle::Xp, false), (BarStyle::Xp, false));
+        assert_eq!(style_after_failure(BarStyle::Classic, true), (BarStyle::Classic, false));
+        assert_eq!(style_after_failure(BarStyle::Classic, false), (BarStyle::Classic, false));
+    }
+
     #[test]
     fn every_xp_picture_is_there() {
         for name in [

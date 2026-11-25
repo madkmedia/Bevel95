@@ -120,7 +120,7 @@ fn compare_menu(report: &mut Vec<String>) {
     let mut ours = Framebuffer::new(layout.width, layout.height, 0);
     paint::paint_menu(&mut ours, &WINXP, &fonts, &menu, paint::MenuStyle::XpStart, &layout);
     let mut masks = vec![
-        Rect::new(4, 3, 58, 58),             // the user's picture and its frame (a stranger's)
+        Rect::new(4, 3, 60, 61),             // the user's picture and its frame (firstrun-2's chess)
         Rect::new(64, 10, 300, 40),           // the user's name
         Rect::new(2, 67 + 4, 188, 329),       // the left list (the stranger's programs)
     ];
@@ -180,11 +180,72 @@ fn count_at(ours: &Framebuffer, shot: &Framebuffer, at: (i32, i32), part: Rect, 
     (n, d)
 }
 
+/// The second witness (brief 112's review round): GUIdebook's firstrun-2, another installation and
+/// another user (the chess pieces, whose frame and picture the menu now takes from this shot): the
+/// band outside the name, the frame with its picture, the lines and the columns outside the lists.
+/// And the name's letters: the rows its white ink spans, against Tahoma 17 bold.
+fn compare_menu_second(report: &mut Vec<String>) {
+    let shot = read_png(&private_dir().join("probes/xp/shots/guidebookgallery/firstrun-2.png"));
+    let (regular, bold) = (font(&WINXP, false), font(&WINXP, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let menu = bevel_core::xp_start::menu("", &[("A".into(), None), ("B".into(), None)], &(0..6).map(|i| (format!("{i}"), None)).collect::<Vec<_>>());
+    let layout = bevel_core::xp_start::layout(&menu);
+    let mut ours = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut ours, &WINXP, &fonts, &menu, paint::MenuStyle::XpStart, &layout);
+    let mut masks = vec![Rect::new(64, 10, 300, 40), Rect::new(2, 67 + 4, 188, 329)];
+    for r in layout.rects.iter().skip(11).take(12) {
+        if r.h == 32 {
+            masks.push(Rect::new(r.x + 6, r.y + 3, 26, 26));
+            masks.push(Rect::new(r.x + 33, r.y + 10, r.w - 33, 14));
+        }
+    }
+    for (name, x0) in [("menu_corner_left", 0), ("menu_corner_right", 368), ("menu_band_left", 0), ("menu_band_right", 345)] {
+        let p = bevel_core::xp::picture(name).unwrap();
+        for y in 0..p.height {
+            for x in 0..p.width {
+                if p.pixels[(y * p.width + x) as usize] >> 24 == 0 {
+                    masks.push(Rect::new(x0 + x, y, 1, 1));
+                }
+            }
+        }
+    }
+    let frame = Rect::new(4, 3, 60, 61);
+    let band_masks: Vec<Rect> = masks.iter().copied().chain([frame]).collect();
+    for (what, part, m) in [
+        ("top band (no name)", Rect::new(0, 0, 380, 64), &band_masks),
+        ("user frame and picture", frame, &masks),
+        ("dark + orange lines", Rect::new(0, 64, 380, 3), &masks),
+        ("columns, divider, shade", Rect::new(0, 67, 380, 333), &masks),
+    ] {
+        let (n, d) = count_at(&ours, &shot, (0, 92), part, m);
+        report.push(format!("{:<28} {what:<22} {n:>6} compared {d:>5} differ", "GUIdebook firstrun-2"));
+    }
+    let ink: Vec<(i32, i32)> =
+        (92 + 10..92 + 50).flat_map(|y| (64..360).map(move |x| (x, y))).filter(|&(x, y)| shot.get(x, y) & 0xFF_FFFF >= 0xF0_F0F0).collect();
+    let (top, bottom) = (ink.iter().map(|p| p.1).min().unwrap_or(0), ink.iter().map(|p| p.1).max().unwrap_or(0));
+    let (left, right) = (ink.iter().map(|p| p.0).min().unwrap_or(0), ink.iter().map(|p| p.0).max().unwrap_or(0));
+    let t17 = bevel_core::text::stored("Tahoma", 17, true).unwrap();
+    let mut ours17 = Framebuffer::new(200, 40, 0);
+    t17.draw(&mut ours17, 0, 0, "Jim Midnite", 0xFFFF_FFFF);
+    let our_ink: Vec<(i32, i32)> = (0..40).flat_map(|y| (0..200).map(move |x| (x, y))).filter(|&(x, y)| ours17.get(x, y) & 0xFF_FFFF == 0xFF_FFFF).collect();
+    let our_h = our_ink.iter().map(|p| p.1).max().unwrap_or(0) - our_ink.iter().map(|p| p.1).min().unwrap_or(0) + 1;
+    let our_w = our_ink.iter().map(|p| p.0).max().unwrap_or(0) - our_ink.iter().map(|p| p.0).min().unwrap_or(0) + 1;
+    report.push(format!(
+        "GUIdebook firstrun-2 name \"Jim Midnite\": white ink rows {}..{} ({} high), x {left}..{right} ({} wide); Tahoma 17 bold: {our_h} high, {our_w} wide, its ink {} rows below where it is drawn",
+        top - 92,
+        bottom - 92,
+        bottom - top + 1,
+        right - left + 1,
+        our_ink.iter().map(|p| p.1).min().unwrap_or(0)
+    ));
+}
+
 #[test]
 #[ignore]
 fn the_xp_start_menu_against_the_screenshot() {
     let mut report = Vec::new();
     compare_menu(&mut report);
+    compare_menu_second(&mut report);
     println!("{}", report.join("\n"));
 }
 
