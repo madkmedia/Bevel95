@@ -488,6 +488,73 @@ mod tests {
         assert!(!behind.tree_shown && behind.bar.checked.is_empty() && !behind.tree_focus);
     }
 
+    /// Brief 110: a middle click on a folder opens it in a new tab; on a file nothing; a press
+    /// on one and a release on another nothing; nothing while a name is typed or without a row.
+    #[test]
+    fn a_middle_click_on_a_folder_opens_it_in_a_new_tab() {
+        use crate::desktop_icons::{Item, Picture};
+        use crate::folder::{FolderWindow, Part};
+        use crate::kit::{Button, Effect, Form};
+        let (r, b) = (font(), Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap());
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let item = |n: &str, folder: bool| Item { id: format!("C:\\W\\{n}"), name: n.into(), picture: Picture::Own(None), shortcut: false, folder, type_name: String::new(), size: 1, modified: 0 };
+        let mut w = FolderWindow::new(Era::Win98, "W", icon, true, (560, 380));
+        w.layout(&fonts);
+        w.set_items(vec![item("Maps", true), item("b.txt", false)]);
+        let row = Row { tabs: vec![Tab { id: 1, title: "W".into(), tip: "C:\\W".into() }], front: 0, close_at: CloseAt::End, close_look: 0 };
+        w.set_tabs(Place::UnderAddress, row.clone());
+        let f = w.font().unwrap();
+        let at = |w: &FolderWindow, i: usize| {
+            let r = w.view.bounds(&f, i);
+            (r.x + r.w / 2, r.y + r.h / 2)
+        };
+        let (folder, file) = (at(&w, 0), at(&w, 1));
+        assert_eq!(w.view.hit(&f, folder.0, folder.1), Some(0));
+        let click = |w: &mut FolderWindow, down: (i32, i32), up: (i32, i32)| {
+            assert!(w.button(Button::Middle, true, down.0, down.1).is_empty());
+            w.button(Button::Middle, false, up.0, up.1)
+        };
+        assert_eq!(click(&mut w, folder, folder), vec![Effect::Activate(Part::NewTabOfItem(0))]);
+        assert!(click(&mut w, file, file).is_empty(), "a file: nothing");
+        assert!(click(&mut w, folder, file).is_empty() && click(&mut w, file, folder).is_empty(), "pressed on one, released on another");
+        assert!(w.view.begin_rename(1));
+        assert!(click(&mut w, folder, folder).is_empty(), "nothing while a name is typed");
+        w.view.rename_key(crate::desktop_icons::EditKey::Escape, false);
+        w.set_tabs(Place::Off, Row::default());
+        assert!(click(&mut w, folder, folder).is_empty(), "no row: as before");
+    }
+
+    /// Brief 110: a tab whose name is cut has its whole path as its tooltip; a tab shown whole
+    /// and the row's empty part have none.
+    #[test]
+    fn a_cut_tab_has_its_whole_path_as_its_tooltip() {
+        use crate::folder::FolderWindow;
+        use crate::kit::Form;
+        let (r, b) = (font(), Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap());
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let mut w = FolderWindow::new(Era::Win98, "W", icon, true, (560, 380));
+        w.layout(&fonts);
+        let long = "A folder with a very long name indeed, longer than any tab";
+        let row = Row {
+            tabs: vec![
+                Tab { id: 1, title: "Work".into(), tip: "C:\\Work".into() },
+                Tab { id: 2, title: long.into(), tip: format!("C:\\Work\\{long}") },
+            ],
+            front: 0,
+            close_at: CloseAt::End,
+            close_look: 0,
+        };
+        w.set_tabs(Place::UnderAddress, row);
+        let l = w.tab_layout().unwrap();
+        let (short, cut) = (l.tabs[0].unwrap(), l.tabs[1].unwrap());
+        assert_eq!(w.tab_tip_at(short.x + 4, short.y + 8), None, "shown whole: no tooltip");
+        let tip = w.tab_tip_at(cut.x + 4, cut.y + 8).expect("a cut name's tooltip");
+        assert_eq!((tip.0, tip.1.as_str(), tip.2), (2, format!("C:\\Work\\{long}").as_str(), cut));
+        assert_eq!(w.tab_tip_at(l.strip.right() - 40, l.strip.y + 6), None, "the row's empty part");
+    }
+
     /// The second review's Q3: a tab behind keeps no copy of the window's tree; coming forward
     /// it has the window's tree again.
     #[test]

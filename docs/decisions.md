@@ -6982,7 +6982,8 @@ buttons was drawn as a mockup only).
   brings it to the front at once (as the old tabs did, on the press); Ctrl+Tab and
   Ctrl+Shift+Tab go round the row; the X, Ctrl+W and a middle click on a tab close it; the last
   tab closes the window; closing the window closes every tab without a question; the right
-  button on the row: New Tab, Close Tab, Close Other Tabs. A rename under way ends first (a
+  button on the row: New Tab, Close Tab, Close Other Tabs; a middle click on a folder opens it
+  in a new tab (below). A rename under way ends first (a
   press elsewhere, brief 98). At most 32 tabs: a 33rd is refused with the default sound.
 - **Remembered by what it is**: every command acts on the tab in front, found by its id; the
   row's menu and the middle click carry the tab's id; a tab behind has no reader (its reader
@@ -7044,8 +7045,17 @@ buttons was drawn as a mockup only).
   answers to the window id the tab has last (`read_tab_facts`, Q1). Each coming forward still
   starts a reader for the items (it stops at its flag, but a drive that does not answer can hold
   it until Windows gives up).
-- **Not done**: a tab's whole path as a tooltip when its name is cut (the folder windows have no
-  tooltips to build on); a middle click on a folder opening it in a new tab; a drop ON a tab.
+- **A middle click** on a folder in the file list, or on a folder's or a drive's row of the tree,
+  opens it in a new tab (as its menu's Open in New Tab), only while a row shows; on a tab it
+  closes the tab. The release acts only on what the press was on (the second review's taste: a
+  release over a tab closed it wherever the press was), and nothing while a name is typed.
+- **A cut name's tooltip**: a tab whose name ends in three dots shows its whole name (a folder's
+  whole path; My Computer's and the like their name) in the look's tooltip (`bevel_core::
+  tooltip`, as the bar's) while the pointer rests on it in the window in front: after the
+  double-click time, for ten times as long, gone at a press until the pointer leaves the tab, as
+  Windows' tooltips did (`tab_tip.rs`: one topmost window that never takes the focus and that
+  clicks go through, the bar's tooltip window's styles). A tab shown whole has none.
+- **Not done**: a drop ON a tab; tabs put in another order or dragged out of the window.
 - **Proof**: `core::folder::tabs` tests (the words, widths, a long row, the X on the tab, the
   window's parts, keys and buttons with a row, a waiting slow click never following a tab),
   `properties` (the Folders page), the folders program's tests (test commands in test folders

@@ -161,6 +161,10 @@ pub enum Part {
     /// id) or on the row (0).
     TabCloseOf(u64),
     TabMenu(u64),
+    /// A middle click on a folder in the file list (its index now) or on a folder's or a
+    /// drive's row of the tree: it opens in a new tab (brief 110), at once, in the same call.
+    NewTabOfItem(usize),
+    NewTabOfRow(usize),
 }
 
 /// Where a drag of files over a folder window would drop (`FolderWindow::drop_at`).
@@ -303,6 +307,9 @@ pub struct FolderWindow {
     pub tab_row: tabs::Row,
     /// The 95 menu bar's titles where they are without a row above them.
     menu_base: Vec<Rect>,
+    /// What the middle button's press was on (a tab, a folder, a tree row): its release acts
+    /// only on the same.
+    middle_press: Option<Part>,
 }
 
 /// Where the web view puts its panel: beside the icons, 98's band above them, or nowhere.
@@ -379,6 +386,7 @@ impl FolderWindow {
             tab_place: tabs::Place::Off,
             tab_row: tabs::Row::default(),
             menu_base: Vec::new(),
+            middle_press: None,
         };
         w.view.active = true;
         w.view.keep_order(!files);
@@ -398,11 +406,6 @@ impl FolderWindow {
         self.tab_place
     }
 
-    /// Another tab comes to the front of this window (brief 110): what belongs to the window and
-    /// not to the tab is taken from the window as it is (`other`, the tab going to the back): its
-    /// size and place on the screen, whether it is maximized and active, the tree of all folders
-    /// (one per window), the status bar, the row. The view, the place, its history and the like
-    /// stay this tab's own.
     /// A tab goes behind, comes forward, or starts as a copy (brief 110; the early review's
     /// finding 1): every passing press, hover, rename and drag state goes, so that nothing of a
     /// moment ago acts minutes later. Of the window's fields: `pressed`, `chosen` (a menu title),
@@ -410,7 +413,7 @@ impl FolderWindow {
     /// `link_hot`, `first_press`, `slow_rename` (a slow second click: it would open a rename
     /// box), `click_activated`, `after_rename`, `rename_drag`, `skip_right_up`,
     /// `press_after_rename`, `drag_out`, `list` (the address bar's open list), `help`,
-    /// `menu_row`; the rebar's hot and pressed parts and open list; the row's X look. Of the
+    /// `menu_row`, `middle_press`; the rebar's hot and pressed parts and open list; the row's X look. Of the
     /// view's: its press or drag (`gesture`), its right press, its Ctrl press, the drop place
     /// drawn, and a rename box (given up as Esc gives it up, the name as it was; a rename whose
     /// extension question is up is not given up: the caller does not switch then). Kept: the
@@ -436,6 +439,7 @@ impl FolderWindow {
         self.list = None;
         self.help = None;
         self.menu_row = None;
+        self.middle_press = None;
         self.bar.hot_title = None;
         self.bar.chosen_title = None;
         self.bar.hot_tool = None;
@@ -450,6 +454,43 @@ impl FolderWindow {
         self.view.forget_passing();
     }
 
+    /// The middle button (brief 110, with a row of tabs only): released on the tab, the folder
+    /// or the tree row it was pressed on, it closes that tab or opens that folder in a new tab
+    /// (a press elsewhere and a release here does nothing: the second review's taste). Nothing
+    /// while a name is typed.
+    fn middle_button(&mut self, part: Option<Part>, down: bool, x: i32, y: i32) -> Vec<Effect<Part>> {
+        let target = self.middle_target(part, x, y);
+        if down {
+            self.middle_press = target;
+            return Vec::new();
+        }
+        let pressed = self.middle_press.take();
+        if self.view.renaming().is_some() || target.is_none() || target != pressed {
+            return Vec::new();
+        }
+        target.map(|p| vec![Effect::Activate(p)]).unwrap_or_default()
+    }
+
+    /// What a middle click at (x, y) acts on.
+    fn middle_target(&self, part: Option<Part>, x: i32, y: i32) -> Option<Part> {
+        self.row_place()?;
+        match part? {
+            Part::Tab(id) => Some(Part::TabCloseOf(id)),
+            Part::List => {
+                let font = self.font.as_ref()?;
+                let i = self.view.hit(font, x, y)?;
+                self.view.items.get(i).filter(|item| item.folder).map(|_| Part::NewTabOfItem(i))
+            }
+            Part::TreeRow(i) => self
+                .tree
+                .nodes
+                .get(i)
+                .filter(|n| matches!(n.kind, pane::NodeKind::Folder | pane::NodeKind::Drive(_)))
+                .map(|_| Part::NewTabOfRow(i)),
+            _ => None,
+        }
+    }
+
     /// A tab going behind gives up its copy of what belongs to the window and is given back when
     /// it comes forward (`take_window_from`): the tree's rows (the second review's Q3: 32 tabs
     /// kept 32 copies of a deep tree). Its font stays (a few kilobytes of letters; a change of
@@ -458,6 +499,11 @@ impl FolderWindow {
         self.tree = pane::Tree::new();
     }
 
+    /// Another tab comes to the front of this window (brief 110): what belongs to the window and
+    /// not to the tab is taken from the window as it is (`other`, the tab going to the back): its
+    /// size and place on the screen, whether it is maximized and active, the tree of all folders
+    /// (one per window), the status bar, the row. The view, the place, its history and the like
+    /// stay this tab's own.
     pub fn take_window_from(&mut self, other: &FolderWindow) {
         let tree_was = self.tree_shown;
         self.size = other.size;
@@ -542,6 +588,19 @@ impl FolderWindow {
         let strip = self.tab_strip()?;
         let font = self.font.as_ref()?;
         Some(tabs::layout(self.era, font, &self.tab_row, strip))
+    }
+
+    /// The tooltip of the tab at (x, y) when its name is cut (brief 110): the tab's id, its whole
+    /// name as the tab holds it (`Tab::tip`: the folder's whole path) and the tab's rectangle,
+    /// the tool the tooltip is placed by. None over a tab shown whole, and off the tabs.
+    pub fn tab_tip_at(&self, x: i32, y: i32) -> Option<(u64, String, Rect)> {
+        if self.list.is_some() {
+            return None;
+        }
+        let l = self.tab_layout()?;
+        let Some(tabs::Hit::Tab(i)) = l.hit(&self.tab_row, x, y) else { return None };
+        let tab = self.tab_row.tabs.get(i)?;
+        (l.cut(&self.tab_row, i) && !tab.tip.is_empty()).then(|| (tab.id, tab.tip.clone(), l.tabs[i].unwrap_or_default()))
     }
 
     /// 98 and 2000: the window has Explorer's rebar (toolbar, address bar).
@@ -2870,10 +2929,7 @@ impl Form for FolderWindow {
         // Tabs (brief 110): a middle click on a tab closes it; the right button on the row opens
         // its menu at the release (a rename under way ends first, below).
         if button == Button::Middle {
-            return match part {
-                Some(Part::Tab(id)) if !down && self.view.renaming().is_none() => vec![Effect::Activate(Part::TabCloseOf(id))],
-                _ => Vec::new(),
-            };
+            return self.middle_button(part, down, x, y);
         }
         if button != Button::Right {
             return Vec::new();

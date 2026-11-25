@@ -14,6 +14,8 @@
 //! window, icon and timer a folder window made when that window closes.
 #![windows_subsystem = "windows"]
 
+mod tab_tip;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -3244,6 +3246,24 @@ impl Hosted for FolderHost {
             Part::TabPrev => step_tab(hwnd, false),
             Part::TabCloseOf(tab) => close_tab(hwnd, tab),
             Part::TabMenu(tab) => tab_menu(hwnd, tab),
+            // A middle click on a folder or on a folder's or a drive's tree row (brief 110): it
+            // opens in a new tab, as its menu's Open in New Tab does (the index is read now, in
+            // the same call that found it).
+            Part::NewTabOfItem(i) => {
+                let into = kit::with::<FolderHost, _>(|h| h.form.view.items.get(i).filter(|i| i.folder).map(|i| PathBuf::from(&i.id))).flatten();
+                if let Some(into) = into {
+                    new_tab(hwnd, Shows::Folder(into));
+                }
+            }
+            Part::NewTabOfRow(i) => {
+                let into = kit::with::<FolderHost, _>(|h| {
+                    h.form.tree.nodes.get(i).filter(|n| matches!(n.kind, NodeKind::Folder | NodeKind::Drive(_))).map(|n| PathBuf::from(&n.id))
+                })
+                .flatten();
+                if let Some(into) = into {
+                    new_tab(hwnd, Shows::Folder(into));
+                }
+            }
             Part::Open => open_selected(hwnd),
             Part::ItemMenu => item_menu(hwnd),
             Part::BackgroundMenu => background_menu(hwnd),
@@ -3317,6 +3337,7 @@ impl Hosted for FolderHost {
     /// The place, the size and the arrangement are remembered; the reader stops.
     fn closing(&mut self, hwnd: HWND) {
         bevel_winkit::dragdrop::revoke(hwnd);
+        tab_tip::owner_closing(hwnd);
         self.stop.store(true, Ordering::SeqCst);
         let mut placement = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
         // SAFETY: our own window; a valid out-pointer.
@@ -3912,6 +3933,7 @@ fn renamed_behind(s: &mut TabSlot, old: &str, new: &str, name: &str) -> bool {
 /// click waiting for its rename, a drag's resting place over it; the early review's finding 1
 /// and its caution for dragging over a tab).
 fn front_changes(hwnd: HWND) {
+    tab_tip::hide();
     SLOW_CLICKS.with(|s| s.borrow_mut().remove(&(hwnd as isize)));
     HOVER.with(|h| h.borrow_mut().remove(&(hwnd as isize)));
     // A drag out of this window that is still on its way: its own-window place was the tab it
@@ -5200,6 +5222,12 @@ unsafe extern "system" fn hub_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
             publish_wanted();
             check_front();
             slow_renames();
+            // A cut tab's whole name (brief 110), only while a row shows.
+            if TAB_SETTINGS.with(Cell::get).0 != tabs::Place::Off {
+                tab_tip::tick();
+            } else {
+                tab_tip::hide();
+            }
             0
         }
         m if m == WM_TEST_COMMAND.id() => {
@@ -5687,6 +5715,7 @@ fn main() {
     // A panic on a worker thread closes the windows: none is left looking alive (decisions.md).
     bevel_winkit::panic::install(bevel_winkit::panic::close_windows_after);
     look::dpi_aware();
+    tab_tip::register();
     // A drive without a disk answers with an error instead of Windows' "insert a disk" box.
     // SAFETY: a plain call.
     unsafe { SetErrorMode(SEM_FAILCRITICALERRORS) };
