@@ -359,6 +359,12 @@ struct TabSlot {
     asked: Option<std::time::Instant>,
     facts: Facts,
     session: HashMap<String, bevel_core::folder::saved::MovedRecord>,
+    /// The look changed while it was behind: when it comes forward its place is shown anew in
+    /// the new look and laid out as the new look remembers it (the early review's finding 2).
+    owes_look: bool,
+    /// A moved icon of it was renamed while it was behind: its record is written when it comes
+    /// forward (the early review's finding 7).
+    remember_owed: bool,
 }
 
 thread_local! {
@@ -1943,8 +1949,12 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
     kit::set_program_icons::<FolderHost>(&icon, &icon);
     kit::update::<FolderHost>(|_| {});
     start_reader(id, shows.clone(), era, stop, HUB.with(Cell::get), StartedBy::Person);
-    // The place's names, space and known folders, read off this thread; they reach the window
-    // while it still shows that place (`prepared_ready`).
+    read_place_facts(id, shows);
+}
+
+/// The place's names, space and known folders, read off the window's thread; they reach the
+/// window (by its id) while it still shows that place (`prepared_ready`).
+fn read_place_facts(id: usize, shows: Shows) {
     let hub = HUB_FOR_THREADS.load(Ordering::SeqCst);
     let spawned = std::thread::Builder::new().name("folder place".into()).spawn(move || {
         bevel_winkit::com::init();
@@ -2285,6 +2295,12 @@ fn apply_folder_options(choice: Choice) {
             kit::update::<FolderHost>(|h| {
                 if h.form.era == Era::Win2000 {
                     h.form.set_web(choice.web && h.form.web.fonts.is_some());
+                }
+                // The tabs behind too (brief 110; the early review's finding 6).
+                for s in &mut h.back {
+                    if s.form.era == Era::Win2000 {
+                        s.form.set_web(choice.web && s.form.web.fonts.is_some());
+                    }
                 }
             });
         });
@@ -2669,8 +2685,14 @@ fn locked_found(owner: HWND, letter: char) {
         // Whether any place is left once the step is undone (a copy of the history: `navigate`
         // undoes it on the real one).
         let elsewhere = kit::with::<FolderHost, _>(|h| h.history.clone().undo(h.came).is_some()).unwrap_or(false);
+        // Tabs (brief 110; the early review's finding 3): nothing to go back to in a window of
+        // several tabs closes that tab, not the window with the others; with one tab the window
+        // closes, as before.
+        let tab = kit::with::<FolderHost, _>(|h| (h.order.len() > 1).then_some(h.tab)).flatten();
         if elsewhere {
             navigate(owner, None, Go::Undo);
+        } else if let Some(tab) = tab {
+            close_tab(owner, tab);
         } else {
             kit::close::<FolderHost>();
         }
@@ -3277,32 +3299,7 @@ impl Hosted for FolderHost {
                 let mut icon = None;
                 kit::update::<FolderHost>(|h| {
                     if h.form.era != era {
-                        // The items stay (their reader sends only what changes).
-                        let (items, hidden, total, spaces, attributes) =
-                            (h.form.view.items.clone(), h.form.hidden, h.form.total_size, h.form.spaces.clone(), h.form.web.attributes.clone());
-                        h.form.set_era(era);
-                        let (title, small) = title_from(era, &h.shows, &h.facts);
-                        h.form.title = title;
-                        h.form.icon = art::small(era, small);
-                        // The place drawn anew in the new look (its frame, view and pictures are
-                        // the look's), its items put back here at once.
-                        if era != Era::Win95 || h.form.tree_shown {
-                            show_new_place(h, era);
-                        }
-                        h.form.hidden = hidden;
-                        h.form.total_size = total;
-                        h.form.spaces = spaces;
-                        let hidden_ids = hidden_of(&attributes);
-                        h.form.web.attributes = attributes;
-                        h.form.set_items(items);
-                        h.form.view.set_hidden(hidden_ids);
-                        // Each look stays pure (brief 106, 3): the old look's arrangement goes at
-                        // once (the moved icons, their places and orders, this window's copies of
-                        // every folder), and the folder is shown as the NEW look remembers it.
-                        // Nothing of the old look is saved as the new look's record.
-                        // (After the new look's font: its Small Icons' width is measured then.)
-                        h.session.clear();
-                        h.form.view.forget_moved();
+                        relook(h, era);
                         icon = Some(h.form.icon.clone());
                         // Each look knew its own kinds of file (their pictures and Type names:
                         // `file_kinds`): a new reader reads the place again in the new look, as
@@ -3325,9 +3322,14 @@ impl Hosted for FolderHost {
                             s.form.set_era(era);
                             s.form.view.forget_moved();
                             let (title, small) = title_from(era, &s.shows, &s.facts);
+                            // Its name in the row in the new look's words at once (each look stays
+                            // pure); the rest when it comes forward (`owes_look`: the place shown
+                            // anew, the new look's remembered places; the early review's finding 2).
+                            s.form.place_name = title.clone();
                             s.form.title = title;
                             s.form.icon = art::small(era, small);
                             s.session.clear();
+                            s.owes_look = true;
                         }
                         s.form.set_font(&look.regular);
                     }
@@ -3601,7 +3603,8 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
             D::PasteShortcut => {
                 if let Some(dir) = dir {
                     let w = hwnd as usize;
-                    file_ops::paste_shortcuts(hwnd, dir, move |made| select_when_shown(w, made));
+                    let tab = front_tab();
+                    file_ops::paste_shortcuts(hwnd, dir, move |made| select_when_shown(w, tab, made));
                 }
             }
             D::CreateShortcut if offered(D::CreateShortcut) => {
@@ -3610,7 +3613,8 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
                 let into = dir.or_else(shell::desktop_folder);
                 if let Some(into) = into {
                     let w = hwnd as usize;
-                    file_ops::create_shortcuts(&selection, into, move |made| select_when_shown(w, made));
+                    let tab = front_tab();
+                    file_ops::create_shortcuts(&selection, into, move |made| select_when_shown(w, tab, made));
                 }
             }
             D::Delete if offered(D::Delete) => {
@@ -3696,6 +3700,35 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
     }
 }
 
+/// The tab in front in the look `era` (a change of look; a tab behind that missed one coming
+/// forward): the place drawn anew in the new look (its frame, view and pictures are the look's),
+/// its items put back at once, the old look's arrangement forgotten. Each look stays pure (brief
+/// 106, 3): the old look's moved icons, places and orders and this window's copies of every
+/// folder go; the caller lays the folder out as the NEW look remembers it (`load_places`, after
+/// the new look's font: its Small Icons' width is measured then). Nothing of the old look is saved
+/// as the new look's record.
+fn relook(h: &mut FolderHost, era: Era) {
+    // The items stay (their reader sends only what changes).
+    let (items, hidden, total, spaces, attributes) =
+        (h.form.view.items.clone(), h.form.hidden, h.form.total_size, h.form.spaces.clone(), h.form.web.attributes.clone());
+    h.form.set_era(era);
+    let (title, small) = title_from(era, &h.shows, &h.facts);
+    h.form.title = title;
+    h.form.icon = art::small(era, small);
+    if era != Era::Win95 || h.form.tree_shown {
+        show_new_place(h, era);
+    }
+    h.form.hidden = hidden;
+    h.form.total_size = total;
+    h.form.spaces = spaces;
+    let hidden_ids = hidden_of(&attributes);
+    h.form.web.attributes = attributes;
+    h.form.set_items(items);
+    h.form.view.set_hidden(hidden_ids);
+    h.session.clear();
+    h.form.view.forget_moved();
+}
+
 // ---------------------------------------------------------------------------------------------
 // Tabs in folder windows (Bevel95's own, brief 110).
 
@@ -3713,13 +3746,21 @@ fn show_row(h: &mut FolderHost) {
         Shows::Folder(p) => p.to_string_lossy().into_owned(),
         _ => name.to_string(),
     };
+    // A tab's name: the place's own name; 95's plain windows keep only their title up to date
+    // (the early review's finding 5), and it is the place's name there.
+    let name = |f: &FolderWindow| if f.era == Era::Win95 && !f.tree_shown && !f.exploring { f.title.clone() } else { f.place_name.clone() };
     let mut row = tabs::Row { close_at, ..tabs::Row::default() };
-    for (k, &id) in h.order.iter().enumerate() {
+    for &id in &h.order {
         let (title, tip) = if id == h.tab {
-            row.front = k;
-            (h.form.place_name.clone(), tip(&h.shows, &h.form.place_name))
+            // Its place in the row as pushed (the early review's D1).
+            row.front = row.tabs.len();
+            let n = name(&h.form);
+            let t = tip(&h.shows, &n);
+            (n, t)
         } else if let Some(s) = h.back.iter().find(|s| s.tab == id) {
-            (s.form.place_name.clone(), tip(&s.shows, &s.form.place_name))
+            let n = name(&s.form);
+            let t = tip(&s.shows, &n);
+            (n, t)
         } else {
             continue;
         };
@@ -3730,7 +3771,11 @@ fn show_row(h: &mut FolderHost) {
 
 /// The tab in front goes behind as it is (its reader stops; its view, place and history stay
 /// in its slot).
-fn to_back(h: &mut FolderHost, form: FolderWindow) -> TabSlot {
+fn to_back(h: &mut FolderHost, mut form: FolderWindow) -> TabSlot {
+    // Nothing of a moment ago may act later (the early review's finding 1): the passing
+    // states go from the tab going behind and from the one coming forward (`forget_passing`).
+    h.form.forget_passing();
+    form.forget_passing();
     h.stop.store(true, Ordering::SeqCst);
     h.stop = Arc::new(AtomicBool::new(false));
     if let Ok(mut g) = GENERATIONS.lock()
@@ -3747,18 +3792,48 @@ fn to_back(h: &mut FolderHost, form: FolderWindow) -> TabSlot {
         history: std::mem::replace(&mut h.history, History::new(h.shows.place())),
         came: h.came.take(),
         entries: std::mem::take(&mut h.entries),
-        settle: h.settle.take(),
+        // A tree selection resting for its icons to follow is not carried behind: it would fire
+        // at once when the tab comes forward (the early review's D2).
+        settle: {
+            h.settle = None;
+            None
+        },
         reread: std::mem::take(&mut h.reread),
         asked: h.asked.take(),
         facts: h.facts.clone(),
         session: std::mem::take(&mut h.session),
+        owes_look: false,
+        remember_owed: false,
     }
+}
+
+/// The window's front tab changes: what is passing for the window as a whole goes too (a slow
+/// click waiting for its rename, a drag's resting place over it; the early review's finding 1
+/// and its caution for dragging over a tab).
+fn front_changes(hwnd: HWND) {
+    SLOW_CLICKS.with(|s| s.borrow_mut().remove(&(hwnd as isize)));
+    HOVER.with(|h| h.borrow_mut().remove(&(hwnd as isize)));
+    // A drag out of this window that is still on its way: its own-window place was the tab it
+    // left; a drop now is decided as one from another window.
+    OUT.with(|o| {
+        if o.borrow().as_ref().is_some_and(|o| o.hwnd == hwnd) {
+            *o.borrow_mut() = None;
+        }
+    });
+}
+
+/// Whether the tab in front can go behind now: not while its rename's extension question is up.
+fn may_change_front() -> bool {
+    kit::with::<FolderHost, _>(|h| !h.form.view.is_asking()).unwrap_or(false)
 }
 
 /// A new tab at the row's right end showing `shows`, in front (Ctrl+T, a double-click on the
 /// row: My Computer; Open in New Tab: a folder). At most `tabs::MOST`: a 33rd is refused with
 /// the look's default sound.
 fn new_tab(hwnd: HWND, shows: Shows) {
+    if !may_change_front() {
+        return;
+    }
     let made = kit::with::<FolderHost, _>(|h| {
         if TAB_SETTINGS.with(Cell::get).0 == tabs::Place::Off || h.order.len() >= tabs::MOST {
             return false;
@@ -3777,14 +3852,21 @@ fn new_tab(hwnd: HWND, shows: Shows) {
         unsafe { windows_sys::Win32::System::Diagnostics::Debug::MessageBeep(0) };
         return;
     }
+    front_changes(hwnd);
     let same = kit::with::<FolderHost, _>(|h| h.shows == shows).unwrap_or(false);
     if same {
         // The same place: a reader of its own (the one copied was stopped).
         restart_reader(hwnd);
     } else {
         IN_NEW_TAB.with(|t| t.set(true));
-        navigate(hwnd, Some(shows), Go::New);
+        navigate(hwnd, Some(shows.clone()), Go::New);
         IN_NEW_TAB.with(|t| t.set(false));
+        // The place refused (a drive known locked: Windows' unlock window instead): the new tab
+        // goes again, the one before comes back (the early review's finding 8).
+        if let Some(tab) = kit::with::<FolderHost, _>(|h| (h.shows != shows).then_some(h.tab)).flatten() {
+            close_tab(hwnd, tab);
+            return;
+        }
     }
     kit::update::<FolderHost>(|h| {
         // Its own history begins at its place.
@@ -3824,12 +3906,18 @@ fn restart_reader(hwnd: HWND) {
     unsafe { SetWindowTextW(hwnd, text.as_ptr()) };
     kit::set_program_icons::<FolderHost>(&icon, &icon);
     kit::update::<FolderHost>(|_| {});
-    start_reader(id, shows, era, stop, HUB.with(Cell::get), StartedBy::LookChange);
+    start_reader(id, shows.clone(), era, stop, HUB.with(Cell::get), StartedBy::LookChange);
+    // Its place's facts read again too: a reading that came while it was behind was dropped
+    // (its id was another; the early review's finding 4).
+    read_place_facts(id, shows);
 }
 
 /// Tab `tab` comes to the front (a press on it, Ctrl+Tab): found by its id, nothing if it is
 /// gone or in front already.
 fn switch_tab(hwnd: HWND, tab: u64) {
+    if !may_change_front() {
+        return;
+    }
     let switched = kit::with::<FolderHost, _>(|h| {
         if tab == h.tab {
             return false;
@@ -3850,10 +3938,21 @@ fn switch_tab(hwnd: HWND, tab: u64) {
         h.asked = slot.asked;
         h.facts = slot.facts;
         h.session = slot.session;
+        if slot.owes_look {
+            // The look changed while it was behind: as `look_changed` does for the tab in front.
+            let era = h.form.era;
+            relook(h, era);
+            if load_places(h, Relaid::Reopened) {
+                save();
+            }
+        } else if slot.remember_owed && remember_places(h) {
+            save();
+        }
         true
     })
     .unwrap_or(false);
     if switched {
+        front_changes(hwnd);
         restart_reader(hwnd);
     }
 }
@@ -4427,14 +4526,20 @@ fn new_item(dir: &Path, folder: bool) {
 
 /// A shortcut made by Create Shortcut or Paste Shortcut is selected once its window shows it
 /// (called on the command's thread: the window's id travels as a number).
-fn select_when_shown(hwnd: usize, path: String) {
-    PENDING_SELECT.lock().map(|mut p| p.push((hwnd, path))).ok();
+fn select_when_shown(hwnd: usize, tab: u64, path: String) {
+    PENDING_SELECT.lock().map(|mut p| p.push((hwnd, tab, path))).ok();
     let hub = HUB_FOR_THREADS.load(Ordering::SeqCst);
     // SAFETY: posting to the program's own window.
     unsafe { PostMessageW(hub as HWND, WM_ITEMS.id(), 0, 0) };
 }
 
-static PENDING_SELECT: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
+/// By window and tab (brief 110; the early review's finding 7): it goes to the tab that asked.
+static PENDING_SELECT: Mutex<Vec<(usize, u64, String)>> = Mutex::new(Vec::new());
+
+/// The current window's tab in front (0 with no window).
+fn front_tab() -> u64 {
+    kit::with::<FolderHost, _>(|h| h.tab).unwrap_or(0)
+}
 static HUB_FOR_THREADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Shows the items now cut as cut in every window (and none once something else is on the
@@ -4511,9 +4616,10 @@ fn end_rename(hwnd: HWND) {
         && target.id == id
     {
         let w = hwnd as usize;
+        let tab = front_tab();
         let typed = name.clone();
         file_ops::rename(target, name, move |new_id| {
-            PENDING_RENAMED.lock().map(|mut p| p.push((w, id, new_id, typed))).ok();
+            PENDING_RENAMED.lock().map(|mut p| p.push((w, tab, id, new_id, typed))).ok();
             let hub = HUB_FOR_THREADS.load(Ordering::SeqCst);
             // SAFETY: posting to the program's own window.
             unsafe { PostMessageW(hub as HWND, WM_ITEMS.id(), 0, 0) };
@@ -4521,7 +4627,10 @@ fn end_rename(hwnd: HWND) {
     }
 }
 
-static PENDING_RENAMED: Mutex<Vec<(usize, String, String, String)>> = Mutex::new(Vec::new());
+/// By window and tab (the early review of brief 110, finding 7): the tab that asked.
+static PENDING_RENAMED: Mutex<Vec<Renamed>> = Mutex::new(Vec::new());
+/// A finished rename: the window, the tab, the old id, the new id, the name shown.
+type Renamed = (usize, u64, String, String, String);
 
 /// The extension warning's answer: Yes renames; No opens the box again (the look's rule).
 fn rename_answered(yes: bool) {
@@ -4544,16 +4653,44 @@ fn rename_answered(yes: bool) {
 /// renamed icons their new names.
 fn pending_work() {
     let selects = PENDING_SELECT.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
-    for (w, path) in selects {
+    for (w, tab, path) in selects {
         let hwnd = w as HWND;
         if kit::windows::<FolderHost>().contains(&hwnd) {
-            kit::scope::<FolderHost, _>(hwnd, || kit::with::<FolderHost, _>(|h| h.select = Some(path)));
+            // The tab that asked, in front or behind (the early review of brief 110, finding 7).
+            kit::scope::<FolderHost, _>(hwnd, || {
+                kit::with::<FolderHost, _>(|h| {
+                    if h.tab == tab || tab == 0 {
+                        h.select = Some(path);
+                    } else if let Some(s) = h.back.iter_mut().find(|s| s.tab == tab) {
+                        s.select = Some(path);
+                    }
+                })
+            });
         }
     }
     let renamed = PENDING_RENAMED.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
-    for (w, old, new, name) in renamed {
+    for (w, tab, old, new, name) in renamed {
         let hwnd = w as HWND;
         if kit::windows::<FolderHost>().contains(&hwnd) {
+            // A tab behind: its own view takes the new name; its record follows when it comes
+            // forward (`remember_owed`).
+            let behind = kit::scope::<FolderHost, _>(hwnd, || {
+                kit::with::<FolderHost, _>(|h| {
+                    if h.tab == tab || tab == 0 {
+                        return false;
+                    }
+                    if let Some(s) = h.back.iter_mut().find(|s| s.tab == tab) {
+                        let kept = s.form.view.moved_ids().contains(&old) || s.form.view.last_order().contains(&old);
+                        s.form.view.renamed(&old, &new, &name);
+                        s.remember_owed |= kept;
+                    }
+                    true
+                })
+                .unwrap_or(true)
+            });
+            if behind {
+                continue;
+            }
             let mut changed = false;
             kit::scope::<FolderHost, _>(hwnd, || {
                 kit::update::<FolderHost>(|h| {
@@ -5551,6 +5688,21 @@ mod tests {
     /// header's sort, the web view switch, Select All, Folder Options, the slow readings and
     /// every file command are refused there. In a test folder everything acts, on a test item
     /// when it names one.
+    /// The early review of brief 110, finding 1 and its caution: when a window's front tab
+    /// changes, its waiting slow click and a drag's resting place over it are forgotten.
+    #[test]
+    fn a_change_of_front_tab_forgets_the_window_s_passing_states() {
+        use super::*;
+        let hwnd = 0x1234usize as HWND;
+        SLOW_CLICKS.with(|s| s.borrow_mut().insert(hwnd as isize, std::time::Instant::now()));
+        HOVER.with(|h| {
+            h.borrow_mut().insert(hwnd as isize, Hover { row: Some("tab:2".into()), since: std::time::Instant::now(), at: (1, 1), scrolled: std::time::Instant::now(), unreadable: Vec::new() })
+        });
+        front_changes(hwnd);
+        assert!(SLOW_CLICKS.with(|s| !s.borrow().contains_key(&(hwnd as isize))));
+        assert!(HOVER.with(|h| !h.borrow().contains_key(&(hwnd as isize))));
+    }
+
     #[test]
     fn test_commands_that_change_anything_act_only_in_a_test_folder() {
         use super::*;

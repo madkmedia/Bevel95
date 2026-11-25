@@ -1844,6 +1844,16 @@ impl Desktop {
         self.gesture = None;
     }
 
+    /// A folder window's tab goes behind or comes forward (brief 110): the press or drag under
+    /// way, the right press, the Ctrl press and the drop place drawn go (`FolderWindow::
+    /// forget_passing`).
+    pub fn forget_passing(&mut self) {
+        self.gesture = None;
+        self.right_press = false;
+        self.ctrl_off = false;
+        self.drop_hover = None;
+    }
+
     /// Something is going on with the left button held (the platform repaints on a timer).
     pub fn gesture_active(&self) -> bool {
         self.gesture.is_some()

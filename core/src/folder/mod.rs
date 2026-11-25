@@ -403,6 +403,53 @@ impl FolderWindow {
     /// size and place on the screen, whether it is maximized and active, the tree of all folders
     /// (one per window), the status bar, the row. The view, the place, its history and the like
     /// stay this tab's own.
+    /// A tab goes behind, comes forward, or starts as a copy (brief 110; the early review's
+    /// finding 1): every passing press, hover, rename and drag state goes, so that nothing of a
+    /// moment ago acts minutes later. Of the window's fields: `pressed`, `chosen` (a menu title),
+    /// `right_hit`, `grab_at`, `split_drag`, `close_look`, `tree_grab`, `divider_drag`,
+    /// `link_hot`, `first_press`, `slow_rename` (a slow second click: it would open a rename
+    /// box), `click_activated`, `after_rename`, `rename_drag`, `skip_right_up`,
+    /// `press_after_rename`, `drag_out`, `list` (the address bar's open list), `help`,
+    /// `menu_row`; the rebar's hot and pressed parts and open list; the row's X look. Of the
+    /// view's: its press or drag (`gesture`), its right press, its Ctrl press, the drop place
+    /// drawn, and a rename box (given up as Esc gives it up, the name as it was; a rename whose
+    /// extension question is up is not given up: the caller does not switch then). Kept: the
+    /// selection, the focus, the scroll place, the view and what is shown.
+    pub fn forget_passing(&mut self) {
+        self.pressed = None;
+        self.chosen = None;
+        self.right_hit = false;
+        self.grab_at = (0, 0);
+        self.split_drag = None;
+        self.close_look = 0;
+        self.tree_grab = (0, 0);
+        self.divider_drag = None;
+        self.link_hot = None;
+        self.first_press = None;
+        self.slow_rename = None;
+        self.click_activated = false;
+        self.after_rename = None;
+        self.rename_drag = false;
+        self.skip_right_up = false;
+        self.press_after_rename = None;
+        self.drag_out = false;
+        self.list = None;
+        self.help = None;
+        self.menu_row = None;
+        self.bar.hot_title = None;
+        self.bar.chosen_title = None;
+        self.bar.hot_tool = None;
+        self.bar.pressed_tool = None;
+        self.bar.open_list = None;
+        self.bar.hot_go = false;
+        self.bar.pressed_go = false;
+        self.tab_row.close_look = 0;
+        if self.view.renaming().is_some() && !self.view.is_asking() {
+            self.view.rename_key(EditKey::Escape, false);
+        }
+        self.view.forget_passing();
+    }
+
     pub fn take_window_from(&mut self, other: &FolderWindow) {
         self.size = other.size;
         self.maximized = other.maximized;
@@ -419,8 +466,7 @@ impl FolderWindow {
         self.bar.show_keys = other.bar.show_keys;
         self.tab_place = other.tab_place;
         self.tab_row = other.tab_row.clone();
-        self.pressed = None;
-        self.chosen = None;
+        self.forget_passing();
         self.fit();
     }
 
@@ -2821,6 +2867,10 @@ impl Form for FolderWindow {
             if down {
                 return Vec::new();
             }
+            // A right press on the icons released over the row: its press state goes (the early
+            // review's D4).
+            self.view.cancel();
+            self.right_hit = false;
             self.menu_at = (x, y);
             return vec![Effect::Activate(Part::TabMenu(if let Part::Tab(id) = p { id } else { 0 }))];
         }

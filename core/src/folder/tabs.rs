@@ -424,6 +424,47 @@ mod tests {
         }
     }
 
+    /// The early review's finding 1: a slow second click waiting for its rename box goes with
+    /// the tab that goes behind, with the one that comes forward, and with a tab made as a copy
+    /// (a new tab on the same place keeps the selection): no rename box opens by itself later.
+    #[test]
+    fn a_waiting_slow_click_never_follows_a_tab() {
+        use crate::desktop_icons::{Item, Picture};
+        use crate::folder::FolderWindow;
+        use crate::kit::Form;
+        let (r, b) = (font(), Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap());
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let item = |n: &str| Item { id: format!("C:\\W\\{n}"), name: n.into(), picture: Picture::Own(None), shortcut: false, folder: false, type_name: String::new(), size: 1, modified: 0 };
+        let armed = || {
+            let mut w = FolderWindow::new(Era::Win98, "W", icon.clone(), true, (560, 380));
+            w.layout(&fonts);
+            w.set_items(vec![item("Report.doc"), item("b.txt")]);
+            w.set_tabs(Place::UnderAddress, Row { tabs: vec![Tab { id: 1, title: "W".into(), tip: "C:\\W".into() }], front: 0, close_at: CloseAt::End, close_look: 0 });
+            w.view.select_only(Some(0));
+            w.slow_rename = Some(("C:\\W\\Report.doc".into(), 10, 10));
+            w.first_press = Some("C:\\W\\Report.doc".into());
+            w.after_rename = Some((1, 1, crate::desktop_icons::Mods::default()));
+            assert!(w.slow_rename_waiting());
+            w
+        };
+        // Goes behind.
+        let mut behind = armed();
+        behind.forget_passing();
+        assert!(!behind.slow_rename_waiting() && behind.slow_rename_due().is_none() && behind.first_press.is_none() && behind.after_rename.is_none());
+        // Comes forward (taking the window's state from the tab going behind).
+        let mut forward = armed();
+        let other = armed();
+        forward.take_window_from(&other);
+        assert!(!forward.slow_rename_waiting() && forward.slow_rename_due().is_none());
+        assert_eq!(forward.view.selection(), vec![0], "the selection is the tab's own and stays");
+        // A tab made as a copy of the front, on the same place.
+        let mut copy = armed().clone();
+        copy.forget_passing();
+        assert!(copy.slow_rename_due().is_none());
+        assert!(copy.view.renaming().is_none());
+    }
+
     #[test]
     fn the_x_on_the_tab_in_front() {
         let f = font();
