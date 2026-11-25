@@ -362,9 +362,6 @@ struct TabSlot {
     /// The look changed while it was behind: when it comes forward its place is shown anew in
     /// the new look and laid out as the new look remembers it (the early review's finding 2).
     owes_look: bool,
-    /// A moved icon of it was renamed while it was behind: its record is written when it comes
-    /// forward (the early review's finding 7).
-    remember_owed: bool,
 }
 
 thread_local! {
@@ -2469,7 +2466,10 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
                 e.at = (x, y);
                 key.is_some() && drop_row_opens(era, moved, now.duration_since(e.since), false)
             });
-            if bring && let Some(t) = tab {
+            // Never while the tab in front has a rename box open (the second review's N5): a drag
+            // neither gives up nor takes the name typed; the tab stays behind.
+            let springs = kit::with::<FolderHost, _>(|h| tab_springs(&h.form)).unwrap_or(false);
+            if bring && springs && let Some(t) = tab {
                 switch_tab(hwnd, t);
             }
             return None;
@@ -3289,9 +3289,14 @@ impl Hosted for FolderHost {
     /// The bar's look or size changed: the windows follow it (another look's frame, menus,
     /// toolbar and pictures; Windows 95's windows have no history, so Back starts afresh there).
     fn look_changed() {
-        let (era, look) = look::load();
+        // The look and the tabs from one read of settings.txt; a file that cannot be read just
+        // now says nothing of the tabs, and they stay as they are (the second review's N1:
+        // taken for "off", every tab behind in every window went).
+        let (era, look, tabs_now) = look::load_with_tabs();
         ERA_LOOK.with(|l| *l.borrow_mut() = Some((era, look.clone())));
-        TAB_SETTINGS.with(|t| t.set(look::folder_tabs()));
+        if let Some(tabs_now) = tabs_now {
+            TAB_SETTINGS.with(|t| t.set(tabs_now));
+        }
         // A record of the new look that its window could not use (2000, another view) went.
         let mut dropped_record = false;
         for hwnd in kit::windows::<FolderHost>() {
@@ -3803,8 +3808,19 @@ fn to_back(h: &mut FolderHost, mut form: FolderWindow) -> TabSlot {
         facts: h.facts.clone(),
         session: std::mem::take(&mut h.session),
         owes_look: false,
-        remember_owed: false,
     }
+}
+
+/// An item of a tab behind was renamed (`old` to `new`, shown as `name`): its view takes the new
+/// name, and a moved icon's record is written at once from the tab's own view and place (the
+/// second review, finding 7's rest). A tab that owes a new look has forgotten its moved icons
+/// (`relook` lays it out afresh), so nothing is written for it. True if folders.txt's record
+/// changed (then the caller saves).
+fn renamed_behind(s: &mut TabSlot, old: &str, new: &str, name: &str) -> bool {
+    let kept = s.form.view.items.iter().any(|i| i.id == old)
+        && (s.form.view.moved_ids().iter().any(|m| m == old) || s.form.view.last_order().iter().any(|m| m == old));
+    s.form.view.renamed(old, new, name);
+    kept && !s.owes_look && remember_places_in(&s.form, &s.shows, &mut s.session)
 }
 
 /// The window's front tab changes: what is passing for the window as a whole goes too (a slow
@@ -3820,6 +3836,12 @@ fn front_changes(hwnd: HWND) {
             *o.borrow_mut() = None;
         }
     });
+}
+
+/// Whether a drag resting over another tab may bring it forward: not while the tab in front has
+/// a rename box open (the second review's N5; nothing is given up or renamed by a drag).
+fn tab_springs(front: &FolderWindow) -> bool {
+    !front.view.rename_open()
 }
 
 /// Whether the tab in front can go behind now: not while its rename's extension question is up.
@@ -3945,8 +3967,6 @@ fn switch_tab(hwnd: HWND, tab: u64) {
             if load_places(h, Relaid::Reopened) {
                 save();
             }
-        } else if slot.remember_owed && remember_places(h) {
-            save();
         }
         true
     })
@@ -4042,9 +4062,14 @@ fn tab_menu(hwnd: HWND, tab: u64) {
 /// What the look does with the icons the person moved in the window's folder when it lays them out
 /// again (`saved::kept`, brief 103): by the look, the folder's web view and whether it is My Computer.
 fn kept_for(h: &FolderHost, when: Relaid) -> Kept {
-    let era = h.form.era;
-    let key = h.shows.key();
-    kept(era, web_on(era, &key), matches!(h.shows, Shows::MyComputer), when)
+    kept_in(&h.form, &h.shows, when)
+}
+
+/// `kept_for` of a view and its place, in front or behind.
+fn kept_in(form: &FolderWindow, shows: &Shows, when: Relaid) -> Kept {
+    let era = form.era;
+    let key = shows.key();
+    kept(era, web_on(era, &key), matches!(shows, Shows::MyComputer), when)
 }
 
 /// The folder whose items a record names by their own names (`short_id`, brief 106, 4): a
@@ -4060,8 +4085,12 @@ fn record_dir(shows: &Shows) -> Option<String> {
 /// The order a look that remembers no places keeps (Windows 98 with its web view): the icons
 /// already last, then the ones moved since, each moved one counting as moved to the end.
 fn order_with_moved_last(h: &FolderHost) -> Vec<String> {
-    let mut order = h.form.view.last_order().to_vec();
-    for id in h.form.view.moved_ids() {
+    order_with_moved_last_in(&h.form)
+}
+
+fn order_with_moved_last_in(form: &FolderWindow) -> Vec<String> {
+    let mut order = form.view.last_order().to_vec();
+    for id in form.view.moved_ids() {
         order.retain(|o| o != id);
         order.push(id.clone());
     }
@@ -4077,30 +4106,41 @@ fn order_with_moved_last(h: &FolderHost) -> Vec<String> {
 /// (brief 105, 1 and 8); names no longer in the folder are left out whenever it is rewritten
 /// (brief 105, 6). True if folders.txt's record changed (then the caller saves).
 fn remember_places(h: &mut FolderHost) -> bool {
-    let era = h.form.era;
-    let key = h.shows.key();
-    if h.form.view.items.is_empty() {
+    remember_places_in(&h.form, &h.shows, &mut h.session)
+}
+
+/// `remember_places` of a view, its place and its own record of the places while the window
+/// stays open: the tab in front's or a tab's behind (a rename owed to a tab behind is written at
+/// once from the tab's own view: the second review, finding 7's rest).
+fn remember_places_in(
+    form: &FolderWindow,
+    shows: &Shows,
+    session: &mut HashMap<String, bevel_core::folder::saved::MovedRecord>,
+) -> bool {
+    let era = form.era;
+    let key = shows.key();
+    if form.view.items.is_empty() {
         // Not read yet (or empty): nothing to say about its icons; the record stays as it is.
         return false;
     }
-    let here: std::collections::HashSet<&str> = h.form.view.items.iter().map(|i| i.id.as_str()).collect();
+    let here: std::collections::HashSet<&str> = form.view.items.iter().map(|i| i.id.as_str()).collect();
     let places: Vec<(i32, i32, String)> =
-        h.form.view.moved_places().into_iter().filter(|(_, _, id)| here.contains(id.as_str())).collect();
-    let view = h.form.view.moved_held();
-    let kept_how = kept_for(h, Relaid::Reopened);
+        form.view.moved_places().into_iter().filter(|(_, _, id)| here.contains(id.as_str())).collect();
+    let view = form.view.moved_held();
+    let kept_how = kept_in(form, shows, Relaid::Reopened);
     let last: Vec<String> = match kept_how {
-        Kept::Places => h.form.view.last_order().to_vec(),
-        Kept::MovedLast | Kept::InOrder => order_with_moved_last(h),
+        Kept::Places => form.view.last_order().to_vec(),
+        Kept::MovedLast | Kept::InOrder => order_with_moved_last_in(form),
     };
     let last: Vec<String> = last.into_iter().filter(|id| here.contains(id.as_str())).collect();
     drop(here);
     if places.is_empty() {
-        h.session.remove(&key);
+        session.remove(&key);
     } else {
-        h.session.insert(key.clone(), (view, places.clone()));
+        session.insert(key.clone(), (view, places.clone()));
     }
     // Kept by each item's own name within the folder (brief 106, 4).
-    let dir = record_dir(&h.shows);
+    let dir = record_dir(shows);
     let dir = dir.as_deref();
     let places: Vec<(i32, i32, String)> = places.into_iter().map(|(x, y, id)| (x, y, short_id(dir, &id))).collect();
     let last: Vec<String> = last.iter().map(|id| short_id(dir, id)).collect();
@@ -4672,23 +4712,27 @@ fn pending_work() {
     for (w, tab, old, new, name) in renamed {
         let hwnd = w as HWND;
         if kit::windows::<FolderHost>().contains(&hwnd) {
-            // A tab behind: its own view takes the new name; its record follows when it comes
-            // forward (`remember_owed`).
+            // A tab behind: its own view takes the new name, and the moved icon's record is
+            // written at once from that view and its place (the second review, finding 7's rest:
+            // kept until the tab came forward, it was lost when the tab, the tabs or the window
+            // closed first).
             let behind = kit::scope::<FolderHost, _>(hwnd, || {
                 kit::with::<FolderHost, _>(|h| {
                     if h.tab == tab || tab == 0 {
-                        return false;
+                        return None;
                     }
+                    let mut changed = false;
                     if let Some(s) = h.back.iter_mut().find(|s| s.tab == tab) {
-                        let kept = s.form.view.moved_ids().contains(&old) || s.form.view.last_order().contains(&old);
-                        s.form.view.renamed(&old, &new, &name);
-                        s.remember_owed |= kept;
+                        changed = renamed_behind(s, &old, &new, &name);
                     }
-                    true
+                    Some(changed)
                 })
-                .unwrap_or(true)
+                .unwrap_or(Some(false))
             });
-            if behind {
+            if let Some(changed) = behind {
+                if changed {
+                    save();
+                }
                 continue;
             }
             let mut changed = false;
@@ -5598,12 +5642,13 @@ fn main() {
     // safety review of 2026-11-18, C5: two programs each saved their own picture of it).
     let holder = take_hub_place();
     HUB_HOLDER.store(holder, Ordering::SeqCst);
-    let (era, look) = look::load();
+    let (era, look, tabs_now) = look::load_with_tabs();
     bevel_winkit::com::init();
     // Windows' drag and drop for files between the windows and other programs.
     bevel_winkit::dragdrop::init();
     ERA_LOOK.with(|l| *l.borrow_mut() = Some((era, look)));
-    TAB_SETTINGS.with(|t| t.set(look::folder_tabs()));
+    // At the start nothing is open yet: an unreadable file means no tabs until it can be read.
+    TAB_SETTINGS.with(|t| t.set(tabs_now.unwrap_or((tabs::Place::Off, tabs::CloseAt::End))));
     file_ops::set_hooks("folders", || {});
     // Unreadable: logged, kept as it is and not saved over (`state_file`).
     let saved = bevel_winkit::state_file::load(&saved_path()).text().map(|t| Saved::parse(&t)).unwrap_or_default();
@@ -5683,11 +5728,88 @@ mod tests {
         assert!(test_allowed(TEST_ITEM_MENU, is_test_folder(&Shows::MyComputer), Some(false)));
     }
 
-    /// Brief 106, 5: every code. Outside a test folder (My Computer, the Desktop place, an
-    /// ordinary folder) only the menus and the lists get through, on any item or none; View, the
-    /// header's sort, the web view switch, Select All, Folder Options, the slow readings and
-    /// every file command are refused there. In a test folder everything acts, on a test item
-    /// when it names one.
+    /// The second review of brief 110, finding 7's rest: a moved icon renamed in a tab behind
+    /// has its record written at once, from the tab's own view and place (it waited for the tab
+    /// to come forward and was lost when the tab, the tabs or the window closed first). A tab
+    /// that owes a new look writes nothing (its moved icons are forgotten).
+    #[test]
+    fn a_rename_in_a_tab_behind_is_remembered_at_once() {
+        use super::*;
+        use bevel_core::desktop_icons::{Item, Picture};
+        use bevel_core::fb::Icon;
+        let place = Shows::Folder(r"Z:\Bevel95 test".into());
+        let slot_with = |owes_look: bool| {
+            let icon = Icon { width: 16, height: 16, pixels: vec![0; 256] };
+            let mut form = FolderWindow::new(Era::Win98, "Bevel95 test", icon, false, (400, 300));
+            let items: Vec<Item> = ["a", "b", "c"]
+                .iter()
+                .map(|n| Item {
+                    id: format!(r"Z:\Bevel95 test\{n}.txt"),
+                    name: format!("{n}.txt"),
+                    picture: Picture::Own(None),
+                    shortcut: false,
+                    folder: false,
+                    type_name: "Text Document".into(),
+                    size: 1,
+                    modified: 0,
+                })
+                .collect();
+            form.set_items(items);
+            form.view.pack_moved_last(&[r"Z:\Bevel95 test\b.txt".to_string()]);
+            TabSlot {
+                tab: 2,
+                form,
+                shows: place.clone(),
+                select: None,
+                history: History::new(place.place()),
+                came: None,
+                entries: Vec::new(),
+                settle: None,
+                reread: Vec::new(),
+                asked: None,
+                facts: Facts::default(),
+                session: HashMap::new(),
+                owes_look,
+            }
+        };
+        SAVED.with(|s| *s.borrow_mut() = Saved::default());
+        let mut owing = slot_with(true);
+        assert!(!renamed_behind(&mut owing, r"Z:\Bevel95 test\b.txt", r"Z:\Bevel95 test\new b.txt", "new b.txt"));
+        assert!(!SAVED.with(|s| s.borrow().text()).contains("new b.txt"));
+        let mut slot = slot_with(false);
+        assert!(renamed_behind(&mut slot, r"Z:\Bevel95 test\b.txt", r"Z:\Bevel95 test\new b.txt", "new b.txt"));
+        assert!(slot.form.view.items.iter().any(|i| i.name == "new b.txt"), "the tab's own view takes the name");
+        assert!(SAVED.with(|s| s.borrow().text()).contains("new b.txt"), "the record is written at once");
+        // An icon never moved: nothing to write.
+        assert!(!renamed_behind(&mut slot, r"Z:\Bevel95 test\a.txt", r"Z:\Bevel95 test\new a.txt", "new a.txt"));
+        SAVED.with(|s| *s.borrow_mut() = Saved::default());
+    }
+
+    /// The second review of brief 110, N5: a drag resting over another tab never brings it
+    /// forward while the tab in front has a rename box open (it gave the rename up).
+    #[test]
+    fn a_drag_never_springs_a_tab_while_a_name_is_typed() {
+        use super::*;
+        use bevel_core::desktop_icons::{Item, Picture};
+        use bevel_core::fb::Icon;
+        let icon = Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let mut form = FolderWindow::new(Era::Win98, "Bevel95 test", icon, false, (400, 300));
+        form.set_items(vec![Item {
+            id: r"Z:\Bevel95 test\a file.txt".into(),
+            name: "a file.txt".into(),
+            picture: Picture::Own(None),
+            shortcut: false,
+            folder: false,
+            type_name: "Text Document".into(),
+            size: 1,
+            modified: 0,
+        }]);
+        assert!(tab_springs(&form));
+        assert!(form.view.begin_rename(0));
+        assert!(!tab_springs(&form), "no spring while renaming");
+        assert!(form.view.renaming().is_some(), "the rename box stays");
+    }
+
     /// The early review of brief 110, finding 1 and its caution: when a window's front tab
     /// changes, its waiting slow click and a drag's resting place over it are forgotten.
     #[test]
@@ -5703,6 +5825,11 @@ mod tests {
         assert!(HOVER.with(|h| !h.borrow().contains_key(&(hwnd as isize))));
     }
 
+    /// Brief 106, 5: every code. Outside a test folder (My Computer, the Desktop place, an
+    /// ordinary folder) only the menus and the lists get through, on any item or none; View, the
+    /// header's sort, the web view switch, Select All, Folder Options, the slow readings and
+    /// every file command are refused there. In a test folder everything acts, on a test item
+    /// when it names one.
     #[test]
     fn test_commands_that_change_anything_act_only_in_a_test_folder() {
         use super::*;

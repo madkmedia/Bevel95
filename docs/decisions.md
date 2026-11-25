@@ -6940,7 +6940,14 @@ buttons was drawn as a mockup only).
   written only when changed; Bevel95 Settings' fifth page, Folders: the group "Tabs in folder
   windows" with the lists Tabs and Close button (the second greyed while Tabs is None). OK or
   Apply writes them and tells the open folder windows (`kit::tell_programs_look_changed`), which
-  follow at once; switched off, a window keeps only its tab in front. With `off` every folder
+  follow at once; switched off, a window keeps only its tab in front. The look and the tabs are
+  read from one read of settings.txt (`look::load_with_tabs`); a file that is there but cannot
+  be read just now (not UTF-8, held by another program, empty half way through a save) says
+  nothing of the tabs, and every window keeps its tabs as they are: an unreadable file is never
+  taken for "off" (the second review's N1: every tab behind in every window went). The look
+  itself still falls back to the defaults on such a file, as it always did (the open folder
+  windows take the default look and size until the next change of look finds the file
+  readable). With `off` every folder
   window is as before: no row, no new menu entries, no new keys, the same pixels (the golden
   pictures and the 924 comparison cases unchanged; the Bevel95 Settings pictures changed only
   in their tab row, which gained the Folders tab).
@@ -6982,7 +6989,10 @@ buttons was drawn as a mockup only).
   stops when it goes behind; a new one, with a new window id, reads its place and its facts
   again when it comes forward), so a reading that comes late can only reach the tab that asked.
   A finished rename and a selection a paste or a new shortcut asked for go by window and tab to
-  the tab that asked, in front or behind. A file job outlives its tab as it outlives a window; a
+  the tab that asked, in front or behind; a moved icon renamed in a tab behind has its record in
+  folders.txt written at once from that tab's own view and place (the second review, finding 7:
+  kept until the tab came forward, it was lost when the tab, the tabs or the window closed
+  first). A file job outlives its tab as it outlives a window; a
   question acts on the items by their ids. A tab whose rename's extension question is up does not
   go behind.
 - **Passing states never travel** (the early review's finding 1): when a tab goes behind, comes
@@ -6998,8 +7008,16 @@ buttons was drawn as a mockup only).
   before. A new tab whose place is refused (a drive known locked) goes again at once.
 - **Dragging over a tab**: a drag resting on a tab for the look's delay of opening a tree row
   brings it to the front, so the drop goes into its list; nothing is dropped on the row itself
-  (the no-drop pointer); a drag out of the window whose front tab changed is then decided as one
-  from another window. Tabs cannot be dragged to another order or out of the window.
+  (the no-drop pointer). While the tab in front has a rename box open, a drag resting over
+  another tab does not bring it forward (the second review's N5): a drag neither gives up nor
+  takes the name typed. (`forget_passing` still gives a rename up as Esc does, as the last line
+  of defence: while the box is open the keys are its own and every press ends it first, so only
+  a drive found locked closing the tab in front, or a test command, can still reach it.) A drag
+  out of the window whose front tab changed is then decided as one from another window: brought
+  back to the tab it left, a Move into the folder it came from is refused (the no-drop pointer,
+  as for any drop into an item's own folder from another window) and Ctrl's Copy makes "- Copy"
+  files there; the icons are not moved to another place in it (safe; before the drag caution's
+  repair they landed offset). Tabs cannot be dragged to another order or out of the window.
 - **folders.txt**: tabs add no record. A window with several tabs saves at its close what it
   would save today for the tab in front; the moved-icons records stay per folder.
 - **Memory** (the early review's D3): a tab behind keeps its view (its items and their pictures,

@@ -51,10 +51,31 @@ fn settings() -> config::Config {
     config::parse(&text).0
 }
 
-/// Tabs in folder windows (brief 110): where the row goes and where its X goes (settings.txt).
-pub fn folder_tabs() -> (bevel_core::folder::tabs::Place, bevel_core::folder::tabs::CloseAt) {
-    let s = settings();
-    (s.folder_tabs, s.folder_tabs_close)
+/// Tabs in folder windows (brief 110): where the row goes and where its X goes.
+pub type FolderTabs = (bevel_core::folder::tabs::Place, bevel_core::folder::tabs::CloseAt);
+
+/// The look and size as `load` gives them, and the folder windows' tabs, from ONE read of
+/// settings.txt (the second review's N1). The tabs are None when the file is there but cannot
+/// be read, or is empty for a moment (a save caught half way): then nothing is known of them,
+/// and a window keeps its tabs as they are; an unreadable file is never taken for "off". (The
+/// look itself still falls back to the defaults on such a file, as it always did.)
+pub fn load_with_tabs() -> (Era, Look, Option<FolderTabs>) {
+    let (settings, tabs) = settings_and_tabs(crate::state_file::read(&data_dir().join("settings.txt")));
+    let scale = settings.scale_at(main_screen().1);
+    (settings.era, for_look(settings.era, settings.colors, scale), tabs)
+}
+
+/// The settings a reading gives, and the tabs when the reading says what they are.
+fn settings_and_tabs(read: crate::state_file::Read) -> (config::Config, Option<FolderTabs>) {
+    use crate::state_file::Read;
+    let known = match &read {
+        Read::Missing => true,
+        Read::Text(text) => !text.trim().is_empty(),
+        Read::Unreadable(_) => false,
+    };
+    let settings = config::parse(&read.text().unwrap_or_default()).0;
+    let tabs = known.then_some((settings.folder_tabs, settings.folder_tabs_close));
+    (settings, tabs)
 }
 
 /// The colors Bevel95 is set to (True Color, 256 Colors or 16 Colors; settings.txt).
@@ -75,4 +96,29 @@ pub fn for_look(era: Era, depth: Depth, scale: Scale) -> Look {
     let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
     let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
     Look { theme, regular, bold, scale }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state_file::Read;
+    use bevel_core::folder::tabs::{CloseAt, Place};
+
+    /// N1 of the second review: a settings.txt that cannot be read (or is empty for a moment)
+    /// never says "tabs off"; a missing one is the defaults; a readable one says what it holds,
+    /// and the look comes from the same read.
+    #[test]
+    fn an_unreadable_settings_file_says_nothing_of_the_tabs() {
+        let (s, tabs) = settings_and_tabs(Read::Unreadable("not UTF-8".into()));
+        assert_eq!(tabs, None);
+        assert_eq!(s.era, config::Config::default().era, "the look falls back to the defaults, as before");
+        assert_eq!(settings_and_tabs(Read::Text("  \r\n".into())).1, None);
+        assert_eq!(settings_and_tabs(Read::Missing).1, Some((Place::Off, CloseAt::End)));
+        let text = "era = win2000\nfolder_tabs = above_menu\nfolder_tabs_close = tab\n";
+        let (s, tabs) = settings_and_tabs(Read::Text(text.into()));
+        assert_eq!(tabs, Some((Place::AboveMenu, CloseAt::Tab)));
+        assert_eq!(s.era, Era::Win2000);
+        let (_, tabs) = settings_and_tabs(Read::Text("folder_tabs = off\n".into()));
+        assert_eq!(tabs, Some((Place::Off, CloseAt::End)), "a file that says off is off");
+    }
 }

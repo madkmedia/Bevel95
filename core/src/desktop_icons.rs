@@ -756,6 +756,11 @@ impl Desktop {
     }
 
     /// Whether the extension warning is open over the rename box.
+    /// A rename box is open (typing, or its extension question up).
+    pub fn rename_open(&self) -> bool {
+        self.rename.is_some()
+    }
+
     pub fn is_asking(&self) -> bool {
         self.rename.as_ref().is_some_and(|r| r.asking)
     }
