@@ -54,6 +54,12 @@ const SIZE_WORDS: &[&str] = &["size", "scale", "zoom", "bigger", "smaller", "dpi
 const COLORS_WORDS: &[&str] = &["color", "colors", "colour", "colours", "vga"];
 const MONITOR_LINES_WORDS: &[&str] = &["monitor lines", "monitor", "lines", "crt", "scanlines", "scan lines"];
 
+/// The commands Quick Search offers: every one, but Windows XP's and Windows 7's looks only while
+/// they are offered (`later_shown`: `theme::later_looks_shown`; brief 115, release 0.1.7).
+pub fn commands_for(later_shown: bool) -> Vec<Command> {
+    commands().into_iter().filter(|c| later_shown || !matches!(c.action, Action::Look(_, style) if style.is_later())).collect()
+}
+
 /// Every command, in the table's order (the list ranks them; this order only matters as the
 /// last tie-break, which never comes: no two have the same name).
 pub fn commands() -> Vec<Command> {

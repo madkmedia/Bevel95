@@ -300,10 +300,13 @@ fn choices(labels: impl Iterator<Item = (String, bool)>) -> Menu {
     Menu::new(entries)
 }
 
-/// The Theme submenu: "Windows 95", "Windows 98", "Windows 2000", "Windows XP" (brief 112: XP's
-/// taskbar and Start menu over the 2000 look), a bullet on the look in use.
-pub fn theme_menu(current: Era, style: crate::theme::BarStyle) -> Menu {
-    choices(crate::theme::LOOKS.iter().map(|&(era, s)| (crate::theme::look_title(era, s).to_string(), (era, s) == (current, style))))
+/// The Theme submenu: "Windows 95", "Windows 98", "Windows 2000", then "Windows XP" and
+/// "Windows 7" (briefs 112, 114: their taskbar and Start menu over the 2000 look) when they are
+/// offered (`later_looks`, or the bar in one of them: `theme::looks_shown`; brief 115), a bullet
+/// on the look in use. Entry `i` is `LOOKS[i]` either way.
+pub fn theme_menu(current: Era, style: crate::theme::BarStyle, later_looks: bool) -> Menu {
+    let looks = crate::theme::looks_shown(later_looks, style);
+    choices(looks.iter().map(|&(era, s)| (crate::theme::look_title(era, s).to_string(), (era, s) == (current, style))))
 }
 
 /// The look chosen by entry `index` of `theme_menu`.
@@ -656,9 +659,13 @@ mod tests {
     #[test]
     fn theme_menu_marks_the_current_look() {
         use crate::theme::BarStyle;
-        let m = theme_menu(Era::Win98, BarStyle::Classic);
-        let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["Windows 95", "Windows 98", "Windows 2000", "Windows XP", "Windows 7"]);
+        let labels = |m: &Menu| m.entries.iter().map(|e| e.label.clone()).collect::<Vec<_>>();
+        // Brief 115: hidden by default, shown with `later_looks = yes` or while in one of them.
+        assert_eq!(labels(&theme_menu(Era::Win98, BarStyle::Classic, false)), ["Windows 95", "Windows 98", "Windows 2000"]);
+        assert_eq!(labels(&theme_menu(Era::Win2000, BarStyle::Xp, false)).len(), 5);
+        assert_eq!(labels(&theme_menu(Era::Win2000, BarStyle::Seven, false)).len(), 5);
+        let m = theme_menu(Era::Win98, BarStyle::Classic, true);
+        assert_eq!(labels(&m), ["Windows 95", "Windows 98", "Windows 2000", "Windows XP", "Windows 7"]);
         let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
         assert_eq!(marked, [false, true, false, false, false]);
         assert_eq!(theme_at(0), Some((Era::Win95, BarStyle::Classic)));
@@ -668,9 +675,9 @@ mod tests {
         // Brief 114: Windows 7 after it.
         assert_eq!(theme_at(4), Some((Era::Win2000, BarStyle::Seven)));
         assert_eq!(theme_at(5), None);
-        let xp = theme_menu(Era::Win2000, BarStyle::Xp);
+        let xp = theme_menu(Era::Win2000, BarStyle::Xp, false);
         assert_eq!(xp.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, true, false]);
-        let seven = theme_menu(Era::Win2000, BarStyle::Seven);
+        let seven = theme_menu(Era::Win2000, BarStyle::Seven, false);
         assert_eq!(seven.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, false, true]);
     }
 

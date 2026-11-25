@@ -7087,6 +7087,22 @@ buttons was drawn as a mockup only).
 
 ## Windows XP: the taskbar and Start menu (a first version, 2026-11-25, brief 112)
 
+> **Hidden in 0.1.7** (brief 115; the owner: "Let's ship with them hidden if that's easiest"),
+> together with Windows 7 (next section): their pictures are a first pass from published
+> screenshots, to be replaced by the owner's own captures. They are not offered (the Theme menu,
+> Bevel95 Settings' Look group and its line under the groups, Quick Search) unless settings.txt
+> has `later_looks = yes` (written by nobody: a person adds it by hand) or the bar is in one of
+> those styles at that moment, so a person already there keeps them and the way back
+> (`theme::later_looks_shown`, `looks_shown`; `quick::commands_for`; `Properties::later_looks`).
+> Hidden means hidden only: `bar_style = xp` or `7` works as before, the net after a failure too.
+> With the looks hidden, the General page is laid out as in 0.1.6 (`THREE_LOOKS`: the three looks
+> 21 apart, no line, the groups below where they were); with them, as below (`FIVE_LOOKS`). Their
+> pictures are in the source and in the program, unused while hidden. Golden pictures: the
+> default ones show three looks; `*-bevel95-settings-later-looks` and `*-theme-menu-later-looks`
+> show five. Proof: `properties::tests::xp_and_7_are_hidden_unless_asked_for`,
+> `bar_menu::tests::theme_menu_marks_the_current_look`,
+> `find::tests::commands_show_once_something_typed_matches_them`.
+
 The owner: "The other thing is xp and win7. I think the way to do those, later on, is to do
 taskbar and start menu only and leave that for a long time. Most people only use those two things
 anyway and only die hard folks want the explorers." and "Yes on xp/7 with no apps etc and for v1
@@ -7216,6 +7232,10 @@ the Start menu's rounded corners was made see-through.
   98: XP's face is a little narrower (PROVISIONAL).
 
 ## Windows 7: the taskbar and Start menu (a first version, 2026-11-25, brief 114)
+
+> **Hidden in 0.1.7** with Windows XP, behind `later_looks = yes` (brief 115; see the note at the
+> top of the XP section): first-pass pictures from published screenshots, to be replaced by the
+> owner's own captures; in the source and the program, unused while hidden.
 
 The owner: "Happy to have them both here and ready to commit and release when they are ready."
 

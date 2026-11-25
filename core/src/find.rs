@@ -159,12 +159,12 @@ pub fn listed(programs: Vec<Program>, everything: bool) -> Vec<Program> {
     programs.into_iter().filter(|p| p.own || p.command.is_some() || hidden(&p.name, p.kind).is_none()).collect()
 }
 
-/// The programs and, after them, every command of `quick::commands` but those that only repeat
-/// one of Bevel95's own programs of the same name (Windows Explorer: the program's row starts
-/// the very same window).
-pub fn with_commands(mut programs: Vec<Program>) -> Vec<Program> {
+/// The programs and, after them, every command of `quick::commands_for(later_shown)` but those
+/// that only repeat one of Bevel95's own programs of the same name (Windows Explorer: the
+/// program's row starts the very same window).
+pub fn with_commands(mut programs: Vec<Program>, later_shown: bool) -> Vec<Program> {
     let own: Vec<String> = programs.iter().filter(|p| p.own && p.command.is_none()).map(|p| p.name.to_lowercase()).collect();
-    programs.extend(quick::commands().iter().filter(|c| !own.contains(&c.name.to_lowercase())).map(Program::of_command));
+    programs.extend(quick::commands_for(later_shown).iter().filter(|c| !own.contains(&c.name.to_lowercase())).map(Program::of_command));
     programs
 }
 
@@ -390,13 +390,22 @@ pub struct FindWindow {
     copied: Option<String>,
     /// Shift was held at the last press of the left button.
     shift: bool,
+    /// Windows XP's and Windows 7's looks are among the commands (`theme::later_looks_shown`;
+    /// brief 115).
+    later_shown: bool,
 }
 
 impl FindWindow {
-    /// The window as it opens: the field empty, every program listed, the first selected. The
-    /// commands (`with_commands`) join the programs, their pictures already known.
+    /// The window as it opens, Windows XP's and Windows 7's looks hidden (`new_with`).
     pub fn new(era: Era, programs: Vec<Program>, loaded: bool) -> FindWindow {
-        let programs = with_commands(programs);
+        FindWindow::new_with(era, programs, loaded, false)
+    }
+
+    /// The window as it opens: the field empty, every program listed, the first selected. The
+    /// commands (`with_commands`) join the programs, their pictures already known; XP's and 7's
+    /// looks among them only when `later_shown`.
+    pub fn new_with(era: Era, programs: Vec<Program>, loaded: bool, later_shown: bool) -> FindWindow {
+        let programs = with_commands(programs, later_shown);
         let mut w = FindWindow {
             era,
             icons: programs.iter().map(|p| p.command.map(|a| quick::picture(era, a))).collect(),
@@ -423,9 +432,15 @@ impl FindWindow {
             anchor: 0,
             copied: None,
             shift: false,
+            later_shown,
         };
         w.refind();
         w
+    }
+
+    /// Whether Windows XP's and Windows 7's looks are among the commands.
+    pub fn later_shown(&self) -> bool {
+        self.later_shown
     }
 
     /// The field takes in text put into `text` from outside, the caret where it was put.
@@ -471,7 +486,7 @@ impl FindWindow {
             }
         }
         let selected = self.selected().map(|p| (p.target.clone(), p.folder.clone()));
-        let programs = with_commands(programs);
+        let programs = with_commands(programs, self.later_shown);
         let era = self.era;
         self.icons = programs
             .iter()
@@ -1129,7 +1144,11 @@ mod tests {
     }
 
     fn typed(era: Era, text: &str) -> FindWindow {
-        let mut w = FindWindow::new(era, programs(&menu()), true);
+        typed_with(era, text, false)
+    }
+
+    fn typed_with(era: Era, text: &str, later_shown: bool) -> FindWindow {
+        let mut w = FindWindow::new_with(era, programs(&menu()), true, later_shown);
         for ch in text.chars() {
             w.typed(ch);
         }
@@ -1142,13 +1161,19 @@ mod tests {
         let w = FindWindow::new(Era::Win98, programs(&menu()), true);
         assert_eq!(w.found.len(), 8);
         assert!(w.found.iter().all(|&i| w.programs[i].command.is_none()));
-        // "theme" and "look": the five looks, found by their other words (XP and 7 since the
-        // owner's "I don't see the new themes in quick search", 2026-11-25).
+        // "theme" and "look": the three looks, found by their other words; Windows XP and
+        // Windows 7 too only while they are offered (the owner's "I don't see the new themes in
+        // quick search", 2026-11-25; hidden in 0.1.7: brief 115).
         let names = |w: &FindWindow| rows(w).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
-        let looks = ["Windows 2000 look", "Windows 7 look", "Windows 95 look", "Windows 98 look", "Windows XP look"];
-        assert_eq!(names(&typed(Era::Win98, "theme")), looks);
-        assert_eq!(names(&typed(Era::Win98, "look")), looks);
-        assert_eq!(names(&typed(Era::Win98, "seven")), ["Windows 7 look"]);
+        let three = ["Windows 2000 look", "Windows 95 look", "Windows 98 look"];
+        assert_eq!(names(&typed(Era::Win98, "theme")), three);
+        assert_eq!(names(&typed(Era::Win98, "look")), three);
+        for word in ["seven", "xp", "7", "windows", "look"] {
+            assert!(!names(&typed(Era::Win98, word)).iter().any(|n| n == "Windows XP look" || n == "Windows 7 look"), "neither found when hidden: {word}");
+        }
+        let five = ["Windows 2000 look", "Windows 7 look", "Windows 95 look", "Windows 98 look", "Windows XP look"];
+        assert_eq!(names(&typed_with(Era::Win98, "look", true)), five);
+        assert_eq!(names(&typed_with(Era::Win98, "seven", true)), ["Windows 7 look"]);
         // "size" and "scale": each size the Size menu offers; names beginning with it come first.
         // In their own order, the quarter steps between the whole sizes.
         let sizes: Vec<String> = crate::config::MENU_SCALES.iter().map(|s| format!("Size {s}\u{d7}")).collect();
@@ -1160,11 +1185,12 @@ mod tests {
         assert_eq!(names(&typed(Era::Win98, "sett")), ["Bevel95 Settings"]);
         // "bevel" shows them all, in the folder Bevel95; Enter does the first.
         let w = typed(Era::Win98, "bevel");
-        assert_eq!(w.found.len(), quick::commands().len());
+        assert_eq!(w.found.len(), quick::commands_for(false).len());
         assert!(rows(&w).iter().all(|(_, f)| f == "Bevel95"));
         assert_eq!(rows(&w)[0].0, "Bevel95 Settings", "its name begins with it");
         assert_eq!(w.selected().unwrap().command, Some(Action::Bar(crate::bar_menu::BarCommand::Settings)));
-        assert_eq!(status(w.found.len()), "39 item(s) found", "with Check for updates (brief 100), Monitor Lines (brief 102), XP and 7");
+        assert_eq!(status(w.found.len()), "37 item(s) found", "with Check for updates (brief 100) and Monitor Lines (brief 102)");
+        assert_eq!(typed_with(Era::Win98, "bevel", true).found.len(), 39, "XP and 7 when offered");
         // Monitor Lines by its other words (brief 102), its four by their names' order.
         let lines = ["Monitor Lines Light", "Monitor Lines Medium", "Monitor Lines Off", "Monitor Lines Strong"];
         for word in ["crt", "scanlines", "lines", "monitor lines"] {
@@ -1209,7 +1235,7 @@ mod tests {
         assert_eq!(w.selected().unwrap().command, Some(Action::Size(crate::scale::Scale::whole(3))));
         w.set_programs(programs(&menu()));
         assert_eq!(w.selected().unwrap().command, Some(Action::Size(crate::scale::Scale::whole(3))));
-        assert_eq!(w.programs.len(), 8 + quick::commands().len());
+        assert_eq!(w.programs.len(), 8 + quick::commands_for(false).len());
         assert!(w.wanted_icons().is_empty(), "the command's picture stays");
     }
 

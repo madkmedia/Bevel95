@@ -666,7 +666,7 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
                 Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu(app.quick_launch_on()), MenuStyle::Popup)
             }
             Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::Theme) => {
-                Want::Ready(Kind::Theme, bar_menu::theme_menu(app.era, app.bar_style), MenuStyle::Popup)
+                Want::Ready(Kind::Theme, bar_menu::theme_menu(app.era, app.bar_style, app.later_looks), MenuStyle::Popup)
             }
             Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::Colors) => {
                 Want::Ready(Kind::Colors, bar_menu::colors_menu(app.colors), MenuStyle::Popup)

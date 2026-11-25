@@ -472,6 +472,11 @@ fn start_menu_small_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer
 /// Start with Windows on, Bevel95's clock set 5 minutes ahead (so Use the PC's Time is on), its
 /// desktop switched on.
 fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::Sheet, page: usize) -> Framebuffer {
+    properties_scene_with(theme, era, fonts, sheet, page, false)
+}
+
+/// `properties_scene` with Windows XP and 7 offered (`later_looks = yes`; brief 115) or not.
+fn properties_scene_with(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::Sheet, page: usize, later_looks: bool) -> Framebuffer {
     let values = properties::Values {
         options: TaskbarOptions::default(),
         start: StartOptions::default(),
@@ -493,7 +498,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
-    let mut p = properties::Properties::new(sheet, era, values);
+    let mut p = properties::Properties::new(sheet, era, values).with_later_looks(later_looks);
     p.show_page(page);
     let l = properties::layout(&p, fonts);
     let mut fb = Framebuffer::new(l.width, l.height, 0);
@@ -1264,7 +1269,7 @@ fn bar_submenu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: Option<BarEn
     };
 
     let submenu = match which {
-        BarEntry::Theme => bar_menu::theme_menu(era, bevel_core::theme::BarStyle::Classic),
+        BarEntry::Theme => bar_menu::theme_menu(era, bevel_core::theme::BarStyle::Classic, false),
         BarEntry::Colors => bar_menu::colors_menu(theme.depth),
         // The owner's sheet of brief 102 (no golden picture): Medium, at size 2.
         BarEntry::MonitorLines => {
@@ -1835,6 +1840,16 @@ fn scenes() -> Vec<Scene> {
             "bevel95-settings",
             "Bevel95 Settings (right-click the bar): look, size, starting with Windows, and the clock",
             properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 0),
+        );
+        add(
+            "bevel95-settings-later-looks",
+            "Bevel95 Settings with Windows XP and 7 offered (settings.txt's later_looks = yes; hidden by default in 0.1.7)",
+            properties_scene_with(theme, era, &fonts, properties::Sheet::Bevel95, 0, true),
+        );
+        add(
+            "theme-menu-later-looks",
+            "The Theme submenu with Windows XP and 7 offered (later_looks = yes), this look marked",
+            menu_image(theme, &fonts, &bar_menu::theme_menu(era, bevel_core::theme::BarStyle::Classic, true), MenuStyle::Popup).0,
         );
         add(
             "bevel95-settings-quarter",

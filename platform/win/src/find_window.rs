@@ -288,8 +288,7 @@ pub fn programs_read() {
         return;
     };
     let programs = as_listed(programs);
-    let with_commands = find::with_commands(programs.clone());
-    let same = kit::with::<FindHost, _>(|h| h.form.programs == with_commands).unwrap_or(true);
+    let same = kit::with::<FindHost, _>(|h| h.form.programs == find::with_commands(programs.clone(), h.form.later_shown())).unwrap_or(true);
     if !same {
         log(&format!("Quick Search: the list of programs was read again ({} programs)", programs.len()));
         kit::update::<FindHost>(|h| h.form.set_programs(programs));
@@ -308,9 +307,9 @@ pub fn open() {
         take_focus(hwnd);
         return;
     }
-    let Some((era, monitor_left, bar_top, scale)) =
-        with_app(|app| (app.era, app.monitor.left, app.bar_top_on_screen(), app.scale))
-    else {
+    let Some((era, monitor_left, bar_top, scale, later_shown)) = with_app(|app| {
+        (app.era, app.monitor.left, app.bar_top_on_screen(), app.scale, bevel_core::theme::later_looks_shown(app.later_looks, app.bar_style))
+    }) else {
         return;
     };
     let started = Instant::now();
@@ -324,7 +323,7 @@ pub fn open() {
     };
     let programs = as_listed(programs);
     let count = programs.len();
-    let mut form = FindWindow::new(era, programs, true);
+    let mut form = FindWindow::new_with(era, programs, true, later_shown);
     if let Some(width) = state_file::load(&state_path()).text().and_then(|text| find::read_state(&text)) {
         form.name_w = width;
     }

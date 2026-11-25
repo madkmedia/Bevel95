@@ -153,6 +153,18 @@ pub const LOOKS: [(Era, BarStyle); 5] = [
     (Era::Win2000, BarStyle::Seven),
 ];
 
+/// Whether Windows XP and Windows 7 are offered (brief 115, release 0.1.7: hidden): with the line
+/// `later_looks = yes`, or while the bar is in one of those styles (its way back stays).
+pub const fn later_looks_shown(later_looks: bool, style: BarStyle) -> bool {
+    later_looks || style.is_later()
+}
+
+/// The looks offered (`LOOKS`, or its three classic ones while XP and 7 are hidden: their places
+/// in `LOOKS` stay the same).
+pub fn looks_shown(later_looks: bool, style: BarStyle) -> &'static [(Era, BarStyle)] {
+    if later_looks_shown(later_looks, style) { &LOOKS } else { &LOOKS[..3] }
+}
+
 /// The name of a look as a person picks it.
 pub const fn look_title(era: Era, style: BarStyle) -> &'static str {
     match style {

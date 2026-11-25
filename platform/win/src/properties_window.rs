@@ -151,7 +151,10 @@ fn open_sheet<const OWN: bool>() {
         return;
     };
     let sheet = SheetHost::<OWN>::SHEET;
-    let mut props = Properties::new(sheet, era, values);
+    // Windows XP and 7 in the Look group only with `later_looks = yes` or while in one of them
+    // (brief 115).
+    let later_looks = with_app(|app| app.later_looks).unwrap_or(false);
+    let mut props = Properties::new(sheet, era, values).with_later_looks(later_looks);
     if sheet == Sheet::Taskbar {
         props.documents_empty = start_menu::recent_documents(era).is_empty();
     }

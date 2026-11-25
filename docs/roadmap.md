@@ -32,6 +32,8 @@ here is promised, and an issue is the place to say what matters to you.
   open Windows' own windows.
 
 ## Windows XP and 7
+- Both are hidden in 0.1.7 (settings.txt's `later_looks = yes` shows them) until their pictures
+  come from the owner's own captures instead of published screenshots.
 - XP (a first version is in): its pictures from the owner's own XP instead of published
   screenshots, the states no screenshot shows (under the pointer, flashing, grouped), the All Programs
   menu in XP's own style, the rounded corners.

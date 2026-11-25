@@ -68,6 +68,11 @@ pub struct Config {
     /// the classic looks' size. Written only when the person chooses a size in that style.
     pub scale_xp: Option<Scale>,
     pub scale_7: Option<Scale>,
+    /// `later_looks = yes`: Windows XP and Windows 7 are offered (the Theme menu, Bevel95
+    /// Settings' Look group, Quick Search). Hidden in 0.1.7 unless this line is there (brief 115:
+    /// their pictures are a first pass from published screenshots) or the bar is in one of those
+    /// styles (`theme::later_looks_shown`). Written by nobody: a person adds it by hand.
+    pub later_looks: bool,
 }
 
 /// The line of settings.txt that keeps the size of the bar style `style`.
@@ -241,6 +246,7 @@ impl Default for Config {
             bar_style: crate::theme::BarStyle::Classic,
             scale_xp: None,
             scale_7: None,
+            later_looks: false,
         }
     }
 }
@@ -461,6 +467,12 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             "scaling" => match Way::from_setting(&value) {
                 Some(way) => config.scaling = way,
                 None => warn("scaling must be even, even-light, nearest or smooth"),
+            },
+            // Not among the flags `flag_settings` writes: nobody writes this line.
+            "later_looks" => match value.as_str() {
+                "yes" | "true" | "on" | "1" => config.later_looks = true,
+                "no" | "false" | "off" | "0" => config.later_looks = false,
+                _ => warn("later_looks must be yes or no"),
             },
             "scale" | "scale_xp" | "scale_7" => {
                 let style = match key.as_str() {

@@ -56,14 +56,6 @@ Website: https://madkmedia.github.io/Bevel95/
   and **Open in New Tab** in a folder's menu. The row shows only while a window has two tabs or
   more, so a window looks as always until then; Bevel95 Settings > Folders says where the row goes
   (over the file list unless you choose another place), and **None** switches tabs off.
-- **Windows XP's taskbar and Start menu** (a first version): choose **Windows XP** in the Theme
-  menu or Bevel95 Settings. Only the taskbar and the Start menu are XP's (everything else shows in
-  the 2000 look, and the classic desktop and Bevel95's own programs step aside); their pictures are
-  a first pass from published screenshots.
-- **Windows 7's taskbar and Start menu** (a first version): choose **Windows 7** in the Theme menu.
-  Your Quick Launch shortcuts become the pinned programs, each running program one large icon;
-  like XP's, only the taskbar and the Start menu are 7's, and the pictures are a first pass from
-  published screenshots.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 
@@ -160,8 +152,7 @@ Edition, more classic programs (Notepad, Paint), other languages than English. S
 All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95.exe`):
 
 - `bevel95.exe` and the `programs` folder: the programs.
-- `settings.txt`: the look, the size (the classic looks', Windows XP's and Windows 7's each kept
-  apart) and every other setting (Bevel95 Settings and Taskbar
+- `settings.txt`: the look, the size and every other setting (Bevel95 Settings and Taskbar
   Properties change it; it explains each line). Edit it in Notepad if you like and save it as UTF-8. A
   file Bevel95 cannot read (UTF-16, say) is left exactly as it is: Bevel95 runs on its defaults
   until it can read it again, and saves no setting into it.
@@ -173,11 +164,9 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
 - `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
   of recent file operations, the order of the task buttons, the commands typed into Run, the
   width of Quick Search's Name column.
-- `often.txt`: under the Windows XP and 7 styles, the programs you start most often through the
-  Start menu and Quick Search (their names and shortcuts), for their Start menus' list.
-- `style-failed.txt`: left when the bar stopped with an error in the Windows XP or 7 style; every
-  start after that is classic and says so, until you choose a look (the classic one shown, or XP
-  or 7 to try again). Choosing a look takes it away and is remembered.
+- `often.txt` and `style-failed.txt`: written only by taskbar styles in the making that this
+  version does not offer (the project's notes, docs/decisions.md, say more); with the classic
+  looks they never appear.
 - `quick-launch.txt`: the built-in Quick Launch icons you took off the band (your own shortcuts
   stay in Windows' own Quick Launch folder), and the band's width once you have dragged it.
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options

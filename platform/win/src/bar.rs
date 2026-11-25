@@ -423,6 +423,9 @@ pub struct App {
     /// The style settings.txt says (in the run after a failure the bar runs classic while this is
     /// still XP or 7: `theme::look_chosen`).
     pub saved_style: theme::BarStyle,
+    /// settings.txt's `later_looks = yes` (read at the start; written by nobody): Windows XP and 7
+    /// offered also while a classic look is in use (brief 115; `theme::later_looks_shown`).
+    pub later_looks: bool,
 }
 
 impl App {
@@ -800,6 +803,7 @@ pub fn run() -> u32 {
             folder_tabs: (settings.folder_tabs, settings.folder_tabs_close),
             bar_style: settings.bar_style,
             saved_style,
+            later_looks: settings.later_looks,
         });
     });
     // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
