@@ -2446,7 +2446,57 @@ fn xp_scenes() -> Vec<Scene> {
         Scene { section, name: "winxp-bar-overfull".into(), caption: "XP bar style: more buttons than fit, the 2000 look's arrows (PROVISIONAL)", image: xp_bar(overfull(), true, "10:58 AM") },
         Scene { section, name: "winxp-start-menu".into(), caption: "XP bar style: the Start menu (made-up names), as Toasty Tech's default desktop", image: xp_start_scene(None) },
         Scene { section, name: "winxp-start-menu-hot".into(), caption: "XP bar style: the Start menu, the pointer on an often-used program (316AC5, PROVISIONAL)", image: xp_start_scene(Some(4)) },
+        Scene {
+            section: "Windows 7 (bar style)",
+            name: "win7-bar-slots".into(),
+            caption: "7 bar style: two pinned programs (the second running, in front), a program not pinned, from made-up data",
+            image: seven_bar_scene(),
+        },
+        Scene { section: "Windows 7 (bar style)", name: "win7-start-menu".into(), caption: "7 bar style: the Start menu over the bar (made-up names; the user \"User\")", image: seven_start_scene() },
     ]
+}
+
+/// The 7 bar from made-up data through the bar's own path (`paint::paint_bar` with `WIN7`).
+fn seven_bar_scene_at(width: i32) -> Framebuffer {
+    let theme = &bevel_core::theme::WIN7;
+    let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let mut fb = Framebuffer::new(width, theme.bar.height, 0);
+    let bar = Bar {
+        tasks: vec![task("Inbox - Mail", &MAIL, TaskState::Active), task("Notes", &DOCUMENT, TaskState::Normal)],
+        pinned: vec![
+            paint::Pinned { icon: Some(icon(&COMPUTER, 2)), task: None },
+            paint::Pinned { icon: Some(icon(&MAIL, 2)), task: Some(0) },
+        ],
+        big_icons: vec![Some(icon(&MAIL, 2)), Some(icon(&DOCUMENT, 2))],
+        tray: vec![Some(icon(&COMPUTER, 1)), Some(icon(&FOLDER, 1))],
+        clock: "3:45 PM".into(),
+        clock_widest: WIDEST.into(),
+        date: "11/25/2026".into(),
+        ..Bar::default()
+    };
+    paint::paint_bar(&mut fb, theme, &fonts, &bar);
+    fb
+}
+
+fn seven_bar_scene() -> Framebuffer {
+    seven_bar_scene_at(800)
+}
+
+/// The 7 Start menu over the bar on an 800×600 screen.
+fn seven_start_scene() -> Framebuffer {
+    let theme = &bevel_core::theme::WIN7;
+    let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let mut screen = Framebuffer::new(800, 600, rgb(0x3A6EA5));
+    screen.blit(&seven_bar_scene_at(800), 0, 560);
+    let programs: Vec<(String, Option<Icon>)> = [("Notes", &DOCUMENT), ("Mail", &MAIL), ("Calculator", &COMPUTER)].iter().map(|(n, a)| (n.to_string(), Some(icon(a, 2)))).collect();
+    let menu = bevel_core::seven_start::menu("User", &programs, 560);
+    let layout = bevel_core::seven_start::layout(&menu);
+    let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut fb, theme, &fonts, &menu, MenuStyle::SevenStart, &layout);
+    screen.blit(&fb, 0, 560 - layout.height);
+    screen
 }
 
 /// The XP Start menu open over the bar on an 800×600 screen, as Toasty Tech's default desktop

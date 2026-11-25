@@ -82,6 +82,9 @@ pub enum Kind {
     /// Windows XP's Start menu (brief 112): entry i is `xp_start::item_at(menu, i)`; the pinned
     /// programs' and the often-used ones' targets, in the menu's order.
     XpStart(Vec<String>, Vec<String>),
+    /// Windows 7's Start menu (brief 114): entry i is `seven_start::item_at(menu, i)`; the
+    /// often-used programs' targets, in the menu's order.
+    SevenStart(Vec<String>),
     /// A folder of the Programs or Favorites menus, by entry indices from that menu down.
     Folder(Tree, Vec<usize>),
     /// Your recently opened documents.
@@ -149,7 +152,7 @@ pub struct Popup {
 
 impl Popup {
     pub fn is_start(&self) -> bool {
-        matches!(self.kind, Kind::Start | Kind::XpStart(..))
+        matches!(self.kind, Kind::Start | Kind::XpStart(..) | Kind::SevenStart(..))
     }
 
     /// Windows 2000's Quick Launch list (its "»" is drawn pushed in while it is open).
@@ -387,10 +390,16 @@ pub fn open_start(bar: HWND, by_keyboard: bool) {
         places.retain(|key, _| place_still_there(app, key));
         app.menu_scroll = places;
     });
+    // The room above the Start button, in the look's pixels (the later Windows' menus shorten to
+    // it: the review of brief 112, finding 3).
+    let room = with_app(|app| app.scale.old_fit(button.y - app.monitor.top)).unwrap_or(bevel_core::xp_start::HEIGHT);
+    if with_app(|app| app.bar_style == bevel_core::theme::BarStyle::Seven).unwrap_or(false) {
+        let (kind, mut menu) = seven_start_menu(room);
+        menu.show_keys = by_keyboard;
+        open_root(bar, kind, menu, MenuStyle::SevenStart, At::StartButton(button));
+        return;
+    }
     if with_app(|app| app.xp()).unwrap_or(false) {
-        // The room above the Start button, in the look's pixels (the menu shortens to it: the
-        // review of brief 112, finding 3).
-        let room = with_app(|app| app.scale.old_fit(button.y - app.monitor.top)).unwrap_or(bevel_core::xp_start::HEIGHT);
         let (kind, mut menu) = xp_start_menu(room);
         menu.show_keys = by_keyboard;
         open_root(bar, kind, menu, MenuStyle::XpStart, At::StartButton(button));
@@ -425,6 +434,18 @@ fn xp_start_menu(room: i32) -> (Kind, Menu) {
     let menu = xp_start::menu_in(&start_menu::user_name(), &with_pictures(&pinned), &with_pictures(&often), room);
     let kind = Kind::XpStart(pinned.into_iter().map(|(_, t)| t).collect(), often.into_iter().map(|(_, t)| t).collect());
     (kind, menu)
+}
+
+/// Windows 7's Start menu (brief 114): the Windows user's name, the programs started most often
+/// (their shell's 32×32 pictures), for a room `room` rows high.
+fn seven_start_menu(room: i32) -> (Kind, Menu) {
+    use bevel_core::seven_start;
+    let often: Vec<(String, String)> = crate::often::top(12);
+    let (_, p, _) = seven_start::fit(often.len(), room);
+    let often: Vec<(String, String)> = often.into_iter().take(p).collect();
+    let rows: Vec<(String, Option<bevel_core::fb::Icon>)> = often.iter().map(|(n, t)| (n.clone(), window_list::big_icon(t))).collect();
+    let menu = seven_start::menu(&start_menu::user_name(), &rows, room);
+    (Kind::SevenStart(often.into_iter().map(|(_, t)| t).collect()), menu)
 }
 
 /// A picture with every pixel doubled (the shell's 16×16 as XP's 32×32 places).
@@ -494,7 +515,7 @@ fn show_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, layout: MenuLa
     let Some(hwnd) = create(bar, rect, false) else {
         return;
     };
-    let start = matches!(kind, Kind::Start | Kind::XpStart(..) | Kind::QuickList(_));
+    let start = matches!(kind, Kind::Start | Kind::XpStart(..) | Kind::SevenStart(..) | Kind::QuickList(_));
     let popup = Popup { hwnd, kind, menu, style, layout, rect, parent_entry: None, previous, tracking: false };
     with_app(|app| app.menus.push(popup));
     // SAFETY: our own windows.
@@ -627,6 +648,11 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
             Kind::XpStart(..) => match bevel_core::xp_start::item_at(&parent.menu, index)? {
                 bevel_core::xp_start::Item::AllPrograms => Want::Folder(Tree::Programs, Vec::new(), app.start_programs.clone()),
                 bevel_core::xp_start::Item::Right(bevel_core::xp_start::Right::MyRecentDocuments) => Want::Documents,
+                _ => return None,
+            },
+            // 7's All Programs: the classic Programs cascade beside it (PROVISIONAL).
+            Kind::SevenStart(..) => match bevel_core::seven_start::item_at(&parent.menu, index)? {
+                bevel_core::seven_start::Item::AllPrograms => Want::Folder(Tree::Programs, Vec::new(), app.start_programs.clone()),
                 _ => return None,
             },
             Kind::Test(path) => {
@@ -956,11 +982,12 @@ enum Action {
 
 /// Runs entry `index` of the menu at `level`.
 fn choose(level: usize, index: usize) {
-    let Some((kind, entry_kind, era, opts, xp_item)) = with_app(|app| {
+    let Some((kind, entry_kind, era, opts, xp_item, seven_item)) = with_app(|app| {
         let popup = app.menus.get(level)?;
         let entry = popup.menu.entries.get(index).filter(|e| e.choosable())?;
         let xp_item = matches!(popup.kind, Kind::XpStart(..)).then(|| bevel_core::xp_start::item_at(&popup.menu, index)).flatten();
-        Some((popup.kind.clone(), entry.kind, app.era, app.start_options, xp_item))
+        let seven_item = matches!(popup.kind, Kind::SevenStart(..)).then(|| bevel_core::seven_start::item_at(&popup.menu, index)).flatten();
+        Some((popup.kind.clone(), entry.kind, app.era, app.start_options, xp_item, seven_item))
     })
     .flatten() else {
         return; // a separator or a grayed-out entry: nothing happens
@@ -1041,6 +1068,27 @@ fn choose(level: usize, index: usize) {
                 None => {
                     close(false);
                     crate::bar::xp_start_action(item);
+                    return;
+                }
+            },
+            None => return,
+        },
+        // 7's Start menu (brief 114): a program is started (and counted); a place opens as the
+        // classic entries' do; the search box, Shut down and its arrow as `bar::seven_start_action`.
+        Kind::SevenStart(often) => match seven_item {
+            Some(bevel_core::seven_start::Item::Program(i)) => match often.get(i) {
+                Some(target) => {
+                    let name = with_app(|app| app.menus.get(level).and_then(|p| p.menu.entries.get(index)).map(|e| e.label.clone())).flatten().unwrap_or_default();
+                    crate::often::count(&name, target);
+                    Action::Open(target.clone())
+                }
+                None => return,
+            },
+            Some(item) => match crate::bar::seven_start_place(item) {
+                Some(place) => Action::Open(place),
+                None => {
+                    close(false);
+                    crate::bar::seven_start_action(item);
                     return;
                 }
             },

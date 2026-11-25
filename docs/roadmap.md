@@ -34,7 +34,10 @@ here is promised, and an issue is the place to say what matters to you.
 ## Windows XP and 7
 - XP (a first version is in): its pictures from the owner's own XP instead of published
   screenshots, the states no screenshot shows (under the pointer, flashing, grouped), the All Programs
-  menu in XP's own style, the rounded corners. Windows 7's taskbar is being painted.
+  menu in XP's own style, the rounded corners.
+- 7 (a first version is in): its pictures from the owner's own Windows 7, the states no screenshot
+  shows (under the pointer, pressed, flashing), paging a full bar, All Programs and the search in
+  place, the jump lists and window pictures, Segoe UI's letters.
 
 ## Programs
 - More classic programs: Notepad, Paint and others. Today there are Minesweeper, Solitaire and

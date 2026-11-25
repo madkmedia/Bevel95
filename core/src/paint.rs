@@ -60,12 +60,31 @@ pub struct Bar {
     pub task_on_top: Option<usize>,
     /// The Quick Launch band, while it is switched on.
     pub quick_launch: Option<quick_launch::Band>,
+    /// Windows 7's bar style (brief 114): the pinned programs (Quick Launch's shortcuts) in their
+    /// order, each with the running task (an index into `tasks`) that stands in its place.
+    pub pinned: Vec<Pinned>,
+    /// Windows 7's bar style: each task's 32×32 picture (by the index into `tasks`; missing: its
+    /// 16×16 doubled).
+    pub big_icons: Vec<Option<Icon>>,
+    /// Windows 7's bar style: the clock's second line, the short date.
+    pub date: String,
+}
+
+/// A pinned program on Windows 7's bar (brief 114).
+#[derive(Clone, Debug, Default)]
+pub struct Pinned {
+    /// Its 32×32 picture.
+    pub icon: Option<Icon>,
+    /// The running task that is this program (`None`: not running).
+    pub task: Option<usize>,
 }
 
 /// Where everything of `bar` goes on a bar `width` wide, as `paint_bar` lays it out.
 pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
-    if theme.bar_style == crate::theme::BarStyle::Xp {
-        return crate::xp::bar_layout(theme, fonts, width, bar);
+    match theme.bar_style {
+        crate::theme::BarStyle::Xp => return crate::xp::bar_layout(theme, fonts, width, bar),
+        crate::theme::BarStyle::Seven => return crate::seven_bar::bar_layout(fonts, width, bar),
+        crate::theme::BarStyle::Classic => {}
     }
     let number = bar.tray_number.as_ref().filter(|(_, text)| !text.is_empty()).map(|&(i, _)| i);
     let quick = bar.quick_launch.as_ref().map(quick_launch::Band::shape);
@@ -75,8 +94,10 @@ pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLay
 /// Paints the whole bar (the framebuffer should be `theme.bar.height` tall) and returns
 /// where everything went, for hit-testing.
 pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) -> BarLayout {
-    if theme.bar_style == crate::theme::BarStyle::Xp {
-        return crate::xp::paint_bar(fb, theme, fonts, bar);
+    match theme.bar_style {
+        crate::theme::BarStyle::Xp => return crate::xp::paint_bar(fb, theme, fonts, bar),
+        crate::theme::BarStyle::Seven => return crate::seven_bar::paint_bar(fb, fonts, bar),
+        crate::theme::BarStyle::Classic => {}
     }
     let c = &theme.colors;
     fb.fill(Rect::new(0, 0, fb.width, fb.height), c.face);
@@ -613,6 +634,8 @@ pub enum MenuStyle {
     StartSmall,
     /// Windows XP's Start menu (brief 112): laid out and painted by `xp_start`.
     XpStart,
+    /// Windows 7's Start menu (brief 114): laid out and painted by `seven_start`.
+    SevenStart,
 }
 
 /// Where a menu's entries go, and its size, at 1×.
@@ -656,7 +679,7 @@ fn frame_of(theme: &Theme, style: MenuStyle) -> i32 {
     match style {
         MenuStyle::Popup => theme.popup.frame,
         MenuStyle::Start | MenuStyle::StartSmall | MenuStyle::Cascade => theme.start_menu.frame,
-        MenuStyle::XpStart => 0,
+        MenuStyle::XpStart | MenuStyle::SevenStart => 0,
     }
 }
 
@@ -724,6 +747,7 @@ fn item_width(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle) -> i3
             items.icon_x + items.icon + items.text_gap + widest + pad
         }
         MenuStyle::XpStart => crate::xp_start::WIDTH,
+        MenuStyle::SevenStart => crate::seven::menu::W,
     }
 }
 
@@ -1191,6 +1215,10 @@ pub fn paint_menu(
 }
 
 fn paint_menu_with(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, layout: &MenuLayout) {
+    if style == MenuStyle::SevenStart {
+        crate::seven_start::paint(fb, fonts, menu, layout);
+        return;
+    }
     if style == MenuStyle::XpStart {
         crate::xp_start::paint(fb, fonts, menu, layout);
         return;

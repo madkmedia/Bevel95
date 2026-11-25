@@ -53,6 +53,8 @@ pub mod scale;
 mod scroll;
 pub mod setup;
 pub mod seven;
+pub mod seven_bar;
+pub mod seven_start;
 mod shell_about;
 pub mod solitaire;
 pub mod start;

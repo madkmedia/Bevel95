@@ -621,15 +621,19 @@ mod tests {
         use crate::theme::BarStyle;
         let m = theme_menu(Era::Win98, BarStyle::Classic);
         let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["Windows 95", "Windows 98", "Windows 2000", "Windows XP"]);
+        assert_eq!(labels, ["Windows 95", "Windows 98", "Windows 2000", "Windows XP", "Windows 7"]);
         let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
-        assert_eq!(marked, [false, true, false, false]);
+        assert_eq!(marked, [false, true, false, false, false]);
         assert_eq!(theme_at(0), Some((Era::Win95, BarStyle::Classic)));
         assert_eq!(theme_at(2), Some((Era::Win2000, BarStyle::Classic)));
         // Brief 112: Windows XP is the 2000 look with XP's bar; marked only under the XP style.
         assert_eq!(theme_at(3), Some((Era::Win2000, BarStyle::Xp)));
-        assert_eq!(theme_at(4), None);
+        // Brief 114: Windows 7 after it.
+        assert_eq!(theme_at(4), Some((Era::Win2000, BarStyle::Seven)));
+        assert_eq!(theme_at(5), None);
         let xp = theme_menu(Era::Win2000, BarStyle::Xp);
-        assert_eq!(xp.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, true]);
+        assert_eq!(xp.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, true, false]);
+        let seven = theme_menu(Era::Win2000, BarStyle::Seven);
+        assert_eq!(seven.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, false, true]);
     }
 }

@@ -107,12 +107,13 @@ pub struct Theme {
 
 /// How the taskbar and the Start menu are drawn (brief 112): as the look's own Windows drew them,
 /// or as Windows XP did (a first version; everything else of Bevel95 then shows in the 2000 look).
-/// Room is left for Windows 7's (`Seven`), being painted elsewhere.
+/// Windows 7's (`Seven`, brief 114) likewise.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BarStyle {
     #[default]
     Classic,
     Xp,
+    Seven,
 }
 
 impl BarStyle {
@@ -121,6 +122,7 @@ impl BarStyle {
         match self {
             BarStyle::Classic => "classic",
             BarStyle::Xp => "xp",
+            BarStyle::Seven => "7",
         }
     }
 
@@ -128,20 +130,34 @@ impl BarStyle {
         match word {
             "classic" => Some(BarStyle::Classic),
             "xp" => Some(BarStyle::Xp),
+            "7" => Some(BarStyle::Seven),
             _ => None,
         }
+    }
+
+    /// Whether it is a later Windows' bar over the 2000 look (XP's or 7's): everything that is not
+    /// the bar or the Start menu shows in the 2000 look, in True Color, without the classic desktop
+    /// and Bevel95's own programs.
+    pub const fn is_later(self) -> bool {
+        !matches!(self, BarStyle::Classic)
     }
 }
 
 /// The looks as a person picks them (the Theme menus, Bevel95 Settings): the three classic looks,
-/// then Windows XP, which is the 2000 look with XP's taskbar and Start menu (brief 112).
-pub const LOOKS: [(Era, BarStyle); 4] =
-    [(Era::Win95, BarStyle::Classic), (Era::Win98, BarStyle::Classic), (Era::Win2000, BarStyle::Classic), (Era::Win2000, BarStyle::Xp)];
+/// then Windows XP and Windows 7, the 2000 look with their taskbar and Start menu (briefs 112, 114).
+pub const LOOKS: [(Era, BarStyle); 5] = [
+    (Era::Win95, BarStyle::Classic),
+    (Era::Win98, BarStyle::Classic),
+    (Era::Win2000, BarStyle::Classic),
+    (Era::Win2000, BarStyle::Xp),
+    (Era::Win2000, BarStyle::Seven),
+];
 
 /// The name of a look as a person picks it.
 pub const fn look_title(era: Era, style: BarStyle) -> &'static str {
     match style {
         BarStyle::Xp => "Windows XP",
+        BarStyle::Seven => "Windows 7",
         BarStyle::Classic => era.title(),
     }
 }
@@ -162,6 +178,7 @@ pub fn bar_theme(era: Era, depth: Depth, style: BarStyle) -> &'static Theme {
     match style {
         BarStyle::Classic => theme_in(era, depth),
         BarStyle::Xp => &WINXP,
+        BarStyle::Seven => &WIN7,
     }
 }
 
@@ -755,6 +772,20 @@ pub const WINXP: Theme = Theme {
     start: StartMetrics { margin_left: 0, ..WIN2000.start },
     task: TaskMetrics { gap_after_start: 8, spacing: 0, ..WIN2000.task },
     tray: TrayMetrics { margin_x: 12, icon_step: 18, ..WIN2000.tray },
+    ..WIN2000
+};
+
+/// Windows 7 Basic's taskbar (brief 114; `seven`, `seven_bar`): the 2000 look for everything else,
+/// the bar 40 high, its slots 60 wide every 62 from x 59, notification icons every 24. Always True
+/// Color.
+pub const WIN7: Theme = Theme {
+    slug: "win7",
+    bar_style: BarStyle::Seven,
+    bar: BarMetrics { height: 40, edge: 0, pad_y: 0 },
+    colors: Colors { clock_text: rgb(0xFFFFFF), ..WIN2000.colors },
+    start: StartMetrics { margin_left: 0, ..WIN2000.start },
+    task: TaskMetrics { gap_after_start: 3, width: 60, min_width: 60, spacing: 2, ..WIN2000.task },
+    tray: TrayMetrics { margin_x: 0, icon_step: 24, ..WIN2000.tray },
     ..WIN2000
 };
 

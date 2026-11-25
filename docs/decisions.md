@@ -7204,3 +7204,65 @@ the Start menu's rounded corners was made see-through.
   its top rows, the frame with its picture, the lines and the columns in 0. The name there ("Jim
   Midnite") is 13 rows of ink from band row 25, at x 67, as ours; 94 wide where Tahoma 17 bold is
   98: XP's face is a little narrower (PROVISIONAL).
+
+## Windows 7: the taskbar and Start menu (a first version, 2026-11-25, brief 114)
+
+The owner: "Happy to have them both here and ready to commit and release when they are ready."
+
+**Where the pictures come from.** Like XP's, they are NOT from the owner's own Windows: a FIRST
+PASS from published screenshots of Windows 7 with the Windows 7 Basic theme, read through an
+archive copy of a site that refused automated requests (the owner allowed their use on
+2026-11-25; `private/probes/win7/survey.md`, `for-the-builder.md`, the art inventory). The Start
+menu rests on ONE screenshot (7601 SP1, 1440x900). Painted in the core by another worker on the
+branch `seven-bar` (`core::seven`, `core::seven::menu`, `art/src/seven.rs`, `Look::Win7`), merged
+here; its two comparisons still show 0 differing pixels in every part (`core/tests/seven.rs`,
+`seven_menu.rs`, ignored by default), and its own golden pictures stay with their own writers.
+
+- **The style**: `BarStyle::Seven`, `bar_style = 7`; the Theme menus and Bevel95 Settings list
+  "Windows 7" after Windows XP (`theme::LOOKS`); the Settings line names both: "XP and 7: their
+  taskbar and Start menu only, a first version." (the Look rows 15 apart now). Everything decided
+  for XP holds (`BarStyle::is_later`): the 2000 look for Bevel95's own windows (PROVISIONAL), no
+  classic desktop, Bevel95's own programs not listed, folders in Windows' Explorer, always True
+  Color, the switches that show nothing do nothing, the way back after a failure (one mark for
+  both styles, its message naming the style that failed), nothing written that the person did not
+  choose. The bar always combines a program's windows under 7 (the `group` setting is kept as it
+  is). `theme::WIN7`: 40 high.
+- **The taskbar** (`core::seven_bar`, painted by `seven::paint`, laid out into `BarLayout`): the
+  orb (its "menu open" picture while the menu is up); slots 60 wide every 62 from x 59: first
+  Quick Launch's shortcuts in their order (bare 32x32 pictures), a running program in its pinned
+  slot when its program file is the shortcut's target (whole paths, case aside; a shortcut that
+  cannot be read, is advertised or points at a folder never matches: `seven_bar::pin_tasks`,
+  `find_window::shortcut_program`), then the running programs not pinned in the order of their
+  first window; the lighter frame for the program in front, a flashing one alternating at the
+  classic rate (PROVISIONAL). Pictures: the shell's real 32x32 of the program file or the shortcut
+  (`window_list::big_icon`, `SHGFI_LARGEICON` drawn at 32), never a doubled 16; a task without
+  one gets its 16 doubled. Slots past the notification area's fade are not shown (PROVISIONAL:
+  Windows 7 paged them; no screenshot). The notification area: icons every 24, all shown, no
+  hide arrow (PROVISIONAL); Bevel95's speaker, network and battery pictures are 2000's
+  (PROVISIONAL); the clock in two lines, the time and under it the short date as Windows gives it
+  for the person's region, in the stand-in letters (Tahoma 8 for Segoe UI 9: PROVISIONAL), centred
+  by the measured rule. Show desktop: the strip at the far right does what Quick Launch's Show
+  Desktop does.
+- **Clicks**: not running: the shortcut starts (on the press). Running: as a task button (to the
+  front, or minimized if in front; several windows: the group's list above it, 2000 look,
+  PROVISIONAL: 7 showed small pictures). The right button on a running slot: the window menu or
+  the group's menu as today; on a pinned one not running, the middle button and Shift: nothing in
+  this version. No dragging of slots. The Windows key as the `windows_key` setting says.
+- **The Start menu** (`core::seven_start`, `MenuStyle::SevenStart`, painted by
+  `seven::menu::paint`): the programs started most often (often.txt, counted under 7 as under XP)
+  as many as fit; All Programs (the Programs cascade beside it, 2000 look: PROVISIONAL); the search
+  box (a click opens Quick Search; it takes no typing: PROVISIONAL); the user's name (their profile
+  folder), Documents, Pictures, Music | Computer | Control Panel, Devices and Printers, Default
+  Programs (Windows' default apps page), Help and Support, each where the XP menu's matching entry
+  goes; "Games" left out (today's Windows has no such place); Shut down and its arrow both open the
+  2000 look's Shut Down window (PROVISIONAL). The user's picture is the screenshot's flower tile
+  (PROVISIONAL). The entry under the pointer or the keys: a one-pixel frame 7DA2CE (PROVISIONAL,
+  Bevel95's choice; no picture exists). A short screen: the menu shortens (`seven_start::fit`:
+  the programs first, then the right column's lines from its bottom; All Programs, the search box
+  and Shut down stay; the measured gradients' rule `seven::menu::source_row` for the height).
+- **Proof**: `seven_bar::tests` (each program's slot, the matching, the layout at three widths, the
+  classic and XP bars never reaching the 7 painting), `seven_start::tests` (every entry found,
+  the short screen), `properties::windows_xp_is_the_fourth_look` (7 the fifth, its key, a classic
+  choice resetting it, `bar_style = 7` read), `bar_menu`'s theme menu test, the golden pictures
+  `win7-bar-slots` and `win7-start-menu`, the branch's comparisons. The owner's bar was never
+  switched to 7: the first live run is theirs.

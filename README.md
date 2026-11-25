@@ -60,6 +60,10 @@ Website: https://madkmedia.github.io/Bevel95/
   menu or Bevel95 Settings. Only the taskbar and the Start menu are XP's (everything else shows in
   the 2000 look, and the classic desktop and Bevel95's own programs step aside); their pictures are
   a first pass from published screenshots.
+- **Windows 7's taskbar and Start menu** (a first version): choose **Windows 7** in the Theme menu.
+  Your Quick Launch shortcuts become the pinned programs, each running program one large icon;
+  like XP's, only the taskbar and the Start menu are 7's, and the pictures are a first pass from
+  published screenshots.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 

@@ -1,13 +1,14 @@
-//! A way back after a failure in a bar style other than the classic one (the review of brief 112):
-//! when the bar ends by the panic rule while that style is on, a mark is left (`style-failed.txt`
-//! in the data folder, through `state_file`); the next start finds it and begins in the classic
-//! style for that run, without changing settings.txt, and says so once in a message window.
+//! A way back after a failure in a bar style other than the classic one (the review of brief 112;
+//! brief 114: one mark for XP's and 7's): when the bar ends by the panic rule while such a style
+//! is on, a mark is left (`style-failed.txt` in the data folder, through `state_file`, holding the
+//! style's word); the next start finds it and begins in the classic style for that run, without
+//! changing settings.txt, and says so once in a message window naming the style that failed.
 //! Choosing any look (the Theme menu, Bevel95 Settings) takes the mark away. `--restore` gives
 //! Windows' taskbar back as always and leaves the mark: the next start of the bar is classic once.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use bevel_core::theme::BarStyle;
+use bevel_core::theme::{BarStyle, Era, look_title};
 
 use crate::log::data_dir;
 
@@ -22,14 +23,22 @@ fn path() -> std::path::PathBuf {
 
 /// The bar runs in `style` now.
 pub fn style_now(style: BarStyle) {
-    STYLE_NOW.store(if style == BarStyle::Classic { 0 } else { 1 }, Ordering::SeqCst);
+    let n = match style {
+        BarStyle::Classic => 0,
+        BarStyle::Xp => 1,
+        BarStyle::Seven => 2,
+    };
+    STYLE_NOW.store(n, Ordering::SeqCst);
 }
 
 /// The panic rule: leaves the mark if the bar ran in a style other than the classic one.
 pub fn bar_failed() {
-    if STYLE_NOW.load(Ordering::SeqCst) != 0 {
-        let _ = bevel_winkit::state_file::write_whole(&path(), b"The bar stopped with an error in a style other than the classic one.\n");
-    }
+    let word = match STYLE_NOW.load(Ordering::SeqCst) {
+        1 => BarStyle::Xp.setting(),
+        2 => BarStyle::Seven.setting(),
+        _ => return,
+    };
+    let _ = bevel_winkit::state_file::write_whole(&path(), format!("{word}\n").as_bytes());
 }
 
 /// Whether the mark is there.
@@ -44,5 +53,11 @@ pub fn clear() {
     }
 }
 
-/// The message of a start that fell back to the classic style.
-pub const MESSAGE: &str = "The Windows XP style stopped with an error last time. The classic look is shown. Choose Windows XP again under Theme to try again.";
+/// The message of a start that fell back to the classic style, naming the style that failed
+/// (the mark's word; Windows XP if it cannot be read).
+pub fn message() -> String {
+    let word = bevel_winkit::state_file::read(&path()).text().unwrap_or_default();
+    let style = BarStyle::from_setting(word.trim()).filter(|s| s.is_later()).unwrap_or(BarStyle::Xp);
+    let name = look_title(Era::Win2000, style);
+    format!("The {name} style stopped with an error last time. The classic look is shown. Choose {name} again under Theme to try again.")
+}

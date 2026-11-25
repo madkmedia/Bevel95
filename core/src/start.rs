@@ -371,6 +371,9 @@ pub fn layout_root(
     if style == MenuStyle::XpStart {
         return crate::xp_start::layout(menu);
     }
+    if style == MenuStyle::SevenStart {
+        return crate::seven_start::layout(menu);
+    }
     if style == MenuStyle::Popup {
         return paint::layout_menu(theme, fonts, menu, style, screen_h);
     }

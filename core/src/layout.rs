@@ -31,6 +31,10 @@ pub struct BarLayout {
     /// Windows 98's and 2000's line and grip before the task buttons while Quick Launch is off
     /// (`quick_launch::task_band`; none in 95).
     pub task_band: Option<quick_launch::TaskBand>,
+    /// Windows 7's bar style (brief 114): each pinned program's slot (by its index in
+    /// `paint::Bar::pinned`; a running one's is also its task's in `tasks`), and Show desktop.
+    pub pinned: Vec<Rect>,
+    pub show_desktop: Option<Rect>,
 }
 
 impl BarLayout {
@@ -119,7 +123,20 @@ pub fn bar_with(
         (None, Some(t)) => task_buttons_in(theme, t.left, t.right, task_count, row),
         (None, None) => task_buttons(theme, start, w.well, task_count, row),
     };
-    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number, quick, task_band }
+    BarLayout {
+        start,
+        tasks,
+        first_task,
+        scroll,
+        well: w.well,
+        tray: w.tray,
+        clock: w.clock,
+        number: w.number,
+        quick,
+        task_band,
+        pinned: Vec::new(),
+        show_desktop: None,
+    }
 }
 
 /// The notification area's well and what is in it (`tray_well`).

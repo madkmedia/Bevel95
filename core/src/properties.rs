@@ -205,6 +205,8 @@ pub enum Part {
     /// (`LookXp`: the 2000 look with XP's taskbar and Start menu, brief 112).
     Look(Era),
     LookXp,
+    /// Windows 7: the 2000 look with Windows 7's taskbar and Start menu (brief 114).
+    LookSeven,
     /// Bevel95 Settings: the option buttons of the colors.
     Colors(Depth),
     /// Bevel95 Settings, General page: the drop-down list of the sizes (every size the menus
@@ -426,6 +428,7 @@ fn label_of(era: Era, part: Part) -> Option<String> {
         Part::Check(c) => Some(check_label(c).to_string()),
         Part::Look(e) => Some(look_label(e).to_string()),
         Part::LookXp => Some("Windows &XP".to_string()),
+        Part::LookSeven => Some("Windows &7".to_string()),
         Part::Colors(d) => Some(colors_label(d).to_string()),
         Part::WinKey(k) => Some(windows_key_label(k).to_string()),
         Part::Lines(s) => Some(lines_label(s).to_string()),
@@ -819,6 +822,10 @@ impl Properties {
                 v.era = Era::Win2000;
                 v.bar_style = crate::theme::BarStyle::Xp;
             }
+            Part::LookSeven => {
+                v.era = Era::Win2000;
+                v.bar_style = crate::theme::BarStyle::Seven;
+            }
             Part::Colors(depth) => v.colors = depth,
             Part::WinKey(key) => v.windows_key = key,
             Part::Lines(strength) => v.monitor_lines = strength,
@@ -895,7 +902,7 @@ impl Properties {
         let mut stops = vec![Part::Tab(self.page)];
         for part in controls(self.era, self.current_page()) {
             let stop = match part {
-                Part::Look(_) | Part::LookXp => look_part(&self.values),
+                Part::Look(_) | Part::LookXp | Part::LookSeven => look_part(&self.values),
                 Part::Colors(_) => Part::Colors(self.values.colors),
                 Part::WinKey(_) => Part::WinKey(self.values.windows_key),
                 Part::Lines(_) => Part::Lines(self.values.monitor_lines),
@@ -925,7 +932,7 @@ impl Properties {
     /// The option button an arrow key moves to from `part` (within its group), if any.
     pub fn arrow(&self, part: Part, forward: bool) -> Option<Part> {
         let group: Vec<Part> = match part {
-            Part::Look(_) | Part::LookXp => look_parts(),
+            Part::Look(_) | Part::LookXp | Part::LookSeven => look_parts(),
             Part::Colors(_) => Depth::ALL.iter().map(|&d| Part::Colors(d)).collect(),
             Part::WinKey(_) => WindowsKey::ALL.iter().map(|&k| Part::WinKey(k)).collect(),
             Part::Lines(_) => Strength::ALL.iter().map(|&s| Part::Lines(s)).collect(),
@@ -1044,13 +1051,14 @@ fn setting_value(start: &mut StartOptions, s: Setting) -> Option<&mut bool> {
 
 /// The Look group's option buttons: the three classic looks, then Windows XP (brief 112).
 fn look_parts() -> Vec<Part> {
-    Era::ALL.iter().map(|&e| Part::Look(e)).chain([Part::LookXp]).collect()
+    Era::ALL.iter().map(|&e| Part::Look(e)).chain([Part::LookXp, Part::LookSeven]).collect()
 }
 
 /// The Look group's chosen button for `values`.
 fn look_part(values: &Values) -> Part {
     match values.bar_style {
         crate::theme::BarStyle::Xp => Part::LookXp,
+        crate::theme::BarStyle::Seven => Part::LookSeven,
         crate::theme::BarStyle::Classic => Part::Look(values.era),
     }
 }
@@ -1231,12 +1239,18 @@ const LOOK_GROUP: Rect = Rect::new(24, 68, 144, 89);
 const COLORS_GROUP: Rect = Rect::new(176, 68, 144, 89);
 const COLORS_ROWS: [(Depth, i32, i32); 3] =
     [(Depth::Sixteen, 188, 84), (Depth::TwoFiftySix, 188, 105), (Depth::TrueColor, 188, 126)];
-/// The looks, 17 apart since Windows XP came as a fourth (brief 112; they were 21 apart).
-const LOOK_ROWS: [(Part, i32, i32); 4] =
-    [(Part::Look(Era::Win95), 36, 82), (Part::Look(Era::Win98), 36, 99), (Part::Look(Era::Win2000), 36, 116), (Part::LookXp, 36, 133)];
-/// Under the Look and Colors groups (brief 112): what Windows XP is, in one plain line; the groups
-/// below moved down 13 for it, and Startup made 7 lower (one check box).
-const XP_NOTE: &str = "Windows XP: taskbar and Start menu only, a first version.";
+/// The looks, 15 apart since Windows XP and 7 came as a fourth and fifth (briefs 112, 114; they
+/// were 21 apart).
+const LOOK_ROWS: [(Part, i32, i32); 5] = [
+    (Part::Look(Era::Win95), 36, 80),
+    (Part::Look(Era::Win98), 36, 95),
+    (Part::Look(Era::Win2000), 36, 110),
+    (Part::LookXp, 36, 125),
+    (Part::LookSeven, 36, 140),
+];
+/// Under the Look and Colors groups (briefs 112, 114): what Windows XP and 7 are, in one plain
+/// line; the groups below moved down 13 for it, and Startup made 7 lower (one check box).
+const XP_NOTE: &str = "XP and 7: their taskbar and Start menu only, a first version.";
 const XP_NOTE_Y: i32 = 159;
 const SIZE_GROUP: Rect = Rect::new(24, 178, 296, 68);
 /// The Size group's row (ours, PROVISIONAL): "Size:" and its drop-down list, "Drawn as:" and
@@ -2128,7 +2142,7 @@ impl kit::Form for PropertiesWindow {
     fn key(&mut self, key: Key, mods: Mods) -> Option<Vec<Effect<Part>>> {
         let p = &mut self.props;
         let (list, programs) = (p.focus == Part::List, p.focus == Part::Programs);
-        let options = matches!(p.focus, Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_));
+        let options = matches!(p.focus, Part::Look(_) | Part::LookXp | Part::LookSeven | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_));
         let drop_list = is_list(p.focus).then_some(p.focus);
         match key {
             // A drop-down list: Enter takes the highlighted entry and Esc leaves the choice as it
@@ -2232,7 +2246,7 @@ impl kit::Form for PropertiesWindow {
         // what the key reaches is not hidden under it and Enter and Esc mean OK and Cancel.
         p.drop = None;
         match p.access_key(ch) {
-            Some(part @ (Part::Check(_) | Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_))) => {
+            Some(part @ (Part::Check(_) | Part::Look(_) | Part::LookXp | Part::LookSeven | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_))) => {
                 p.focus = part;
                 p.choose(part);
             }
@@ -2256,7 +2270,7 @@ impl kit::Form for PropertiesWindow {
             Part::Programs => {
                 p.choose(Part::ProgramRow(p.programs.sel));
             }
-            f @ (Part::Check(_) | Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_)) => {
+            f @ (Part::Check(_) | Part::Look(_) | Part::LookXp | Part::LookSeven | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_)) => {
                 p.choose(f);
             }
             f if f.is_push_button() => return kit::activate(self, f),
@@ -2337,7 +2351,7 @@ impl kit::Form for PropertiesWindow {
     }
     fn release(&mut self, part: Part) -> Vec<Effect<Part>> {
         match part {
-            Part::Check(_) | Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_) => {
+            Part::Check(_) | Part::Look(_) | Part::LookXp | Part::LookSeven | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_) => {
                 self.props.choose(part);
                 Vec::new()
             }
@@ -2944,6 +2958,15 @@ mod tests {
         assert!(p.tab_stops().contains(&Part::LookXp) && !p.tab_stops().contains(&Part::Look(Era::Win2000)));
         assert!(p.choose(Part::Look(Era::Win98)));
         assert_eq!((p.values.era, p.values.bar_style), (Era::Win98, BarStyle::Classic));
+        // Brief 114: Windows 7 the fifth; 7 its access key; a classic choice resets it.
+        assert_eq!(p.access_key('7'), Some(Part::LookSeven));
+        assert!(p.choose(Part::LookSeven));
+        assert_eq!((p.values.era, p.values.bar_style), (Era::Win2000, BarStyle::Seven));
+        assert!(!p.enabled(Part::Colors(Depth::Sixteen)));
+        assert!(p.choose(Part::Look(Era::Win95)));
+        assert_eq!(p.values.bar_style, BarStyle::Classic);
+        assert_eq!(BarStyle::from_setting(BarStyle::Seven.setting()), Some(BarStyle::Seven));
+        assert_eq!(crate::config::parse("bar_style = 7\n").0.bar_style, BarStyle::Seven);
         let font = Font::parse(include_str!("../tests/fixtures/tahoma-11px.font")).unwrap();
         assert!(LOOK_GROUP.x + font.measure(XP_NOTE) <= COLORS_GROUP.right(), "the line fits");
         assert!(CLOCK_GROUP.bottom() < PAGE.bottom(), "the groups still fit the page");

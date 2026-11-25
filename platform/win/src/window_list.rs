@@ -366,6 +366,37 @@ pub fn icon(hwnd: HWND, program_path: &str) -> Option<Icon> {
     }
 }
 
+thread_local! {
+    /// The 32×32 pictures read for Windows 7's slots, by file.
+    static BIG: std::cell::RefCell<HashMap<String, Option<Icon>>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// The shell's 32×32 picture of a file (a program, a shortcut: without the shortcut's arrow), read
+/// once per file (Windows 7's slots, brief 114: a real 32×32, never a doubled 16×16).
+pub fn big_icon(path: &str) -> Option<Icon> {
+    if path.is_empty() {
+        return None;
+    }
+    if let Some(known) = BIG.with(|b| b.borrow().get(path).cloned()) {
+        return known;
+    }
+    let wide_path = wide(path);
+    let mut info = SHFILEINFOW::default();
+    // SAFETY: a correctly sized out-struct; the icon we get is ours to destroy.
+    let icon = unsafe {
+        SHGetFileInfoW(wide_path.as_ptr(), 0, &mut info, size_of::<SHFILEINFOW>() as u32, SHGFI_ICON | windows_sys::Win32::UI::Shell::SHGFI_LARGEICON);
+        if info.hIcon.is_null() {
+            None
+        } else {
+            let pixels = bevel_winkit::icon::icon_pixels_at(info.hIcon, 32);
+            DestroyIcon(info.hIcon);
+            pixels
+        }
+    };
+    BIG.with(|b| b.borrow_mut().insert(path.to_string(), icon.clone()));
+    icon
+}
+
 fn window_icon(hwnd: HWND) -> Option<HICON> {
     for kind in [ICON_SMALL2, ICON_SMALL, ICON_BIG] {
         let mut result = 0usize;

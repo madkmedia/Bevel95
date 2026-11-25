@@ -53,7 +53,7 @@ fn settings() -> config::Config {
 
 /// Under Windows XP's bar style (brief 112) every program shows the 2000 look in True Color.
 fn xp_as_2000(mut settings: config::Config) -> config::Config {
-    if settings.bar_style == bevel_core::theme::BarStyle::Xp {
+    if settings.bar_style.is_later() {
         settings.era = Era::Win2000;
         settings.colors = Depth::TrueColor;
     }

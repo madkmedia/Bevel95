@@ -141,7 +141,20 @@ pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLay
     let start = Rect::new(0, 0, START_W, theme.bar.height);
     let w = tray(fonts, width, bar.tray.len(), number, &bar.clock, &bar.clock_widest);
     let (tasks, first_task, scroll) = layout::task_buttons(theme, start, w.well, bar.tasks.len(), bar.row);
-    BarLayout { start, tasks, first_task, scroll, well: w.well, tray: w.tray, clock: w.clock, number: w.number, quick: None, task_band: None }
+    BarLayout {
+        start,
+        tasks,
+        first_task,
+        scroll,
+        well: w.well,
+        tray: w.tray,
+        clock: w.clock,
+        number: w.number,
+        quick: None,
+        task_band: None,
+        pinned: Vec::new(),
+        show_desktop: None,
+    }
 }
 
 /// Paints the XP bar (the framebuffer 30 tall) and returns where everything went.

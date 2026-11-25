@@ -418,7 +418,7 @@ pub struct App {
 impl App {
     /// Whether the bar is drawn in Windows XP's style (brief 112).
     pub fn xp(&self) -> bool {
-        self.bar_style == theme::BarStyle::Xp
+        self.bar_style.is_later()
     }
 
     pub fn fonts(&self) -> Fonts<'_> {
@@ -619,12 +619,12 @@ pub fn run() -> u32 {
     settings.bar_style = style;
     crate::failsafe::style_now(style);
     // Windows XP's bar style goes with the 2000 look for everything else (brief 112).
-    if settings.bar_style == theme::BarStyle::Xp {
+    if settings.bar_style.is_later() {
         settings.era = Era::Win2000;
     }
     zones::set_clock(settings.clock_zone, settings.clock_dst);
     let theme = theme::bar_theme(settings.era, settings.colors, settings.bar_style);
-    start_menu::set_own_programs(settings.bar_style != theme::BarStyle::Xp);
+    start_menu::set_own_programs(!settings.bar_style.is_later());
     let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
     let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
 
@@ -703,7 +703,8 @@ pub fn run() -> u32 {
             menus: Vec::new(),
             windows: Vec::new(),
             task_list: {
-                let mut list = TaskList::new(settings.group);
+                // Windows 7 always combines a program's windows (brief 114).
+                let mut list = TaskList::new(settings.group || settings.bar_style == theme::BarStyle::Seven);
                 list.set_order(load_task_order());
                 list
             },
@@ -807,8 +808,8 @@ pub fn run() -> u32 {
     apps::refresh();
     start_menu::read_icons_ahead(settings.era);
     if TELL_FAILURE.load(Ordering::SeqCst) {
-        log("the last bar stopped with an error in the Windows XP style: this run is classic (settings.txt is as it was)");
-        crate::confirm_window::message("Bevel95", crate::failsafe::MESSAGE);
+        log("the last bar stopped with an error in a later Windows' style: this run is classic (settings.txt is as it was)");
+        crate::confirm_window::message("Bevel95", &crate::failsafe::message());
     }
 
     let mut msg = MSG::default();
@@ -978,6 +979,18 @@ fn long_date(offset: i64) -> String {
     let day = datetime_window::to_systemtime(clock_now(offset));
     // SAFETY: the buffer length is passed; null means the user's locale and its format.
     let n = unsafe { GetDateFormatEx(null(), DATE_LONGDATE, &day, null(), buf.as_mut_ptr(), buf.len() as i32, null()) };
+    if n > 1 { String::from_utf16_lossy(&buf[..n as usize - 1]).replace(['\u{202F}', '\u{A0}'], " ") } else { String::new() }
+}
+
+/// Bevel95's date in the user's short date format ("11/25/2026"): Windows 7's clock's second line
+/// (brief 114).
+fn short_date(offset: i64) -> String {
+    let mut buf = [0u16; 64];
+    let day = datetime_window::to_systemtime(clock_now(offset));
+    // SAFETY: the buffer length is passed; null means the user's locale and its format.
+    let n = unsafe {
+        GetDateFormatEx(null(), windows_sys::Win32::Globalization::DATE_SHORTDATE, &day, null(), buf.as_mut_ptr(), buf.len() as i32, null())
+    };
     if n > 1 { String::from_utf16_lossy(&buf[..n as usize - 1]).replace(['\u{202F}', '\u{A0}'], " ") } else { String::new() }
 }
 
@@ -1291,6 +1304,27 @@ fn task_at(x: i32, y: i32) -> Option<usize> {
         let layout = app.layout.as_ref()?;
         let i = layout.tasks.iter().position(|r| r.contains(app.scale.old(x), app.scale.old(y)))?;
         Some(layout.first_task + i)
+    })
+    .flatten()
+}
+
+/// What a press on Windows 7's bar that is not on a running program's slot does (brief 114).
+enum SevenExtra {
+    ShowDesktop,
+    /// A pinned program that is not running: its shortcut starts.
+    Pinned(String),
+}
+
+/// Windows 7's Show desktop, or a pinned program's slot, under a point in the bar window.
+fn seven_extra_at(x: i32, y: i32) -> Option<SevenExtra> {
+    with_app(|app| {
+        let layout = app.layout.as_ref()?;
+        let (x, y) = (app.scale.old(x), app.scale.old(y));
+        if layout.show_desktop.is_some_and(|r| r.contains(x, y)) {
+            return Some(SevenExtra::ShowDesktop);
+        }
+        let k = layout.pinned.iter().position(|r| r.contains(x, y))?;
+        app.ql.shortcuts.get(k).map(|s| SevenExtra::Pinned(s.path.display().to_string()))
     })
     .flatten()
 }
@@ -1861,6 +1895,39 @@ pub fn xp_start_action(item: bevel_core::xp_start::Item) {
     }
 }
 
+/// The place an entry of Windows 7's Start menu opens (brief 114): as the XP menu's matching
+/// entry; the user's name their profile folder; Default Programs Windows' own default apps page.
+/// `None`: the search box, Shut down, a cascade or a program.
+pub fn seven_start_place(item: bevel_core::seven_start::Item) -> Option<String> {
+    use bevel_core::seven_start::{Item, Right};
+    use bevel_core::xp_start::{Item as XpItem, Right as XpRight};
+    let xp = |r: XpRight| xp_start_place(XpItem::Right(r));
+    match item {
+        Item::User => Some(bevel_winkit::shell::profile_folder().map_or("shell:Profile".into(), |p| p.display().to_string())),
+        Item::Right(Right::Documents) => xp(XpRight::MyDocuments),
+        Item::Right(Right::Pictures) => xp(XpRight::MyPictures),
+        Item::Right(Right::Music) => xp(XpRight::MyMusic),
+        Item::Right(Right::Computer) => xp(XpRight::MyComputer),
+        Item::Right(Right::ControlPanel) => xp(XpRight::ControlPanel),
+        Item::Right(Right::Devices) => xp(XpRight::Printers),
+        Item::Right(Right::DefaultPrograms) => Some("ms-settings:defaultapps".into()),
+        Item::Right(Right::Help) => xp(XpRight::Help),
+        _ => None,
+    }
+}
+
+/// Carries out an entry of Windows 7's Start menu that is no place (brief 114): the search box
+/// opens Quick Search (PROVISIONAL: 7 searched in place); Shut down and its arrow the 2000 look's
+/// Shut Down window (PROVISIONAL).
+pub fn seven_start_action(item: bevel_core::seven_start::Item) {
+    use bevel_core::seven_start::Item;
+    match item {
+        Item::Search => open_find(),
+        Item::ShutDown => dialogs::open(DialogKind::ShutDown),
+        _ => {}
+    }
+}
+
 /// The place an entry of XP's Start menu opens (a folder, Windows' own window, the Help page):
 /// started by the menu as the classic entries' folders are, while its vanished window still
 /// holds the focus, so the new window may come to the front (the review of brief 112,
@@ -2002,6 +2069,10 @@ fn drag_threshold(scale: Scale) -> i32 {
 /// shown, and takes the place its middle is over (`tasks::drag_step`); the neighbours slide out
 /// of its way as the bar paints (`tasks::Motion`, on the MOTION timer).
 fn drag_move(bar: HWND, x: i32) {
+    // No dragging of Windows 7's slots in this version (brief 114).
+    if with_app(|app| app.bar_style == theme::BarStyle::Seven).unwrap_or(false) {
+        return;
+    }
     let Some(started) = with_app(|app| {
         let threshold = drag_threshold(app.scale);
         let press = app.press.as_mut()?;
@@ -2427,7 +2498,7 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
         app.start_options = values.start;
         app.desktop = values.desktop;
         app.group = values.group;
-        app.task_list.group = values.group;
+        app.task_list.group = values.group || app.bar_style == theme::BarStyle::Seven;
         changed
     })
     .unwrap_or(false);
@@ -2707,6 +2778,23 @@ fn paint_bar(bar: HWND) {
             },
             ..Bar::default()
         };
+        // Windows 7's slots (brief 114): Quick Launch's shortcuts pinned, a running program in its
+        // pinned place (its program file the shortcut's target), 32×32 pictures, the short date.
+        if app.bar_style == theme::BarStyle::Seven {
+            let era = app.era;
+            app.ql.refresh(era);
+            let links: Vec<String> = app.ql.shortcuts.iter().map(|s| s.path.display().to_string()).collect();
+            let targets: Vec<Option<String>> = links.iter().map(|l| crate::find_window::shortcut_program(l)).collect();
+            let programs: Vec<String> = app.groups.iter().map(|g| g.key.clone()).collect();
+            let tasks_of = bevel_core::seven_bar::pin_tasks(&targets, &programs);
+            state.pinned = links
+                .iter()
+                .zip(tasks_of)
+                .map(|(link, task)| bevel_core::paint::Pinned { icon: window_list::big_icon(link), task })
+                .collect();
+            state.big_icons = programs.iter().map(|p| window_list::big_icon(p)).collect();
+            state.date = if app.options.show_clock { short_date(app.clock_offset) } else { String::new() };
+        }
         if let Some((_, frames, _)) = app.motion_on.as_mut() {
             *frames += 1;
             let layout = paint::bar_layout(app.theme, &app.fonts(), width_1x, &state);
@@ -2995,13 +3083,15 @@ fn size_changed(bar: HWND) {
 /// it in settings.txt.
 fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     // Windows XP's bar style goes with the 2000 look (brief 112).
-    let era = if style == theme::BarStyle::Xp { Era::Win2000 } else { era };
+    let era = if style.is_later() { Era::Win2000 } else { era };
     if with_app(|app| app.era == era && app.bar_style == style).unwrap_or(true) {
         return;
     }
     let style_changed = with_app(|app| std::mem::replace(&mut app.bar_style, style) != style).unwrap_or(false);
     crate::failsafe::style_now(style);
-    start_menu::set_own_programs(style != theme::BarStyle::Xp);
+    start_menu::set_own_programs(!style.is_later());
+    // Windows 7 always combines a program's windows (brief 114); the setting is kept as it is.
+    with_app(|app| app.task_list.group = app.group || style == theme::BarStyle::Seven);
     start_menu::set_era(era);
     let theme = theme::bar_theme(era, with_app(|app| app.colors).unwrap_or_default(), style);
     let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
@@ -3033,7 +3123,7 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     // Under XP the classic look the person had stays in settings.txt as it was (the review of
     // brief 112, finding 9): XP runs over 2000 whatever `era` says, and the earlier look is
     // there to see on the way back.
-    if style != theme::BarStyle::Xp {
+    if !style.is_later() {
         save_setting("era", era.setting());
     }
     // Written only when changed, so a settings.txt that never had the line does not get one.
@@ -3461,6 +3551,16 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
                 scroll_tasks(bar, arrow);
                 // SAFETY: our own window.
                 unsafe { SetCapture(bar) };
+                return 0;
+            }
+            // Windows 7's Show desktop and a pinned program that is not running (brief 114).
+            if task_at(x, y).is_none()
+                && let Some(extra) = seven_extra_at(x, y)
+            {
+                match extra {
+                    SevenExtra::ShowDesktop => quick_launch::show_desktop(),
+                    SevenExtra::Pinned(link) => window_list::launch(&link),
+                }
                 return 0;
             }
             if let Some(index) = task_at(x, y) {
