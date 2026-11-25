@@ -7279,7 +7279,10 @@ here; its two comparisons still show 0 differing pixels in every part (`core/tes
   gives counts only. The Start menu's pictures come from the same store (the ones not yet read
   show at its next opening). Proof: `seven_store::tests` (a TEST-NET network shortcut wanted
   beside Notepad: wanting and looking up return at once, timed under `BEVEL95_TIMED=1`; Notepad's
-  32x32 arrives; what is no longer wanted goes).
+  32x32 arrives; what is no longer wanted goes). Since 0.1.7 (brief 115) the store takes wishes
+  only under XP and 7 (`seven_store::set_later`, set at the bar's start and at each change of
+  style): under the classic looks nothing calls it, a wish would change nothing and its thread
+  never starts; back to a classic look, it forgets everything and sleeps with no timer. Same test.
 - **Every route refused** (finding 5): the classic desktop and Quick Launch's switches are refused
   under XP and 7 in `run_command`, whichever menu or Quick Search entry posted them
   (`BarCommand::shows_nothing_under_later`: DesktopOn, DesktopOff, QuickLaunch, QuickLaunchClose),
