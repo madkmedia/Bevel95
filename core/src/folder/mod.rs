@@ -29,6 +29,7 @@ pub mod options;
 pub mod pane;
 pub mod saved;
 pub mod status;
+pub mod tabs;
 pub mod tree_art;
 pub mod web;
 #[cfg(test)]
@@ -146,6 +147,11 @@ pub enum Part {
     WebScroll(Scroll),
     /// A drag of icons has begun: the platform hands it to Windows' drag and drop.
     DragOut,
+    /// Tabs (brief 110): a tab pressed (its id: never its place in the row), the small X
+    /// (closes the tab in front), the row's empty part.
+    Tab(u64),
+    TabClose,
+    TabRow,
 }
 
 /// Where a drag of files over a folder window would drop (`FolderWindow::drop_at`).
@@ -282,6 +288,12 @@ pub struct FolderWindow {
     drag_out: bool,
     /// What Undo would take back now (the platform reads the shared list before a menu opens).
     pub undo: Option<crate::drag::Step>,
+    /// Tabs in folder windows (brief 110): where the row goes (`Off`: none, everything as
+    /// before), and the row itself (shown when it holds a tab).
+    tab_place: tabs::Place,
+    pub tab_row: tabs::Row,
+    /// The 95 menu bar's titles where they are without a row above them.
+    menu_base: Vec<Rect>,
 }
 
 /// Where the web view puts its panel: beside the icons, 98's band above them, or nowhere.
@@ -355,11 +367,83 @@ impl FolderWindow {
             press_after_rename: None,
             drag_out: false,
             undo: None,
+            tab_place: tabs::Place::Off,
+            tab_row: tabs::Row::default(),
+            menu_base: Vec::new(),
         };
         w.view.active = true;
         w.view.keep_order(!files);
         w.update_grayed();
         w
+    }
+
+    /// Tabs in folder windows (brief 110): where the row goes and what it holds; `Off` (or no
+    /// tab) shows no row and leaves every pixel as before.
+    pub fn set_tabs(&mut self, place: tabs::Place, row: tabs::Row) {
+        self.tab_place = place;
+        self.tab_row = row;
+        self.fit();
+    }
+
+    pub fn tab_place(&self) -> tabs::Place {
+        self.tab_place
+    }
+
+    /// The row's place when a row shows; `OverFiles` without the tree and `UnderMenu` without a
+    /// toolbar (95) are `UnderAddress`.
+    fn row_place(&self) -> Option<tabs::Place> {
+        use tabs::Place as P;
+        if self.tab_row.tabs.is_empty() {
+            return None;
+        }
+        match self.tab_place {
+            P::Off => None,
+            P::OverFiles if !self.tree_shown => Some(P::UnderAddress),
+            P::UnderMenu if !self.explorer() => Some(P::UnderAddress),
+            p => Some(p),
+        }
+    }
+
+    /// Rows the row takes above the menu bar, between the menu band and the toolbar band, and
+    /// above the panes (`OverFiles`: above the list only, `pane_layout`).
+    fn row_shifts(&self) -> (i32, i32, i32) {
+        use tabs::Place as P;
+        let r = tabs::ROW_H;
+        match self.row_place() {
+            Some(P::AboveMenu) => (r, 0, 0),
+            Some(P::UnderMenu) => (0, r, 0),
+            Some(P::UnderAddress) => (0, 0, r),
+            _ => (0, 0, 0),
+        }
+    }
+
+    /// The row's strip (window pixels), when a row shows.
+    pub fn tab_strip(&self) -> Option<Rect> {
+        use tabs::Place as P;
+        let f = self.frame();
+        let w = self.size.0;
+        let full = |y: i32| Rect::new(f, y, w - 2 * f, tabs::ROW_H);
+        Some(match self.row_place()? {
+            P::AboveMenu => full(f + window::CAPTION_H + 1),
+            P::UnderMenu => {
+                let r = self.chrome.rebar;
+                Rect::new(r.x + 2, self.chrome.menu_band.bottom() + 2, r.w - 4, tabs::ROW_H)
+            }
+            P::UnderAddress => full(self.panes_area().y - tabs::ROW_H),
+            P::OverFiles => {
+                let l = self.pane_layout()?;
+                let x = l.contents.map_or(l.list.x, |c| c.x.min(l.list.x));
+                Rect::new(x, self.panes_area().y, w - f - x, tabs::ROW_H)
+            }
+            P::Off => return None,
+        })
+    }
+
+    /// The row's layout, when a row shows.
+    pub fn tab_layout(&self) -> Option<tabs::Layout> {
+        let strip = self.tab_strip()?;
+        let font = self.font.as_ref()?;
+        Some(tabs::layout(self.era, font, &self.tab_row, strip))
     }
 
     /// 98 and 2000: the window has Explorer's rebar (toolbar, address bar).
@@ -828,14 +912,24 @@ impl FolderWindow {
     /// the status bar.
     fn panes_area(&self) -> Rect {
         let f = self.frame();
-        let top = if self.explorer() { self.chrome.list_top() } else { f + window::CAPTION_H + 1 + window::MENU_BAR_H + 1 };
+        let (above, after_menu, over_panes) = self.row_shifts();
+        // 98 and 2000: the rebar already carries a row above or inside it (`fit`).
+        let top = if self.explorer() { self.chrome.list_top() } else { f + window::CAPTION_H + 1 + window::MENU_BAR_H + 1 + above + after_menu } + over_panes;
         let bottom = self.size.1 - f - if self.status_bar { status_h(self.era) } else { 0 };
         Rect::new(f, top, self.size.0 - 2 * f, (bottom - top).max(0))
     }
 
     /// Explorer's panes, while the tree shows.
     pub fn pane_layout(&self) -> Option<pane::Layout> {
-        self.tree_shown.then(|| pane::layout(self.era, self.panes_area(), self.tree_width))
+        let mut l = self.tree_shown.then(|| pane::layout(self.era, self.panes_area(), self.tree_width))?;
+        if self.row_place() == Some(tabs::Place::OverFiles) {
+            // The row over the file list only: the list (and 95's "Contents of" caption) lower,
+            // the tree's pane from the row's top (brief 110).
+            let r = tabs::ROW_H;
+            l.list = Rect::new(l.list.x, l.list.y + r, l.list.w, (l.list.h - r).max(0));
+            l.contents = l.contents.map(|c| Rect::new(c.x, c.y + r, c.w, c.h));
+        }
+        Some(l)
     }
 
     /// The list with its sunken edge.
@@ -1256,11 +1350,14 @@ impl FolderWindow {
 
     /// Puts the icons' area where the list shows it, scrolled, and keeps the scrolling in range.
     fn fit(&mut self) {
+        let (above, after_menu, _) = self.row_shifts();
         if self.explorer()
             && let Some(font) = &self.font
         {
-            self.chrome = explorer::layout(self.era, self.size.0, self.frame(), font, menus::titles(self.era));
+            self.chrome = explorer::layout_shifted(self.era, self.size.0, self.frame(), font, menus::titles(self.era), above, after_menu);
         }
+        // 95's menu bar under a row above it (brief 110).
+        self.menu_rects = self.menu_base.iter().map(|r| Rect::new(r.x, r.y + above, r.w, r.h)).collect();
         let shown = self.shown();
         let rows = self.rows_area();
         let place = |s: (i32, i32)| Rect::new(rows.x - s.0, rows.y - s.1, rows.w, rows.h);
@@ -1806,7 +1903,7 @@ impl Form for FolderWindow {
             self.font = Some(fonts.regular.clone());
         }
         let delta = self.frame() - window::FRAME;
-        self.menu_rects = window::menu_bar_layout(fonts, self.titles()).into_iter().map(|r| Rect::new(r.x + delta, r.y + delta, r.w, r.h)).collect();
+        self.menu_base = window::menu_bar_layout(fonts, self.titles()).into_iter().map(|r| Rect::new(r.x + delta, r.y + delta, r.w, r.h)).collect();
         self.fit();
     }
 
@@ -1836,6 +1933,13 @@ impl Form for FolderWindow {
             let looks: Vec<TitleLook> =
                 (0..self.titles().len()).map(|i| if self.chosen == Some(i) { TitleLook::Chosen } else { TitleLook::Plain }).collect();
             window::paint_menu_bar(fb, theme, fonts, self.era, self.titles(), &self.menu_rects, &looks, true, self.active);
+        }
+        if let Some(l) = self.tab_layout() {
+            let mut row = self.tab_row.clone();
+            if self.pressed == Some(Part::TabClose) {
+                row.close_look = 2;
+            }
+            tabs::paint(fb, theme, fonts.regular, self.era, &row, &l);
         }
         if let Some(l) = self.pane_layout() {
             let contents = (self.era == Era::Win95).then_some(self.place_name.as_str());
@@ -1934,6 +2038,18 @@ impl Form for FolderWindow {
         }
         if self.icon_rect().contains(x, y) {
             return Some(Part::Icon);
+        }
+        // An open address list lies over everything below it, the row too.
+        let over_list = self.explorer() && self.list_shown().is_some_and(|(frame, ..)| frame.contains(x, y));
+        if !over_list
+            && let Some(l) = self.tab_layout()
+            && let Some(h) = l.hit(&self.tab_row, x, y)
+        {
+            return Some(match h {
+                tabs::Hit::Tab(i) => Part::Tab(self.tab_row.tabs[i].id),
+                tabs::Hit::Close => Part::TabClose,
+                tabs::Hit::Empty => Part::TabRow,
+            });
         }
         if self.explorer() {
             if let (Some((frame, top, shown)), Some((rows, _))) = (self.list_shown(), &self.list)
@@ -2277,6 +2393,11 @@ impl Form for FolderWindow {
             Some(Part::Tool(t)) if self.enabled(Part::Tool(t)) => Press::Hold(Part::Tool(t)),
             Some(Part::ToolArrow(t)) if self.enabled(Part::Tool(t)) => Press::Act(Part::ToolArrow(t)),
             Some(Part::Go) => Press::Hold(Part::Go),
+            // Tabs (brief 110): a tab comes to the front on the press, as the old tabs did; the
+            // small X acts at its release, as a button.
+            Some(Part::Tab(id)) => Press::Act(Part::Tab(id)),
+            Some(Part::TabClose) => Press::Hold(Part::TabClose),
+            Some(Part::TabRow) => Press::Done,
             Some(Part::AddressButton) => {
                 self.field.focus();
                 Press::Act(Part::AddressButton)

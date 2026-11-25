@@ -2217,6 +2217,27 @@ fn scenes() -> Vec<Scene> {
         let caption = "Explorer: the tree of all folders opened down to a folder (selected, the tree has the keyboard), its icons beside it";
         out.push(Scene { section, name: format!("{}-explorer-tree", era_prefix(era)), caption, image: tree_scene(theme, era, &fonts) });
     }
+    // Tabs in folder windows (Bevel95's own, brief 110): each place with the X at the row's end,
+    // the X on the tab in front, and (98) a row longer than its window.
+    for (era, theme, section) in [(Era::Win95, &WIN95, "Windows 95"), (Era::Win98, &WIN98, "Windows 98"), (Era::Win2000, &WIN2000, "Windows 2000")] {
+        use bevel_core::folder::tabs::{CloseAt, Place};
+        let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+        let fonts = Fonts { regular: &regular, bold: &bold };
+        for (place, caption) in [
+            (Place::UnderAddress, "Tabs (Bevel95's own): under the address bar, over both panes (95: under the menu bar), the X at the row's end"),
+            (Place::OverFiles, "Tabs (Bevel95's own): over the file list only, the tree from the row's top"),
+            (Place::UnderMenu, "Tabs (Bevel95's own): between the menu bar and the toolbar (95: no toolbar, so under the menu bar)"),
+            (Place::AboveMenu, "Tabs (Bevel95's own): above the menu bar, right under the title bar"),
+        ] {
+            out.push(Scene { section, name: format!("{}-folder-tabs-{}", era_prefix(era), place.word()), caption, image: tabs_scene(theme, era, &fonts, place, CloseAt::End, false) });
+        }
+        let caption = "Tabs (Bevel95's own): the X on the tab in front";
+        out.push(Scene { section, name: format!("{}-folder-tabs-x-on-tab", era_prefix(era)), caption, image: tabs_scene(theme, era, &fonts, Place::UnderAddress, CloseAt::Tab, false) });
+        if era == Era::Win98 {
+            let caption = "Tabs (Bevel95's own): a row longer than its window: all shrink alike, the row begins so that the tab in front is whole";
+            out.push(Scene { section, name: "win98-folder-tabs-long".into(), caption, image: tabs_scene(theme, era, &fonts, Place::UnderAddress, CloseAt::End, true) });
+        }
+    }
     // Windows 95's folder windows.
     {
         let (regular, bold) = (load_font(&WIN95, false), load_font(&WIN95, true));
@@ -3905,6 +3926,82 @@ fn tree_scene(theme: &Theme, era: Era, fonts: &Fonts) -> Framebuffer {
     w.paint(&mut fb, theme, fonts);
     screen.blit(&fb, at.0, at.1);
     screen
+}
+/// An Explorer window in `era` with tabs (Bevel95's own, brief 110) at `place`: a made-up folder
+/// Work (Letters, Maps, Notes.txt) on (C:) in front, My Computer and (C:) behind; with `long`,
+/// twelve more tabs and the last one in front.
+fn tabs_scene(theme: &Theme, era: Era, fonts: &Fonts, place: bevel_core::folder::tabs::Place, close_at: bevel_core::folder::tabs::CloseAt, long: bool) -> Framebuffer {
+    use bevel_core::desktop_icons::{Item, Picture};
+    use bevel_core::folder::art::{self, DriveKind, Small};
+    use bevel_core::folder::menus::Nav;
+    use bevel_core::folder::pane::{NodeKind as K, NodeSpec, Tree};
+    use bevel_core::folder::tabs::{Row, Tab};
+    use bevel_core::folder::{FolderWindow, tree_art};
+    use bevel_core::kit::Form;
+    let spec = |id: &str, name: &str, kind: K, has_rows: bool| NodeSpec { id: id.into(), name: name.into(), kind, has_rows, hidden: false };
+    let mut tree = Tree::new();
+    let _ = tree.wanted();
+    let mut on_desktop = vec![spec("::my-computer", "My Computer", K::MyComputer, true), spec("::recycle-bin", "Recycle Bin", K::RecycleBin, false)];
+    if era != Era::Win95 {
+        on_desktop.insert(if era == Era::Win98 { 1 } else { 0 }, spec("::my-documents", "My Documents", K::MyDocuments, true));
+    }
+    tree.set_rows("::desktop", on_desktop);
+    tree.set_rows(
+        "::my-computer",
+        vec![
+            spec("A:\\", "3\u{bd} Floppy (A:)", K::Drive(DriveKind::Floppy), true),
+            spec("C:\\", "(C:)", K::Drive(DriveKind::Fixed), true),
+            spec("::control-panel", "Control Panel", K::ControlPanel, false),
+        ],
+    );
+    tree.set_rows("C:\\", vec![spec("C:\\Work", "Work", K::Folder, true)]);
+    tree.set_rows("C:\\Work", vec![spec("C:\\Work\\Letters", "Letters", K::Folder, false), spec("C:\\Work\\Maps", "Maps", K::Folder, false)]);
+    tree.follow(vec!["::my-computer".into(), "C:\\".into(), "C:\\Work".into()], 20);
+    let doc = icon(&DOCUMENT, 2);
+    let item = |name: &str, folder: bool, size: u64| Item {
+        id: format!("C:\\Work\\{name}"),
+        name: name.to_string(),
+        picture: if folder { Picture::Folder } else { Picture::Own(Some(doc.clone())) },
+        shortcut: false,
+        folder,
+        type_name: "Text Document".into(),
+        size,
+        modified: 0,
+    };
+    let title = if era == Era::Win2000 { "Work".to_string() } else { "Exploring - Work".to_string() };
+    let icon = tree_art::explorer(era);
+    let mut w = FolderWindow::new(era, &title, icon.clone(), true, (560, 380));
+    w.layout(fonts);
+    if era != Era::Win95 {
+        w.show_place("Work", icon.clone(), true, if era == Era::Win98 { "C:\\Work" } else { "Work" }, art::listed(era, Small::Folder));
+        w.set_nav(Nav { back: true, up: true, ..Nav::default() });
+    }
+    w.title = title;
+    w.icon = icon;
+    w.place_name = "Work".into();
+    w.exploring = true;
+    w.tree = tree;
+    w.show_tree(true);
+    w.set_items(vec![item("Letters", true, 0), item("Maps", true, 0), item("Notes.txt", false, 1_234)]);
+    w.total_size = 1_234;
+    w.disk_free = Some(120 << 30);
+    let tab = |id: u64, title: &str, tip: &str| Tab { id, title: title.into(), tip: tip.into() };
+    let mut tabs = vec![tab(1, "Work", "C:\\Work"), tab(2, "My Computer", "My Computer"), tab(3, "(C:)", "C:\\")];
+    let mut front = 0;
+    if long {
+        for k in 0..12 {
+            tabs.push(tab(4 + k, &format!("Projects of the year {}", 2014 + k), "C:\\Work"));
+        }
+        front = tabs.len() - 1;
+    }
+    w.set_tabs(place, Row { tabs, front, close_at, close_look: 0 });
+    w.set_screen(20, 20);
+    w.layout(fonts);
+    w.tree_selection_shown();
+    let (ww, wh) = w.size_now();
+    let mut fb = Framebuffer::new(ww, wh, 0);
+    w.paint(&mut fb, theme, fonts);
+    fb
 }
 /// A folder window of `era` in `mode` (the golden pictures of the folder views).
 fn views_scene(theme: &Theme, era: Era, fonts: &Fonts, mode: ViewMode) -> Framebuffer {

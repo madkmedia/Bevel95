@@ -51,6 +51,12 @@ fn settings() -> config::Config {
     config::parse(&text).0
 }
 
+/// Tabs in folder windows (brief 110): where the row goes and where its X goes (settings.txt).
+pub fn folder_tabs() -> (bevel_core::folder::tabs::Place, bevel_core::folder::tabs::CloseAt) {
+    let s = settings();
+    (s.folder_tabs, s.folder_tabs_close)
+}
+
 /// The colors Bevel95 is set to (True Color, 256 Colors or 16 Colors; settings.txt).
 pub fn colors() -> Depth {
     settings().colors

@@ -3025,6 +3025,8 @@ impl Hosted for FolderHost {
             Part::TitleMenu => menu::track_window::<FolderHost>(Part::Icon, |f| f.era, true, false),
             Part::KeyMenu => menu::track_window::<FolderHost>(Part::Icon, |f| f.era, false, true),
             Part::Menu(first) => menu_bar(hwnd, first),
+            // Tabs (brief 110): no row shows until the folder windows take tabs (step 2).
+            Part::Tab(_) | Part::TabClose | Part::TabRow => {}
             Part::Open => open_selected(hwnd),
             Part::ItemMenu => item_menu(hwnd),
             Part::BackgroundMenu => background_menu(hwnd),

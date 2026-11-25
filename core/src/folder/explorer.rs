@@ -183,11 +183,18 @@ fn button_size(era: Era, tool: Tool, font: &Font) -> (i32, Option<i32>) {
 /// Lays the top out for a window `width` wide with a frame of `frame` pixels; `titles`: the menu
 /// bar's titles.
 pub fn layout(era: Era, width: i32, frame: i32, font: &Font, titles: &[&str]) -> Chrome {
+    layout_shifted(era, width, frame, font, titles, 0, 0)
+}
+
+/// As `layout`, the whole rebar `above` lower (a tab row above the menu bar) and the bands under
+/// the menu band `after_menu` lower (a tab row between the menu bar and the toolbar, inside the
+/// rebar; brief 110).
+pub fn layout_shifted(era: Era, width: i32, frame: i32, font: &Font, titles: &[&str], above: i32, after_menu: i32) -> Chrome {
     let f = frame;
     let inner_right = width - f - 2;
-    let top = f + crate::window::CAPTION_H + 1;
+    let top = f + crate::window::CAPTION_H + 1 + above;
     let menu_band = Rect::new(f + 2, top + 2, inner_right - (f + 2), BAND_H);
-    let tool_band = Rect::new(menu_band.x, menu_band.bottom() + 2, menu_band.w, tool_band_h(era));
+    let tool_band = Rect::new(menu_band.x, menu_band.bottom() + 2 + after_menu, menu_band.w, tool_band_h(era));
     let address_band = Rect::new(menu_band.x, tool_band.bottom() + 2, menu_band.w, BAND_H);
     let rebar = Rect::new(f, top, width - 2 * f, address_band.bottom() + 2 - top);
     let throbber = Rect::new(inner_right - THROBBER.0, menu_band.y, THROBBER.0, THROBBER.1);

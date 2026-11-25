@@ -55,6 +55,10 @@ pub struct Config {
     /// Kept as it is at every size, also where the lines cannot show. Its line is written only
     /// when it is changed.
     pub monitor_lines: crate::monitor_lines::Strength,
+    /// Tabs in folder windows (Bevel95's own, brief 110): where the row goes (`off`: no row, the
+    /// folder windows as always) and where its small X goes. Written only when changed.
+    pub folder_tabs: crate::folder::tabs::Place,
+    pub folder_tabs_close: crate::folder::tabs::CloseAt,
 }
 
 impl Config {
@@ -193,6 +197,8 @@ impl Default for Config {
             quick_launch: None,
             windows_display_settings: false,
             monitor_lines: crate::monitor_lines::Strength::Off,
+            folder_tabs: crate::folder::tabs::Place::Off,
+            folder_tabs_close: crate::folder::tabs::CloseAt::End,
         }
     }
 }
@@ -354,6 +360,14 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             "monitor_lines" => match crate::monitor_lines::Strength::from_setting(&value) {
                 Some(strength) => config.monitor_lines = strength,
                 None => warn("monitor_lines must be off, light, medium or strong"),
+            },
+            "folder_tabs" => match crate::folder::tabs::Place::from_word(&value) {
+                Some(place) => config.folder_tabs = place,
+                None => warn("folder_tabs must be off, under_address, over_files, under_menu or above_menu"),
+            },
+            "folder_tabs_close" => match crate::folder::tabs::CloseAt::from_word(&value) {
+                Some(at) => config.folder_tabs_close = at,
+                None => warn("folder_tabs_close must be end or tab"),
             },
             "clock_offset" => match value.parse::<i64>() {
                 Ok(seconds) => config.clock_offset = seconds,
