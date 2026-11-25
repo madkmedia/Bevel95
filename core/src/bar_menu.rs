@@ -263,14 +263,15 @@ fn choices(labels: impl Iterator<Item = (String, bool)>) -> Menu {
     Menu::new(entries)
 }
 
-/// The Theme submenu: "Windows 95", "Windows 98", "Windows 2000", a bullet on the look in use.
-pub fn theme_menu(current: Era) -> Menu {
-    choices(Era::ALL.iter().map(|&era| (era.title().to_string(), era == current)))
+/// The Theme submenu: "Windows 95", "Windows 98", "Windows 2000", "Windows XP" (brief 112: XP's
+/// taskbar and Start menu over the 2000 look), a bullet on the look in use.
+pub fn theme_menu(current: Era, style: crate::theme::BarStyle) -> Menu {
+    choices(crate::theme::LOOKS.iter().map(|&(era, s)| (crate::theme::look_title(era, s).to_string(), (era, s) == (current, style))))
 }
 
 /// The look chosen by entry `index` of `theme_menu`.
-pub fn theme_at(index: usize) -> Option<Era> {
-    Era::ALL.get(index).copied()
+pub fn theme_at(index: usize) -> Option<(Era, crate::theme::BarStyle)> {
+    crate::theme::LOOKS.get(index).copied()
 }
 
 /// The Colors submenu: "16 Colors", "True Color" (the order of Windows' own Display Properties
@@ -617,13 +618,18 @@ mod tests {
 
     #[test]
     fn theme_menu_marks_the_current_look() {
-        let m = theme_menu(Era::Win98);
+        use crate::theme::BarStyle;
+        let m = theme_menu(Era::Win98, BarStyle::Classic);
         let labels: Vec<&str> = m.entries.iter().map(|e| e.label.as_str()).collect();
-        assert_eq!(labels, ["Windows 95", "Windows 98", "Windows 2000"]);
+        assert_eq!(labels, ["Windows 95", "Windows 98", "Windows 2000", "Windows XP"]);
         let marked: Vec<bool> = m.entries.iter().map(|e| e.mark.is_some()).collect();
-        assert_eq!(marked, [false, true, false]);
-        assert_eq!(theme_at(0), Some(Era::Win95));
-        assert_eq!(theme_at(2), Some(Era::Win2000));
-        assert_eq!(theme_at(3), None);
+        assert_eq!(marked, [false, true, false, false]);
+        assert_eq!(theme_at(0), Some((Era::Win95, BarStyle::Classic)));
+        assert_eq!(theme_at(2), Some((Era::Win2000, BarStyle::Classic)));
+        // Brief 112: Windows XP is the 2000 look with XP's bar; marked only under the XP style.
+        assert_eq!(theme_at(3), Some((Era::Win2000, BarStyle::Xp)));
+        assert_eq!(theme_at(4), None);
+        let xp = theme_menu(Era::Win2000, BarStyle::Xp);
+        assert_eq!(xp.entries.iter().map(|e| e.mark.is_some()).collect::<Vec<_>>(), [false, false, false, true]);
     }
 }

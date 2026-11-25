@@ -48,7 +48,16 @@ pub fn load() -> (Era, Look) {
 fn settings() -> config::Config {
     // Missing or unreadable: the defaults (only read here; the bar keeps the file).
     let text = crate::state_file::read(&data_dir().join("settings.txt")).text().unwrap_or_default();
-    config::parse(&text).0
+    xp_as_2000(config::parse(&text).0)
+}
+
+/// Under Windows XP's bar style (brief 112) every program shows the 2000 look in True Color.
+fn xp_as_2000(mut settings: config::Config) -> config::Config {
+    if settings.bar_style == bevel_core::theme::BarStyle::Xp {
+        settings.era = Era::Win2000;
+        settings.colors = Depth::TrueColor;
+    }
+    settings
 }
 
 /// Tabs in folder windows (brief 110): where the row goes and where its X goes.
@@ -73,7 +82,7 @@ fn settings_and_tabs(read: crate::state_file::Read) -> (config::Config, Option<F
         Read::Text(text) => !text.trim().is_empty(),
         Read::Unreadable(_) => false,
     };
-    let settings = config::parse(&read.text().unwrap_or_default()).0;
+    let settings = xp_as_2000(config::parse(&read.text().unwrap_or_default()).0);
     let tabs = known.then_some((settings.folder_tabs, settings.folder_tabs_close));
     (settings, tabs)
 }

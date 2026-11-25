@@ -59,6 +59,9 @@ pub struct Config {
     /// folder windows as always) and where its small X goes. Written only when changed.
     pub folder_tabs: crate::folder::tabs::Place,
     pub folder_tabs_close: crate::folder::tabs::CloseAt,
+    /// How the taskbar and the Start menu are drawn (brief 112): `classic` (the look's own) or
+    /// `xp` (Windows XP's; the look is then 2000's for everything else). Written only when changed.
+    pub bar_style: crate::theme::BarStyle,
 }
 
 impl Config {
@@ -199,6 +202,7 @@ impl Default for Config {
             monitor_lines: crate::monitor_lines::Strength::Off,
             folder_tabs: crate::folder::tabs::Place::Off,
             folder_tabs_close: crate::folder::tabs::CloseAt::End,
+            bar_style: crate::theme::BarStyle::Classic,
         }
     }
 }
@@ -364,6 +368,10 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
             "folder_tabs" => match crate::folder::tabs::Place::from_word(&value) {
                 Some(place) => config.folder_tabs = place,
                 None => warn("folder_tabs must be off, under_address, over_files, under_menu or above_menu"),
+            },
+            "bar_style" => match crate::theme::BarStyle::from_setting(&value) {
+                Some(style) => config.bar_style = style,
+                None => warn("bar_style must be classic or xp"),
             },
             "folder_tabs_close" => match crate::folder::tabs::CloseAt::from_word(&value) {
                 Some(at) => config.folder_tabs_close = at,

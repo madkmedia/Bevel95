@@ -100,6 +100,58 @@ pub struct Theme {
     pub text: TextMetrics,
     pub start_menu: StartMenuMetrics,
     pub popup: PopupMetrics,
+    /// How the taskbar and the Start menu are drawn: the look's own (`Classic`), or Windows XP's
+    /// (brief 112; only `WINXP`).
+    pub bar_style: BarStyle,
+}
+
+/// How the taskbar and the Start menu are drawn (brief 112): as the look's own Windows drew them,
+/// or as Windows XP did (a first version; everything else of Bevel95 then shows in the 2000 look).
+/// Room is left for Windows 7's (`Seven`), being painted elsewhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BarStyle {
+    #[default]
+    Classic,
+    Xp,
+}
+
+impl BarStyle {
+    /// The name in settings.txt (`bar_style`).
+    pub const fn setting(self) -> &'static str {
+        match self {
+            BarStyle::Classic => "classic",
+            BarStyle::Xp => "xp",
+        }
+    }
+
+    pub fn from_setting(word: &str) -> Option<BarStyle> {
+        match word {
+            "classic" => Some(BarStyle::Classic),
+            "xp" => Some(BarStyle::Xp),
+            _ => None,
+        }
+    }
+}
+
+/// The looks as a person picks them (the Theme menus, Bevel95 Settings): the three classic looks,
+/// then Windows XP, which is the 2000 look with XP's taskbar and Start menu (brief 112).
+pub const LOOKS: [(Era, BarStyle); 4] =
+    [(Era::Win95, BarStyle::Classic), (Era::Win98, BarStyle::Classic), (Era::Win2000, BarStyle::Classic), (Era::Win2000, BarStyle::Xp)];
+
+/// The name of a look as a person picks it.
+pub const fn look_title(era: Era, style: BarStyle) -> &'static str {
+    match style {
+        BarStyle::Xp => "Windows XP",
+        BarStyle::Classic => era.title(),
+    }
+}
+
+/// The theme the bar draws with: the look's in `depth` colors, or XP's (always True Color).
+pub fn bar_theme(era: Era, depth: Depth, style: BarStyle) -> &'static Theme {
+    match style {
+        BarStyle::Classic => theme_in(era, depth),
+        BarStyle::Xp => &WINXP,
+    }
 }
 
 /// Colors. The names in backticks are RetroBar's resource keys.
@@ -419,6 +471,7 @@ pub const WIN95: Theme = Theme {
         etch: rgb(0xFFFFFF),
         desktop: rgb(0x008080),
     },
+    bar_style: BarStyle::Classic,
     bar: BarMetrics { height: 28, edge: 2, pad_y: 2 },
     start: StartMetrics {
         margin_left: 2,
@@ -673,6 +726,25 @@ pub const WIN2000: Theme = Theme {
         ..WIN95.popup
     },
     ..WIN95
+};
+
+/// Windows XP's taskbar (brief 112; `xp`): the 2000 look for everything the bar shows that is not
+/// the bar or the Start menu (its menus, dialogs, tooltips: PROVISIONAL), with XP's bar sizes:
+/// 30 high, the task buttons 3 below its top and 25 high (an edge of 1 and 2 above and below, as
+/// `BarMetrics` counts), 160 wide at most with no gap between them, the first 8 after the Start
+/// button's 98 (x = 106), the last at least 12 short of the notification area (desktop-full's
+/// four buttons of 147: any of 10 to 13 gives them; PROVISIONAL), notification icons 18 apart.
+/// Always True Color. The survey: `private/probes/xp/survey.md`, a first pass from published
+/// screenshots.
+pub const WINXP: Theme = Theme {
+    slug: "winxp",
+    bar_style: BarStyle::Xp,
+    bar: BarMetrics { height: 30, edge: 1, pad_y: 2 },
+    colors: Colors { clock_text: rgb(0xFFFFFF), ..WIN2000.colors },
+    start: StartMetrics { margin_left: 0, ..WIN2000.start },
+    task: TaskMetrics { gap_after_start: 8, spacing: 0, ..WIN2000.task },
+    tray: TrayMetrics { margin_x: 12, icon_step: 18, ..WIN2000.tray },
+    ..WIN2000
 };
 
 // The three looks on a 16-color screen: the same sizes, the colors each Windows took there

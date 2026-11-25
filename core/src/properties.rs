@@ -69,6 +69,9 @@ pub struct Values {
     /// `folder_tabs_close`; brief 110).
     pub folder_tabs: crate::folder::tabs::Place,
     pub folder_tabs_close: crate::folder::tabs::CloseAt,
+    /// How the taskbar and the Start menu are drawn (brief 112; `bar_style`): Windows XP's is the
+    /// Look group's fourth choice, with `era` 2000.
+    pub bar_style: crate::theme::BarStyle,
 }
 
 /// The check boxes.
@@ -198,8 +201,10 @@ pub enum Part {
     /// The tab of page `i`. The tabs are one stop for the keyboard (the tab control).
     Tab(usize),
     Check(Check),
-    /// Bevel95 Settings: the option buttons of the look.
+    /// Bevel95 Settings: the option buttons of the look: the three classic looks, then Windows XP
+    /// (`LookXp`: the 2000 look with XP's taskbar and Start menu, brief 112).
     Look(Era),
+    LookXp,
     /// Bevel95 Settings: the option buttons of the colors.
     Colors(Depth),
     /// Bevel95 Settings, General page: the drop-down list of the sizes (every size the menus
@@ -420,6 +425,7 @@ fn label_of(era: Era, part: Part) -> Option<String> {
     match part {
         Part::Check(c) => Some(check_label(c).to_string()),
         Part::Look(e) => Some(look_label(e).to_string()),
+        Part::LookXp => Some("Windows &XP".to_string()),
         Part::Colors(d) => Some(colors_label(d).to_string()),
         Part::WinKey(k) => Some(windows_key_label(k).to_string()),
         Part::Lines(s) => Some(lines_label(s).to_string()),
@@ -803,7 +809,14 @@ impl Properties {
                 let b = check_value(v, c);
                 *b = !*b;
             }
-            Part::Look(era) => v.era = era,
+            Part::Look(era) => {
+                v.era = era;
+                v.bar_style = crate::theme::BarStyle::Classic;
+            }
+            Part::LookXp => {
+                v.era = Era::Win2000;
+                v.bar_style = crate::theme::BarStyle::Xp;
+            }
             Part::Colors(depth) => v.colors = depth,
             Part::WinKey(key) => v.windows_key = key,
             Part::Lines(strength) => v.monitor_lines = strength,
@@ -868,7 +881,7 @@ impl Properties {
         let mut stops = vec![Part::Tab(self.page)];
         for part in controls(self.era, self.current_page()) {
             let stop = match part {
-                Part::Look(_) => Part::Look(self.values.era),
+                Part::Look(_) | Part::LookXp => look_part(&self.values),
                 Part::Colors(_) => Part::Colors(self.values.colors),
                 Part::WinKey(_) => Part::WinKey(self.values.windows_key),
                 Part::Lines(_) => Part::Lines(self.values.monitor_lines),
@@ -898,7 +911,7 @@ impl Properties {
     /// The option button an arrow key moves to from `part` (within its group), if any.
     pub fn arrow(&self, part: Part, forward: bool) -> Option<Part> {
         let group: Vec<Part> = match part {
-            Part::Look(_) => Era::ALL.iter().map(|&e| Part::Look(e)).collect(),
+            Part::Look(_) | Part::LookXp => look_parts(),
             Part::Colors(_) => Depth::ALL.iter().map(|&d| Part::Colors(d)).collect(),
             Part::WinKey(_) => WindowsKey::ALL.iter().map(|&k| Part::WinKey(k)).collect(),
             Part::Lines(_) => Strength::ALL.iter().map(|&s| Part::Lines(s)).collect(),
@@ -1015,6 +1028,19 @@ fn setting_value(start: &mut StartOptions, s: Setting) -> Option<&mut bool> {
     }
 }
 
+/// The Look group's option buttons: the three classic looks, then Windows XP (brief 112).
+fn look_parts() -> Vec<Part> {
+    Era::ALL.iter().map(|&e| Part::Look(e)).chain([Part::LookXp]).collect()
+}
+
+/// The Look group's chosen button for `values`.
+fn look_part(values: &Values) -> Part {
+    match values.bar_style {
+        crate::theme::BarStyle::Xp => Part::LookXp,
+        crate::theme::BarStyle::Classic => Part::Look(values.era),
+    }
+}
+
 /// The controls of a page, in Tab order.
 fn controls(era: Era, page: Page) -> Vec<Part> {
     match page {
@@ -1023,9 +1049,8 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
             vec![Part::Add, Part::Remove, Part::Advanced, Part::ReSort, Part::Clear, Part::List]
         }
         Page::StartMenuPrograms => vec![Part::Add, Part::Remove, Part::Advanced, Part::Clear],
-        Page::Bevel95 => Era::ALL
-            .iter()
-            .map(|&e| Part::Look(e))
+        Page::Bevel95 => look_parts()
+            .into_iter()
             .chain(Depth::ALL.iter().map(|&d| Part::Colors(d)))
             .chain([Part::SizeList, Part::WayList, Part::Check(Check::QuarterSizes)])
             .chain([Part::Check(Check::StartWithWindows), Part::UsePcTime])
@@ -1053,7 +1078,7 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
 
 fn first_control(era: Era, page: Page, values: &Values) -> Part {
     match page {
-        Page::Bevel95 => Part::Look(values.era),
+        Page::Bevel95 => look_part(values),
         Page::OwnTaskbar => Part::WinKey(values.windows_key),
         Page::Programs => Part::Shown(values.programs),
         p => controls(era, p)[0],
@@ -1192,20 +1217,26 @@ const LOOK_GROUP: Rect = Rect::new(24, 68, 144, 89);
 const COLORS_GROUP: Rect = Rect::new(176, 68, 144, 89);
 const COLORS_ROWS: [(Depth, i32, i32); 3] =
     [(Depth::Sixteen, 188, 84), (Depth::TwoFiftySix, 188, 105), (Depth::TrueColor, 188, 126)];
-const LOOK_ROWS: [(Era, i32, i32); 3] = [(Era::Win95, 36, 84), (Era::Win98, 36, 105), (Era::Win2000, 36, 126)];
-const SIZE_GROUP: Rect = Rect::new(24, 165, 296, 68);
+/// The looks, 17 apart since Windows XP came as a fourth (brief 112; they were 21 apart).
+const LOOK_ROWS: [(Part, i32, i32); 4] =
+    [(Part::Look(Era::Win95), 36, 82), (Part::Look(Era::Win98), 36, 99), (Part::Look(Era::Win2000), 36, 116), (Part::LookXp, 36, 133)];
+/// Under the Look and Colors groups (brief 112): what Windows XP is, in one plain line; the groups
+/// below moved down 13 for it, and Startup made 7 lower (one check box).
+const XP_NOTE: &str = "Windows XP: taskbar and Start menu only, a first version.";
+const XP_NOTE_Y: i32 = 159;
+const SIZE_GROUP: Rect = Rect::new(24, 178, 296, 68);
 /// The Size group's row (ours, PROVISIONAL): "Size:" and its drop-down list, "Drawn as:" and
 /// its list (21 high, as Run's and Shut Down's fields), the labels on the fields' text line; then
 /// a line of text.
-const SIZE_TEXT_Y: i32 = 183;
+const SIZE_TEXT_Y: i32 = 196;
 const SIZE_LABEL_X: i32 = 36;
-const SIZE_FIELD: Rect = Rect::new(64, 179, 58, 21);
+const SIZE_FIELD: Rect = Rect::new(64, 192, 58, 21);
 const WAY_LABEL_X: i32 = 132;
-const WAY_FIELD: Rect = Rect::new(180, 179, 128, 21);
+const WAY_FIELD: Rect = Rect::new(180, 192, 128, 21);
 /// Under them, "Allow quarter sizes (not as sharp)" (ours, PROVISIONAL), where a line of text
 /// said what a size does until 2026-11-21: the page had no room for both. The box as Startup's
 /// (its row 3 above the old line's text).
-const QUARTERS_CHECK: (i32, i32) = (36, 207);
+const QUARTERS_CHECK: (i32, i32) = (36, 220);
 /// An open list's rows (as Shut Down's in Windows 2000).
 const DROP_ROW_H: i32 = 13;
 
@@ -1225,10 +1256,10 @@ fn drop_frame(font: &Font, p: &Properties, list: Part) -> Option<Rect> {
     let x = field.x.min(SIZE.0 - 4 - w);
     Some(Rect::new(x, field.bottom(), w, choices.len() as i32 * DROP_ROW_H + 2))
 }
-const STARTUP_GROUP: Rect = Rect::new(24, 241, 296, 47);
-const STARTUP_CHECK: (i32, i32) = (36, 258);
-const CLOCK_GROUP: Rect = Rect::new(24, 296, 296, 55);
-const CLOCK_BUTTON_Y: i32 = 312;
+const STARTUP_GROUP: Rect = Rect::new(24, 254, 296, 40);
+const STARTUP_CHECK: (i32, i32) = (36, 269);
+const CLOCK_GROUP: Rect = Rect::new(24, 302, 296, 55);
+const CLOCK_BUTTON_Y: i32 = 318;
 
 /// Bevel95 Settings' Taskbar page (ours), in the General page's manner: the Windows key group
 /// (its two option rows as the looks' first two, the group as high as the Size group), then 8
@@ -1377,8 +1408,7 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
         }
         Page::StartMenuPrograms => parts.extend(PAGE_BUTTONS),
         Page::Bevel95 => {
-            for (era, x, y) in LOOK_ROWS {
-                let part = Part::Look(era);
+            for (part, x, y) in LOOK_ROWS {
                 parts.push((part, Rect::new(x, y, 17 + label_w(part) + 1, 16)));
             }
             for (depth, x, y) in COLORS_ROWS {
@@ -1766,9 +1796,11 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
         }
         Page::Bevel95 => {
             group_box(fb, c, font, LOOK_GROUP, "Look", false);
-            for (e, x, y) in LOOK_ROWS {
-                option(fb, Part::Look(e), p.values.era == e, x, y);
+            for (part, x, y) in LOOK_ROWS {
+                option(fb, part, look_part(&p.values) == part, x, y);
             }
+            // Brief 112: one plain line under the looks.
+            lines(fb, LOOK_GROUP.x, XP_NOTE_Y, &[XP_NOTE]);
             group_box(fb, c, font, COLORS_GROUP, "Colors", false);
             for (d, x, y) in COLORS_ROWS {
                 option(fb, Part::Colors(d), p.values.colors == d, x, y);
@@ -2074,7 +2106,7 @@ impl kit::Form for PropertiesWindow {
     fn key(&mut self, key: Key, mods: Mods) -> Option<Vec<Effect<Part>>> {
         let p = &mut self.props;
         let (list, programs) = (p.focus == Part::List, p.focus == Part::Programs);
-        let options = matches!(p.focus, Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_));
+        let options = matches!(p.focus, Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_));
         let drop_list = is_list(p.focus).then_some(p.focus);
         match key {
             // A drop-down list: Enter takes the highlighted entry and Esc leaves the choice as it
@@ -2178,7 +2210,7 @@ impl kit::Form for PropertiesWindow {
         // what the key reaches is not hidden under it and Enter and Esc mean OK and Cancel.
         p.drop = None;
         match p.access_key(ch) {
-            Some(part @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_))) => {
+            Some(part @ (Part::Check(_) | Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_))) => {
                 p.focus = part;
                 p.choose(part);
             }
@@ -2202,7 +2234,7 @@ impl kit::Form for PropertiesWindow {
             Part::Programs => {
                 p.choose(Part::ProgramRow(p.programs.sel));
             }
-            f @ (Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_)) => {
+            f @ (Part::Check(_) | Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_)) => {
                 p.choose(f);
             }
             f if f.is_push_button() => return kit::activate(self, f),
@@ -2283,7 +2315,7 @@ impl kit::Form for PropertiesWindow {
     }
     fn release(&mut self, part: Part) -> Vec<Effect<Part>> {
         match part {
-            Part::Check(_) | Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_) => {
+            Part::Check(_) | Part::Look(_) | Part::LookXp | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_) => {
                 self.props.choose(part);
                 Vec::new()
             }
@@ -2365,6 +2397,7 @@ mod tests {
             monitor_lines: Strength::Off,
             folder_tabs: crate::folder::tabs::Place::Off,
             folder_tabs_close: crate::folder::tabs::CloseAt::End,
+            bar_style: crate::theme::BarStyle::Classic,
         }
     }
 
@@ -2833,6 +2866,25 @@ mod tests {
         assert!(settings.choose(Part::Look(Era::Win98)));
         let applied = Sheet::Bevel95.merge(settings.values, now);
         assert_eq!((applied.era, applied.options.show_clock), (Era::Win98, false));
+    }
+
+    /// Brief 112: Windows XP is the Look group's fourth choice: it sets the XP bar style with the
+    /// 2000 look; a classic choice sets the classic style again; one Tab stop, the arrows go on
+    /// to it, X is its access key, and the line under the groups fits the page.
+    #[test]
+    fn windows_xp_is_the_fourth_look() {
+        use crate::theme::BarStyle;
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win98, values());
+        assert_eq!(p.access_key('x'), Some(Part::LookXp));
+        assert_eq!(p.arrow(Part::Look(Era::Win2000), true), Some(Part::LookXp));
+        assert!(p.choose(Part::LookXp));
+        assert_eq!((p.values.era, p.values.bar_style), (Era::Win2000, BarStyle::Xp));
+        assert!(p.tab_stops().contains(&Part::LookXp) && !p.tab_stops().contains(&Part::Look(Era::Win2000)));
+        assert!(p.choose(Part::Look(Era::Win98)));
+        assert_eq!((p.values.era, p.values.bar_style), (Era::Win98, BarStyle::Classic));
+        let font = Font::parse(include_str!("../tests/fixtures/tahoma-11px.font")).unwrap();
+        assert!(LOOK_GROUP.x + font.measure(XP_NOTE) <= COLORS_GROUP.right(), "the line fits");
+        assert!(CLOCK_GROUP.bottom() < PAGE.bottom(), "the groups still fit the page");
     }
 
     /// Brief 102: the Desktop page's Monitor Lines group, one Tab stop (the choice in force), its

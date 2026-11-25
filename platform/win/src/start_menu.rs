@@ -248,15 +248,36 @@ pub(crate) fn companion_file(root: &Path, file: &str) -> Option<PathBuf> {
     [root.join("programs").join(file), root.join(file)].into_iter().find(|path| path.is_file())
 }
 
-/// The full path to a program shipped with the running bar.
+/// Under Windows XP's bar style Bevel95's own programs are left out (brief 112, the owner: "no
+/// apps etc"): not listed in the Programs menu or Quick Search, and the folders open in Windows'
+/// own Explorer, as when the folder windows' program is missing.
+static NO_OWN_PROGRAMS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The bar's style changed (or the bar started): under XP's, Bevel95's own programs are left out.
+pub fn set_own_programs(shown: bool) {
+    NO_OWN_PROGRAMS.store(!shown, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn own_programs_shown() -> bool {
+    !NO_OWN_PROGRAMS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// The full path to a program shipped with the running bar (`None` under XP's bar style).
 fn own_program_path(file: &str) -> Option<PathBuf> {
+    if !own_programs_shown() {
+        return None;
+    }
     companion_file(std::env::current_exe().ok()?.parent()?, file)
 }
 
 /// Lists Bevel95's own programs in the Programs menu where Windows 95, 98 and 2000 kept them:
 /// the games under Accessories > Games, Calculator under Accessories. Nothing is written to the
-/// Start Menu folders: the entry is there while the program's file is present.
+/// Start Menu folders: the entry is there while the program's file is present (and not under
+/// XP's bar style).
 fn add_own_programs(root: &mut Folder, dir: &Path) {
+    if !own_programs_shown() {
+        return;
+    }
     bevel_core::programs::add_own_programs(root, era_now(), |program| {
         companion_file(dir, program.file).map(|path| path.display().to_string())
     });

@@ -33,6 +33,7 @@ mod start;
 mod taskbar;
 mod tray;
 mod winhelp;
+mod xp;
 
 /// The Windows a picture was taken from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -40,6 +41,9 @@ pub enum Look {
     Win95,
     Win98,
     Win2000,
+    /// Windows XP's taskbar and Start menu only (Bevel95's XP bar style, brief 112): a first pass
+    /// from published screenshots (`xp.rs`).
+    WinXp,
 }
 
 /// The screen it was taken from: True Color, or that Windows on a 16-color or 256-color screen.
@@ -117,6 +121,7 @@ const GROUPS: &[&[Entry]] = &[
     calculator::ENTRIES,
     colors16::ENTRIES,
     colors256::ENTRIES,
+    xp::ENTRIES,
 ];
 
 /// The picture `what` of `look` at `depth`, if there is one.

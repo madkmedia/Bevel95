@@ -3668,6 +3668,7 @@ fn own_properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
                 monitor_lines: bevel_core::monitor_lines::Strength::Off,
                 folder_tabs: bevel_core::folder::tabs::Place::Off,
                 folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
+                bar_style: bevel_core::theme::BarStyle::Classic,
                 quick_launch: false,
                 group: true,
             };
@@ -4723,6 +4724,7 @@ fn properties_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             monitor_lines: bevel_core::monitor_lines::Strength::Off,
             folder_tabs: bevel_core::folder::tabs::Place::Off,
             folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
+            bar_style: bevel_core::theme::BarStyle::Classic,
             quick_launch: false,
             group: true,
         };

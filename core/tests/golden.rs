@@ -489,6 +489,7 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         monitor_lines: bevel_core::monitor_lines::Strength::Off,
         folder_tabs: bevel_core::folder::tabs::Place::Off,
         folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
+        bar_style: bevel_core::theme::BarStyle::Classic,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -522,6 +523,7 @@ fn quarter_size_scene(theme: &Theme, era: Era, fonts: &Fonts, open: Option<prope
         monitor_lines: bevel_core::monitor_lines::Strength::Off,
         folder_tabs: bevel_core::folder::tabs::Place::Off,
         folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
+        bar_style: bevel_core::theme::BarStyle::Classic,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -639,6 +641,7 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         monitor_lines: bevel_core::monitor_lines::Strength::Off,
         folder_tabs: bevel_core::folder::tabs::Place::Off,
         folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
+        bar_style: bevel_core::theme::BarStyle::Classic,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -1261,7 +1264,7 @@ fn bar_submenu_scene(theme: &Theme, era: Era, fonts: &Fonts, which: Option<BarEn
     };
 
     let submenu = match which {
-        BarEntry::Theme => bar_menu::theme_menu(era),
+        BarEntry::Theme => bar_menu::theme_menu(era, bevel_core::theme::BarStyle::Classic),
         BarEntry::Colors => bar_menu::colors_menu(theme.depth),
         // The owner's sheet of brief 102 (no golden picture): Medium, at size 2.
         BarEntry::MonitorLines => {
@@ -2319,6 +2322,7 @@ fn scenes() -> Vec<Scene> {
         w.paint(&mut fb, &WIN2000, &fonts);
         out.push(Scene { section: "Windows 2000", name: "win2000-folder-options".into(), caption: "Folder Options (Tools menu): Web View and Browse Folders, classic folders just chosen", image: fb });
     }
+    out.extend(xp_scenes());
     out.extend(sixteen_color_scenes());
     out.extend(reduced_color_scenes(Depth::TwoFiftySix));
     // The integer upscaler, checked on a real image.
@@ -2409,6 +2413,38 @@ fn reduced_color_scenes(depth: Depth) -> Vec<Scene> {
     }
     DEPTH.set(Depth::TrueColor);
     out
+}
+
+/// Windows XP's bar style (brief 112), on an 800-wide screen as the survey's screenshots: the bar
+/// with three buttons, the last in front, as GUIdebook's taskbar strip; one button in front; a
+/// full bar; the Start button pressed.
+fn xp_bar(tasks: Vec<Task>, start_pressed: bool, clock: &str) -> Framebuffer {
+    let theme = &bevel_core::theme::WINXP;
+    let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let mut fb = Framebuffer::new(800, theme.bar.height, 0);
+    let bar = Bar { start_pressed, tasks, tray: vec![Some(icon(&COMPUTER, 1))], clock: clock.to_string(), clock_widest: WIDEST.to_string(), ..Bar::default() };
+    paint::paint_bar(&mut fb, theme, &fonts, &bar);
+    fb
+}
+
+fn xp_scenes() -> Vec<Scene> {
+    let section = "Windows XP (bar style)";
+    let three = vec![
+        task("My Computer", &COMPUTER, TaskState::Normal),
+        task("Untitled - Notepad", &DOCUMENT, TaskState::Normal),
+        task("Inbox - Outlook Express", &MAIL, TaskState::Active),
+    ];
+    let full: Vec<Task> = crowded().into_iter().take(4).enumerate().map(|(i, mut t)| {
+        t.state = if i == 3 { TaskState::Active } else { TaskState::Normal };
+        t
+    }).collect();
+    vec![
+        Scene { section, name: "winxp-bar-three".into(), caption: "XP bar style: three buttons, the last in front (as GUIdebook's taskbar strip)", image: xp_bar(three, false, "10:35 AM") },
+        Scene { section, name: "winxp-bar-one-front".into(), caption: "XP bar style: one button, in front", image: xp_bar(vec![task("My Computer", &COMPUTER, TaskState::Active)], false, "10:35 AM") },
+        Scene { section, name: "winxp-bar-full".into(), caption: "XP bar style: four buttons sharing the room (147 each, as desktop-full)", image: xp_bar(full, false, "10:58 AM") },
+        Scene { section, name: "winxp-bar-overfull".into(), caption: "XP bar style: more buttons than fit, the 2000 look's arrows (PROVISIONAL)", image: xp_bar(overfull(), true, "10:58 AM") },
+    ]
 }
 
 /// Sizes measured on Windows itself, run in the v86 emulator (docs/theme-spec.md, "Window

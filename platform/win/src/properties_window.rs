@@ -114,9 +114,10 @@ fn current_values() -> Option<(Values, bevel_core::theme::Era)> {
             battery_percent: app.battery_percent,
             windows_display: app.windows_display_settings,
             monitor_lines: app.monitor_lines,
-            quick_launch: app.quick_launch_on(),
+            quick_launch: app.quick_launch_setting(),
             folder_tabs: app.folder_tabs.0,
             folder_tabs_close: app.folder_tabs.1,
+            bar_style: app.bar_style,
         };
         (values, app.era)
     })

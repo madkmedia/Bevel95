@@ -408,9 +408,17 @@ pub struct App {
     /// Tabs in folder windows as settings.txt has them (`folder_tabs`, `folder_tabs_close`;
     /// brief 110): Bevel95 Settings' Folders page shows them.
     pub folder_tabs: (bevel_core::folder::tabs::Place, bevel_core::folder::tabs::CloseAt),
+    /// How the taskbar and the Start menu are drawn (`bar_style`, brief 112): Windows XP's goes
+    /// with the 2000 look (`era`) for everything else, always in True Color.
+    pub bar_style: theme::BarStyle,
 }
 
 impl App {
+    /// Whether the bar is drawn in Windows XP's style (brief 112).
+    pub fn xp(&self) -> bool {
+        self.bar_style == theme::BarStyle::Xp
+    }
+
     pub fn fonts(&self) -> Fonts<'_> {
         Fonts { regular: &self.regular, bold: &self.bold }
     }
@@ -425,6 +433,13 @@ impl App {
 
     /// Whether Quick Launch shows now (settings.txt, else the look's default).
     pub fn quick_launch_on(&self) -> bool {
+        // Not shown under Windows XP's bar style (XP shipped with it hidden; brief 112).
+        !self.xp() && self.ql.on(self.era)
+    }
+
+    /// Quick Launch as settings.txt (or the look's default) has it, shown or not (Bevel95
+    /// Settings' box; brief 112).
+    pub fn quick_launch_setting(&self) -> bool {
         self.ql.on(self.era)
     }
 
@@ -590,9 +605,14 @@ pub fn run() -> u32 {
         }
     }
 
-    let settings = load_settings();
+    let mut settings = load_settings();
+    // Windows XP's bar style goes with the 2000 look for everything else (brief 112).
+    if settings.bar_style == theme::BarStyle::Xp {
+        settings.era = Era::Win2000;
+    }
     zones::set_clock(settings.clock_zone, settings.clock_dst);
-    let theme = theme::theme_in(settings.era, settings.colors);
+    let theme = theme::bar_theme(settings.era, settings.colors, settings.bar_style);
+    start_menu::set_own_programs(settings.bar_style != theme::BarStyle::Xp);
     let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
     let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
 
@@ -736,6 +756,7 @@ pub fn run() -> u32 {
             monitor_lines_test_began: None,
             monitor_lines_paused: None,
             folder_tabs: (settings.folder_tabs, settings.folder_tabs_close),
+            bar_style: settings.bar_style,
         });
     });
     // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
@@ -988,14 +1009,15 @@ fn show_ours(bar: HWND) {
 /// Whether the classic desktop shows (switched on, and the bar is Bevel95's): `sync_desktop`'s
 /// test.
 pub fn classic_desktop_shows() -> bool {
-    with_app(|app| app.ours && app.desktop).unwrap_or(false)
+    with_app(|app| app.ours && app.desktop && !app.xp()).unwrap_or(false)
 }
 
 /// Bevel95's own desktop shows while it is switched on and our bar is showing, in the color of
-/// the look in use; otherwise it is taken away (Windows' own desktop shows).
+/// the look in use; otherwise it is taken away (Windows' own desktop shows). Never under XP's bar
+/// style (brief 112: "no apps etc"; the `desktop` setting keeps its value for a classic look).
 pub fn sync_desktop() {
     let Some(look) = with_app(|app| {
-        (app.ours && app.desktop).then(|| desktop::Look {
+        (app.ours && app.desktop && !app.xp()).then(|| desktop::Look {
             era: app.era,
             theme: app.theme,
             font: app.regular.clone(),
@@ -2374,7 +2396,8 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     }
     // Quick Launch: written only when it changes from what holds now (the look's default while
     // settings.txt does not say).
-    if with_app(|app| app.quick_launch_on() != values.quick_launch).unwrap_or(false) {
+    // (The setting, not whether the band shows: under XP's bar style it never shows, brief 112.)
+    if with_app(|app| app.quick_launch_setting() != values.quick_launch).unwrap_or(false) {
         set_quick_launch(values.quick_launch);
     }
     // Written only when changed, so a settings.txt that never had the line does not get one.
@@ -2398,8 +2421,8 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     if with_app(|app| app.scale.quarters() != values.scale.quarters()).unwrap_or(false) {
         set_size(bar, values.scale);
     }
-    if with_app(|app| app.era != values.era).unwrap_or(false) {
-        set_era(bar, values.era);
+    if with_app(|app| app.era != values.era || app.bar_style != values.bar_style).unwrap_or(false) {
+        set_era(bar, values.era, values.bar_style);
     }
     if with_app(|app| app.colors != values.colors).unwrap_or(false) {
         set_colors(bar, values.colors);
@@ -2890,12 +2913,16 @@ fn size_changed(bar: HWND) {
 
 /// Theme menu: switches to another look at once (its colors, sizes and font) and remembers
 /// it in settings.txt.
-fn set_era(bar: HWND, era: Era) {
-    if with_app(|app| app.era == era).unwrap_or(true) {
+fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
+    // Windows XP's bar style goes with the 2000 look (brief 112).
+    let era = if style == theme::BarStyle::Xp { Era::Win2000 } else { era };
+    if with_app(|app| app.era == era && app.bar_style == style).unwrap_or(true) {
         return;
     }
+    let style_changed = with_app(|app| std::mem::replace(&mut app.bar_style, style) != style).unwrap_or(false);
+    start_menu::set_own_programs(style != theme::BarStyle::Xp);
     start_menu::set_era(era);
-    let theme = theme::theme_in(era, with_app(|app| app.colors).unwrap_or_default());
+    let theme = theme::bar_theme(era, with_app(|app| app.colors).unwrap_or_default(), style);
     let regular = font::letters(theme.font_face, theme.font_px, false).with_period_glyphs();
     let bold = font::letters(theme.font_face, theme.font_px, true).with_period_glyphs();
     // A dialog open in the old look goes away, and so does a question of Quick Launch's (its
@@ -2921,7 +2948,11 @@ fn set_era(bar: HWND, era: Era) {
         properties_window::quick_launch_changed(on);
     }
     save_setting("era", era.setting());
-    log(&format!("look: {}", era.title()));
+    // Written only when changed, so a settings.txt that never had the line does not get one.
+    if style_changed {
+        save_setting("bar_style", style.setting());
+    }
+    log(&format!("look: {}", theme::look_title(era, style)));
     // The desktop takes the new look's color.
     sync_desktop();
     reposition(bar);
@@ -2947,7 +2978,7 @@ fn set_colors(bar: HWND, depth: Depth) {
     bevel_winkit::confirm::close_asked();
     with_app(|app| {
         app.colors = depth;
-        app.theme = theme::theme_in(era, depth);
+        app.theme = theme::bar_theme(era, depth, app.bar_style);
         app.layout = None;
     });
     save_setting("colors", depth.setting());
@@ -3614,8 +3645,9 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             return 0;
         }
         m if m == WM_BAR_THEME.id() => {
-            if let Some(&era) = Era::ALL.get(wparam) {
-                set_era(bar, era);
+            // The Theme menu's entry (`theme::LOOKS`: 3 is Windows XP).
+            if let Some(&(era, style)) = theme::LOOKS.get(wparam) {
+                set_era(bar, era, style);
             }
             return 0;
         }

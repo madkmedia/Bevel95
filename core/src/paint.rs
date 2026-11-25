@@ -64,6 +64,9 @@ pub struct Bar {
 
 /// Where everything of `bar` goes on a bar `width` wide, as `paint_bar` lays it out.
 pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
+    if theme.bar_style == crate::theme::BarStyle::Xp {
+        return crate::xp::bar_layout(theme, fonts, width, bar);
+    }
     let number = bar.tray_number.as_ref().filter(|(_, text)| !text.is_empty()).map(|&(i, _)| i);
     let quick = bar.quick_launch.as_ref().map(quick_launch::Band::shape);
     layout::bar_with(theme, fonts, width, bar.tasks.len(), bar.tray.len(), number, &bar.clock, &bar.clock_widest, bar.row, quick)
@@ -72,6 +75,9 @@ pub fn bar_layout(theme: &Theme, fonts: &Fonts, width: i32, bar: &Bar) -> BarLay
 /// Paints the whole bar (the framebuffer should be `theme.bar.height` tall) and returns
 /// where everything went, for hit-testing.
 pub fn paint_bar(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, bar: &Bar) -> BarLayout {
+    if theme.bar_style == crate::theme::BarStyle::Xp {
+        return crate::xp::paint_bar(fb, theme, fonts, bar);
+    }
     let c = &theme.colors;
     fb.fill(Rect::new(0, 0, fb.width, fb.height), c.face);
     fb.hline(0, 0, fb.width, c.light);
@@ -284,6 +290,13 @@ fn scroll_button(fb: &mut Framebuffer, c: &Colors, r: Rect, dir: ScrollArrow, pr
     for &(x, y) in arrow {
         fb.set(r.x + x + shift, r.y + y + shift, c.text);
     }
+}
+
+/// The task list's two scroll arrows (the XP bar uses them as the 2000 look draws them).
+pub(crate) fn paint_scroll_arrows(fb: &mut Framebuffer, theme: &Theme, s: layout::TaskScroll, pressed: Option<ScrollArrow>) {
+    let c = &theme.colors;
+    scroll_button(fb, c, s.up, ScrollArrow::Up, pressed == Some(ScrollArrow::Up));
+    scroll_button(fb, c, s.down, ScrollArrow::Down, pressed == Some(ScrollArrow::Down));
 }
 
 /// A raised 2px button bevel (RetroBar TaskButton / StartButton templates).

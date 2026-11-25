@@ -546,7 +546,7 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
                 Want::Ready(Kind::Toolbars, bar_menu::toolbars_menu(app.quick_launch_on()), MenuStyle::Popup)
             }
             Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::Theme) => {
-                Want::Ready(Kind::Theme, bar_menu::theme_menu(app.era), MenuStyle::Popup)
+                Want::Ready(Kind::Theme, bar_menu::theme_menu(app.era, app.bar_style), MenuStyle::Popup)
             }
             Kind::BarOwn(own) if bar_menu::own_entry(*own, index) == Some(BarEntry::Colors) => {
                 Want::Ready(Kind::Colors, bar_menu::colors_menu(app.colors), MenuStyle::Popup)
@@ -881,7 +881,8 @@ fn deepest() -> Option<usize> {
 enum Action {
     /// A command of the bar's menu; true if Shift was held.
     BarCommand(BarCommand, bool),
-    Theme(Era),
+    /// The Theme menu's entry (`bevel_core::theme::LOOKS`).
+    Theme(usize),
     Colors(usize),
     Size(Scale),
     /// The Monitor Lines submenu's entry, by its index.
@@ -937,7 +938,7 @@ fn choose(level: usize, index: usize) {
             Action::BarCommand(command, shift)
         }
         Kind::Theme => match bar_menu::theme_at(index) {
-            Some(era) => Action::Theme(era),
+            Some(_) => Action::Theme(index),
             None => return,
         },
         Kind::Colors => match bar_menu::colors_at(index) {
@@ -1064,9 +1065,8 @@ fn choose(level: usize, index: usize) {
             // SAFETY: posting to our own bar window.
             unsafe { PostMessageW(bar, crate::bar::wm_desktop_command(), command.code(), crate::desktop::command_param(ticket, false)) };
         }
-        Action::Theme(era) => {
+        Action::Theme(index) => {
             close(true);
-            let index = Era::ALL.iter().position(|&e| e == era).unwrap_or(0);
             // SAFETY: posting to our own bar window.
             unsafe { PostMessageW(bar, WM_BAR_THEME.id(), index, 0) };
         }
