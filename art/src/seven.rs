@@ -19,17 +19,52 @@ const SEVEN: &[Look] = &[Look::Win7];
 pub(crate) const ENTRIES: &[Entry] = &[
     // 40x40: column 0 is the bar's body (rows 0, 1 its two top lines), columns 1..39 the fade
     // toward the darker end zone.
-    Entry { what: "seven/bar-fade", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/bar-fade.rgba")) },
+    Entry {
+        what: "seven/bar-fade",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/bar-fade.rgba")),
+    },
     // 1x40: a column of the end zones.
-    Entry { what: "seven/bar-zone", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/bar-zone.rgba")) },
+    Entry {
+        what: "seven/bar-zone",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/bar-zone.rgba")),
+    },
     // 56x80: the orb on the left end zone, normal (rows 0..39) and with the Start menu open.
-    Entry { what: "seven/orb", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/orb.rgba")) },
+    Entry {
+        what: "seven/orb",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/orb.rgba")),
+    },
     // 60x40: a running program's button (see-through share solved on its left 36 columns).
-    Entry { what: "seven/button-running", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/button-running.rgba")) },
+    Entry {
+        what: "seven/button-running",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/button-running.rgba")),
+    },
     // 60x40: the button of the window in front (opaque: seen over the body only).
-    Entry { what: "seven/button-front", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/button-front.rgba")) },
+    Entry {
+        what: "seven/button-front",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/button-front.rgba")),
+    },
     // 9x7: the arrow that shows the hidden notification icons, on the end zone.
-    Entry { what: "seven/tray-arrow", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/tray-arrow.rgba")) },
+    Entry {
+        what: "seven/tray-arrow",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/tray-arrow.rgba")),
+    },
     // 15x40: Show desktop, at the bar's right end.
-    Entry { what: "seven/show-desktop", looks: SEVEN, depth: Depth::TrueColor, art: Art::Bytes(include_bytes!("../assets/seven/show-desktop.rgba")) },
+    Entry {
+        what: "seven/show-desktop",
+        looks: SEVEN,
+        depth: Depth::TrueColor,
+        art: Art::Bytes(include_bytes!("../assets/seven/show-desktop.rgba")),
+    },
 ];

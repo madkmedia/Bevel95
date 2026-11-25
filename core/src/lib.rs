@@ -52,6 +52,7 @@ pub mod rename_warning;
 pub mod scale;
 mod scroll;
 pub mod setup;
+pub mod seven;
 mod shell_about;
 pub mod solitaire;
 pub mod start;
