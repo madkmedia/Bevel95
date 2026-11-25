@@ -171,24 +171,15 @@ type Load = unsafe extern "system" fn(*mut c_void, windows_sys::core::PCWSTR, u3
 type GetPath = unsafe extern "system" fn(*mut c_void, *mut u16, i32, *mut c_void, u32) -> windows_sys::core::HRESULT;
 type GetFlags = unsafe extern "system" fn(*mut c_void, *mut u32) -> windows_sys::core::HRESULT;
 
-thread_local! {
-    /// The program files Quick Launch's shortcuts point at, as read (Windows 7's pinned slots).
-    static PROGRAMS_OF: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 /// The program file the shortcut `link` points at (`None`: it cannot be read, is advertised or
-/// points at a folder: it then never matches a window; brief 114). Read once per shortcut.
-pub fn shortcut_program(link: &str) -> Option<String> {
-    if let Some(known) = PROGRAMS_OF.with(|p| p.borrow().get(link).cloned()) {
-        return known;
-    }
-    let found = match link_target(link) {
+/// points at a folder: it then never matches a window; brief 114). Read only on the Windows 7
+/// store's own thread (`seven_store`: a shortcut on a network place that does not answer must
+/// never hold the bar's thread). COM must be usable on the calling thread.
+pub fn read_shortcut_program(link: &str) -> Option<String> {
+    match link_target(link) {
         Some(Link::Path { path, folder: false }) => Some(path),
         _ => None,
-    };
-    PROGRAMS_OF.with(|p| p.borrow_mut().insert(link.to_string(), found.clone()));
-    found
+    }
 }
 
 /// What the shortcut `link` points at, as it stands in the shortcut (nothing is searched for

@@ -7232,22 +7232,45 @@ here; its two comparisons still show 0 differing pixels in every part (`core/tes
   Quick Launch's shortcuts in their order (bare 32x32 pictures), a running program in its pinned
   slot when its program file is the shortcut's target (whole paths, case aside; a shortcut that
   cannot be read, is advertised or points at a folder never matches: `seven_bar::pin_tasks`,
-  `find_window::shortcut_program`), then the running programs not pinned in the order of their
-  first window; the lighter frame for the program in front, a flashing one alternating at the
-  classic rate (PROVISIONAL). Pictures: the shell's real 32x32 of the program file or the shortcut
-  (`window_list::big_icon`, `SHGFI_LARGEICON` drawn at 32), never a doubled 16; a task without
-  one gets its 16 doubled. Slots past the notification area's fade are not shown (PROVISIONAL:
-  Windows 7 paged them; no screenshot). The notification area: icons every 24, all shown, no
+  `find_window::read_shortcut_program`), then the running programs not pinned in the order of
+  their first window; the lighter frame for the program in front, a flashing one alternating at
+  the classic rate (PROVISIONAL). Pictures: the shell's real 32x32 of the program file or the
+  shortcut (`window_list::read_big_icon`, `SHGFI_LARGEICON` drawn at 32), never a doubled 16; a
+  task without one gets its 16 doubled (also while its picture is being read).
+- **Read off the bar's thread** (the review of brief 114, finding 2): the shortcuts' targets and
+  the 32x32 pictures are read by `seven_store` on a thread of its own; the paint only says what it
+  wants and looks up what is known (a lock, never a file call), and the store repaints the bar
+  when something arrives. It looks at the files wanted every 2 seconds and reads one again when
+  its size or time of change changed (a shortcut changed in Quick Launch's folder); a window's
+  program changing is a new file wanted; what is no longer wanted is forgotten; files never read
+  come first, so a shortcut on a network place that does not answer delays only the files after
+  it, never the bar. Keys that are no file (`frame:`, `class:`) are never asked about. The log
+  gives counts only. The Start menu's pictures come from the same store (the ones not yet read
+  show at its next opening). Proof: `seven_store::tests` (a TEST-NET network shortcut wanted
+  beside Notepad: wanting and looking up return at once, timed under `BEVEL95_TIMED=1`; Notepad's
+  32x32 arrives; what is no longer wanted goes).
+- **When the slots do not fit** (finding 1, `seven_bar::plan`): a running program is never hidden
+  for a pinned shortcut that is not running: those are dropped first, from the right. When the
+  running programs still do not fit, they go into rows with the scroll arrows at the room's right
+  end, as XP's and 2000's full bar (`TaskScroll`, 16 wide, the bar's halves; PROVISIONAL: Windows
+  7 paged them with its own arrows; no screenshot), and only running programs are shown then. No
+  room at all (a very wide notification area): nothing, and no arrows. Proof:
+  `seven_bar::tests::running_programs_come_before_idle_pinned_ones` (rooms from 1810 to none,
+  mixes of pinned and running) and `the_bar_is_laid_out_in_slots` (40 programs: the arrows, a
+  second row). The notification area: icons every 24, all shown, no
   hide arrow (PROVISIONAL); Bevel95's speaker, network and battery pictures are 2000's
   (PROVISIONAL); the clock in two lines, the time and under it the short date as Windows gives it
   for the person's region, in the stand-in letters (Tahoma 8 for Segoe UI 9: PROVISIONAL), centred
   by the measured rule. Show desktop: the strip at the far right does what Quick Launch's Show
   Desktop does.
-- **Clicks**: not running: the shortcut starts (on the press). Running: as a task button (to the
+- **Clicks**: not running: the shortcut starts on the release over the same slot (finding 4: a
+  press dragged off starts nothing; the second click of a double click starts nothing,
+  `seven_bar::start_due` with Windows' double-click time). Running: as a task button (to the
   front, or minimized if in front; several windows: the group's list above it, 2000 look,
   PROVISIONAL: 7 showed small pictures). The right button on a running slot: the window menu or
-  the group's menu as today; on a pinned one not running, the middle button and Shift: nothing in
-  this version. No dragging of slots. The Windows key as the `windows_key` setting says.
+  the group's menu as today; the middle button on any slot and Shift on a pinned one not running:
+  nothing in this version (the classic bar's middle click starting a new copy is left out under
+  7). No dragging of slots. The Windows key as the `windows_key` setting says.
 - **The Start menu** (`core::seven_start`, `MenuStyle::SevenStart`, painted by
   `seven::menu::paint`): the programs started most often (often.txt, counted under 7 as under XP)
   as many as fit; All Programs (the Programs cascade beside it, 2000 look: PROVISIONAL); the search

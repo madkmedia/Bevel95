@@ -1308,6 +1308,29 @@ fn task_at(x: i32, y: i32) -> Option<usize> {
     .flatten()
 }
 
+thread_local! {
+    /// A pinned program's slot held down (its shortcut), until the release.
+    static PINNED_PRESS: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The last pinned program started, and when: the same one again within the double-click
+    /// time is the second click of a double click, and starts nothing.
+    static PINNED_STARTED: RefCell<Option<(String, std::time::Instant)>> = const { RefCell::new(None) };
+}
+
+/// Whether a release over pinned slot `link` at `now` starts its program (not the second click of
+/// a double click on it).
+fn pinned_start_due(link: &str, now: std::time::Instant) -> bool {
+    // SAFETY: a plain query.
+    let wait = std::time::Duration::from_millis(u64::from(unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() }));
+    PINNED_STARTED.with(|s| {
+        let mut s = s.borrow_mut();
+        let due = bevel_core::seven_bar::start_due(s.as_ref().map(|(l, at)| (l.as_str(), *at)), link, now, wait);
+        if due {
+            *s = Some((link.to_string(), now));
+        }
+        due
+    })
+}
+
 /// What a press on Windows 7's bar that is not on a running program's slot does (brief 114).
 enum SevenExtra {
     ShowDesktop,
@@ -2784,15 +2807,18 @@ fn paint_bar(bar: HWND) {
             let era = app.era;
             app.ql.refresh(era);
             let links: Vec<String> = app.ql.shortcuts.iter().map(|s| s.path.display().to_string()).collect();
-            let targets: Vec<Option<String>> = links.iter().map(|l| crate::find_window::shortcut_program(l)).collect();
             let programs: Vec<String> = app.groups.iter().map(|g| g.key.clone()).collect();
+            // Only lookups here: the files are read on the store's own thread, which repaints the
+            // bar when they arrive (the review of brief 114, finding 2).
+            crate::seven_store::want(crate::seven_store::Asker::Bar, &[links.clone(), programs.clone()].concat());
+            let targets: Vec<Option<String>> = links.iter().map(|l| crate::seven_store::program_of(l)).collect();
             let tasks_of = bevel_core::seven_bar::pin_tasks(&targets, &programs);
             state.pinned = links
                 .iter()
                 .zip(tasks_of)
-                .map(|(link, task)| bevel_core::paint::Pinned { icon: window_list::big_icon(link), task })
+                .map(|(link, task)| bevel_core::paint::Pinned { icon: crate::seven_store::picture(link), task })
                 .collect();
-            state.big_icons = programs.iter().map(|p| window_list::big_icon(p)).collect();
+            state.big_icons = programs.iter().map(|p| crate::seven_store::picture(p)).collect();
             state.date = if app.options.show_clock { short_date(app.clock_offset) } else { String::new() };
         }
         if let Some((_, frames, _)) = app.motion_on.as_mut() {
@@ -3559,7 +3585,13 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             {
                 match extra {
                     SevenExtra::ShowDesktop => quick_launch::show_desktop(),
-                    SevenExtra::Pinned(link) => window_list::launch(&link),
+                    // Held like a Quick Launch icon: started at the release over the same slot
+                    // (the review of brief 114, finding 4).
+                    SevenExtra::Pinned(link) => {
+                        PINNED_PRESS.with(|p| *p.borrow_mut() = Some(link));
+                        // SAFETY: our own window; capture lets us see the release even off it.
+                        unsafe { SetCapture(bar) };
+                    }
                 }
                 return 0;
             }
@@ -3640,6 +3672,16 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_LBUTTONUP => {
             let (x, y) = point(lparam);
+            // A pinned program of Windows 7's bar: started only at the release over its own slot,
+            // and once for a double click (the review of brief 114, finding 4).
+            if let Some(link) = PINNED_PRESS.with(|p| p.borrow_mut().take()) {
+                give_back_mouse(bar);
+                let over = matches!(seven_extra_at(x, y), Some(SevenExtra::Pinned(l)) if l == link);
+                if over && pinned_start_due(&link, std::time::Instant::now()) {
+                    window_list::launch(&link);
+                }
+                return 0;
+            }
             if release_tray(bar, tray::Button::Left, x, y) {
                 return 0;
             }
@@ -3778,7 +3820,8 @@ unsafe extern "system" fn bar_proc(bar: HWND, msg: u32, wparam: WPARAM, lparam: 
             if release_tray(bar, tray::Button::Middle, x, y) {
                 return 0;
             }
-            if let Some(index) = task_at(x, y) {
+            // Under Windows 7's style the middle button does nothing in this version (brief 114).
+            if let Some(index) = task_at(x, y).filter(|_| !with_app(|app| app.bar_style == theme::BarStyle::Seven).unwrap_or(false)) {
                 launch_task(index);
             }
             return 0;

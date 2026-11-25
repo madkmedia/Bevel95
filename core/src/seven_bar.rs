@@ -6,9 +6,13 @@
 //! programs (Quick Launch's shortcuts, in their order), a running one framed in its own place;
 //! then every running program that is not pinned, in the order of its first window. A program
 //! whose window is in front gets the lighter frame; a flashing one the lighter frame in the half
-//! of its flashing that shows (the platform alternates at the classic rate: PROVISIONAL). Slots
-//! the bar has no room for are not shown (PROVISIONAL: Windows 7 paged them with small arrows;
-//! no screenshot shows it).
+//! of its flashing that shows (the platform alternates at the classic rate: PROVISIONAL).
+//!
+//! When room is short (the review of brief 114, finding 1): a running program is never hidden in
+//! favour of a pinned shortcut that is not running: those go first, from the right; if the running
+//! programs still do not fit, they go into rows with the 2000 look's scroll arrows at the right
+//! end of the room, as the XP bar's full state (PROVISIONAL: Windows 7 paged them with its own
+//! small arrows; no screenshot shows them).
 
 use crate::fb::{Framebuffer, Icon, Rect};
 use crate::layout::BarLayout;
@@ -56,17 +60,83 @@ fn clock_space(fonts: &Fonts, bar: &Bar) -> i32 {
     if bar.clock.is_empty() { 0 } else { seven::clock_space_for(fonts.regular, &bar.clock, &bar.date) }
 }
 
+/// The scroll arrows' width at the room's right end (the 2000 look's, as the XP bar's).
+pub const ARROWS_W: i32 = 16;
+
+/// How many slots stand from x 59 before column `room` (the notification area's fade).
+pub fn capacity(room: i32) -> usize {
+    if room < seven::FIRST_SLOT + seven::SLOT_W { 0 } else { ((room - seven::FIRST_SLOT - seven::SLOT_W) / seven::SLOT_STEP + 1) as usize }
+}
+
+/// What the bar shows: the slots in order, and the rows of running programs with their arrows
+/// (row shown, rows, per row) when they do not fit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Plan {
+    pub shown: Vec<SlotOf>,
+    pub rows: Option<(usize, usize, usize)>,
+}
+
+/// The slots shown in a room `room` columns wide (`capacity`), row `row` when they need rows: a
+/// running program is never hidden in favour of a pinned shortcut that is not running (those go
+/// first, from the right); running programs that still do not fit go into rows of what fits
+/// before the arrows (the review of brief 114, finding 1).
+pub fn plan(order: &[SlotOf], room: i32, row: usize) -> Plan {
+    let cap = capacity(room);
+    if order.len() <= cap {
+        return Plan { shown: order.to_vec(), rows: None };
+    }
+    let running = |s: &&SlotOf| !matches!(s, SlotOf::Pinned(_, None));
+    let running_count = order.iter().filter(running).count();
+    if running_count <= cap {
+        // Keep every running one and the first idle pinned ones that fit, in their order.
+        let mut idle_room = cap - running_count;
+        let shown = order
+            .iter()
+            .filter(|s| {
+                if running(s) {
+                    return true;
+                }
+                let keep = idle_room > 0;
+                idle_room = idle_room.saturating_sub(1);
+                keep
+            })
+            .copied()
+            .collect();
+        return Plan { shown, rows: None };
+    }
+    let per_row = capacity(room - ARROWS_W);
+    if per_row == 0 {
+        // No room at all: nothing shown (the arrows would hold nothing).
+        return Plan { shown: Vec::new(), rows: None };
+    }
+    // In rows, the running programs stand in the order of their buttons (a pinned one too), so
+    // that `layout::row_of` finds the row of the window that came to the front.
+    let mut list: Vec<SlotOf> = order.iter().filter(running).copied().collect();
+    list.sort_by_key(|s| match *s {
+        SlotOf::Pinned(_, Some(t)) | SlotOf::Task(t) => t,
+        SlotOf::Pinned(_, None) => usize::MAX,
+    });
+    let rows = list.len().div_ceil(per_row);
+    let row = row.min(rows - 1);
+    Plan { shown: list.into_iter().skip(row * per_row).take(per_row).collect(), rows: Some((row, rows, per_row)) }
+}
+
+/// The room before the notification area's fade on a bar `width` wide.
+fn room_of(fonts: &Fonts, width: i32, bar: &Bar) -> (seven::Layout, i32) {
+    let l = seven::layout(width, 0, bar.tray.len(), clock_space(fonts, bar));
+    let room = l.zone - seven::FADE;
+    (l, room)
+}
+
 /// Where everything of `bar` goes on a 7 bar `width` wide.
 pub fn bar_layout(fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
-    let order = slots(bar);
-    let l = seven::layout(width, order.len(), bar.tray.len(), clock_space(fonts, bar));
-    // Only the slots that stand before the notification area's fade.
-    let room = l.zone - seven::FADE;
-    let shown = |r: Rect| if r.right() <= room { r } else { Rect::new(0, 0, 0, 0) };
-    let mut tasks = vec![Rect::new(0, 0, 0, 0); bar.tasks.len()];
-    let mut pinned = vec![Rect::new(0, 0, 0, 0); bar.pinned.len()];
-    for (s, r) in order.iter().zip(&l.slots) {
-        let r = shown(*r);
+    let (_, room) = room_of(fonts, width, bar);
+    let p = plan(&slots(bar), room, bar.row);
+    let l = seven::layout(width, p.shown.len(), bar.tray.len(), clock_space(fonts, bar));
+    let none = Rect::new(0, 0, 0, 0);
+    let mut tasks = vec![none; bar.tasks.len()];
+    let mut pinned = vec![none; bar.pinned.len()];
+    for (s, &r) in p.shown.iter().zip(&l.slots) {
         match *s {
             SlotOf::Pinned(k, task) => {
                 pinned[k] = r;
@@ -77,12 +147,17 @@ pub fn bar_layout(fonts: &Fonts, width: i32, bar: &Bar) -> BarLayout {
             SlotOf::Task(t) => tasks[t] = r,
         }
     }
+    let scroll = p.rows.map(|(row, rows, per_row)| {
+        let x = room - ARROWS_W;
+        let h = seven::HEIGHT / 2;
+        crate::layout::TaskScroll { up: Rect::new(x, 0, ARROWS_W, h), down: Rect::new(x, h, ARROWS_W, seven::HEIGHT - h), row, rows, per_row }
+    });
     let clock = Rect::new(l.clock.0, 0, (l.clock.1 - l.clock.0 + 1).max(0), seven::HEIGHT);
     BarLayout {
         start: Rect::new(0, 0, seven::ORB_W, seven::HEIGHT),
         tasks,
         first_task: 0,
-        scroll: None,
+        scroll,
         well: Rect::new(l.zone, 0, width - seven::SHOW_DESKTOP_W - l.zone, seven::HEIGHT),
         tray: l.tray_icons.clone(),
         clock,
@@ -112,13 +187,19 @@ pub fn painted() -> usize {
     PAINTED.with(std::cell::Cell::get)
 }
 
+/// Whether a release over a pinned slot starts its program: not when the same one started less
+/// than the double-click time `wait` ago (the second click of a double click; the review of brief
+/// 114, finding 4).
+pub fn start_due(last: Option<(&str, std::time::Instant)>, link: &str, now: std::time::Instant, wait: std::time::Duration) -> bool {
+    !last.is_some_and(|(l, at)| l == link && now.saturating_duration_since(at) < wait)
+}
+
 /// Paints the 7 bar (the framebuffer 40 tall) and returns where everything went.
 pub fn paint_bar(fb: &mut Framebuffer, fonts: &Fonts, bar: &Bar) -> BarLayout {
     PAINTED.with(|p| p.set(p.get() + 1));
-    let order = slots(bar);
     let space = clock_space(fonts, bar);
-    let l = seven::layout(fb.width, order.len(), bar.tray.len(), space);
-    let room = l.zone - seven::FADE;
+    let (_, room) = room_of(fonts, fb.width, bar);
+    let p = plan(&slots(bar), room, bar.row);
     let task_icon = |t: usize| -> Option<Icon> {
         bar.big_icons.get(t).cloned().flatten().or_else(|| bar.tasks.get(t).and_then(|task| task.icon.as_ref()).map(doubled))
     };
@@ -126,11 +207,10 @@ pub fn paint_bar(fb: &mut Framebuffer, fonts: &Fonts, bar: &Bar) -> BarLayout {
         Some(TaskState::Active | TaskState::Flashing) => SlotKind::Front,
         _ => SlotKind::Running,
     };
-    let seven_slots: Vec<Slot> = order
+    let seven_slots: Vec<Slot> = p
+        .shown
         .iter()
-        .zip(&l.slots)
-        .take_while(|(_, r)| r.right() <= room)
-        .map(|(s, _)| match *s {
+        .map(|s| match *s {
             SlotOf::Pinned(k, None) => Slot { kind: SlotKind::Pinned, icon: bar.pinned[k].icon.clone() },
             SlotOf::Pinned(k, Some(t)) => Slot { kind: kind_of(t), icon: bar.pinned[k].icon.clone().or_else(|| task_icon(t)) },
             SlotOf::Task(t) => Slot { kind: kind_of(t), icon: task_icon(t) },
@@ -145,10 +225,13 @@ pub fn paint_bar(fb: &mut Framebuffer, fonts: &Fonts, bar: &Bar) -> BarLayout {
         date: bar.date.clone(),
         clock_space: space,
     };
-    // Laid out again for the slots painted (the same places; fewer when the bar is full).
-    let painted = seven::layout(fb.width, seven_bar.slots.len(), bar.tray.len(), space);
-    seven::paint(fb, &seven_bar, &painted, fonts.regular);
-    bar_layout(fonts, fb.width, bar)
+    let l = seven::layout(fb.width, seven_bar.slots.len(), bar.tray.len(), space);
+    seven::paint(fb, &seven_bar, &l, fonts.regular);
+    let layout = bar_layout(fonts, fb.width, bar);
+    if let Some(s) = layout.scroll {
+        crate::paint::paint_scroll_arrows(fb, &crate::theme::WIN7, s, bar.scroll_pressed);
+    }
+    layout
 }
 
 #[cfg(test)]
@@ -218,7 +301,70 @@ mod tests {
         assert_eq!(painted(), before + 1);
         let full = Bar { tasks: (0..40).map(|_| task(TaskState::Normal)).collect(), ..bar.clone() };
         let l = bar_layout(&fonts, 800, &full);
-        assert!(l.tasks.iter().filter(|r| r.w > 0).all(|r| r.right() <= l.well.x - seven::FADE));
-        assert!(l.tasks.iter().any(|r| r.w == 0), "the ones without room are not shown");
+        let s = l.scroll.expect("the scroll arrows");
+        assert!(l.tasks.iter().filter(|r| r.w > 0).all(|r| r.right() <= s.up.x), "the shown ones before the arrows");
+        assert!(l.pinned.iter().zip(&full.pinned).all(|(r, p)| p.task.is_some() || r.w == 0), "idle pinned ones go first");
+        // The next row shows the next running programs.
+        let next = bar_layout(&fonts, 800, &Bar { row: 1, ..full.clone() });
+        assert_eq!(next.scroll.unwrap().row, 1);
+        assert_ne!(next.tasks, l.tasks);
+    }
+
+    /// The review of brief 114, finding 1: room short at several widths, sizes and tray widths:
+    /// running programs are never hidden for idle pinned ones; past that, rows with arrows; no
+    /// room at all shows nothing and does not fail.
+    #[test]
+    fn running_programs_come_before_idle_pinned_ones() {
+        let order = |pinned_idle: usize, running: usize| -> Vec<SlotOf> {
+            (0..pinned_idle).map(|k| SlotOf::Pinned(k, None)).chain((0..running).map(SlotOf::Task)).collect()
+        };
+        // Rooms: 1920 at size 1, 2 and 3 with 6 icons, a wide tray at size 3, none.
+        for room in [1810, 663, 360, 150, 0, -50] {
+            let cap = capacity(room);
+            for (idle, running) in [(9, 3), (3, 9), (12, 12), (0, 40), (30, 0)] {
+                let p = plan(&order(idle, running), room, 0);
+                let shown_running = p.shown.iter().filter(|s| matches!(s, SlotOf::Task(_))).count();
+                let shown_idle = p.shown.len() - shown_running;
+                assert!(p.shown.len() <= cap, "{room} {idle} {running}: {}", p.shown.len());
+                if running <= cap {
+                    assert_eq!(shown_running, running, "{room} {idle} {running}: every running one");
+                    assert_eq!(shown_idle, idle.min(cap - running), "the idle ones that fit");
+                    assert!(p.rows.is_none());
+                } else if capacity(room - ARROWS_W) > 0 {
+                    let (_, rows, per_row) = p.rows.expect("rows");
+                    assert_eq!((shown_idle, rows), (0, running.div_ceil(per_row)), "{room} {idle} {running}");
+                } else {
+                    assert!(p.shown.is_empty() && p.rows.is_none(), "no room at all");
+                }
+            }
+        }
+        assert_eq!((capacity(1810), capacity(663), capacity(360), capacity(0)), (28, 9, 4, 0));
+        // The idle pinned ones kept are the first ones (dropped from the right).
+        let p = plan(&order(5, 2), capacity_room(4), 0);
+        assert_eq!(p.shown, [SlotOf::Pinned(0, None), SlotOf::Pinned(1, None), SlotOf::Task(0), SlotOf::Task(1)]);
+        // In rows, a pinned running one stands at its button's place (so `row_of` is right).
+        let rows_order = [SlotOf::Pinned(0, Some(3)), SlotOf::Task(0), SlotOf::Task(1), SlotOf::Task(2), SlotOf::Task(4)];
+        let p = plan(&rows_order, capacity_room(3), 1);
+        assert_eq!(p.shown, [SlotOf::Task(2), SlotOf::Pinned(0, Some(3))]);
+        assert_eq!(p.rows.unwrap().2, 2);
+        // A row past the end is the last.
+        let p = plan(&order(0, 10), capacity_room(4), 9);
+        let (row, rows, _) = p.rows.unwrap();
+        assert_eq!(row, rows - 1);
+        // A pinned shortcut whose program runs counts as running.
+        let mixed = [SlotOf::Pinned(0, Some(0)), SlotOf::Pinned(1, None), SlotOf::Task(1)];
+        assert_eq!(plan(&mixed, capacity_room(2), 0).shown, [SlotOf::Pinned(0, Some(0)), SlotOf::Task(1)]);
+        // The second click of a double click starts nothing; another slot or later does.
+        let t0 = std::time::Instant::now();
+        let wait = std::time::Duration::from_millis(500);
+        assert!(start_due(None, "a.lnk", t0, wait));
+        assert!(!start_due(Some(("a.lnk", t0)), "a.lnk", t0 + std::time::Duration::from_millis(200), wait));
+        assert!(start_due(Some(("a.lnk", t0)), "b.lnk", t0 + std::time::Duration::from_millis(200), wait));
+        assert!(start_due(Some(("a.lnk", t0)), "a.lnk", t0 + std::time::Duration::from_millis(900), wait));
+    }
+
+    /// The room in which exactly `n` slots stand.
+    fn capacity_room(n: i32) -> i32 {
+        seven::FIRST_SLOT + seven::SLOT_W + seven::SLOT_STEP * (n - 1)
     }
 }

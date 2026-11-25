@@ -44,6 +44,7 @@ mod popup;
 mod properties_window;
 mod quick_launch;
 mod remove_window;
+mod seven_store;
 mod start_menu;
 mod status;
 mod tip;

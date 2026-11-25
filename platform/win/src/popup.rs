@@ -443,7 +443,11 @@ fn seven_start_menu(room: i32) -> (Kind, Menu) {
     let often: Vec<(String, String)> = crate::often::top(12);
     let (_, p, _) = seven_start::fit(often.len(), room);
     let often: Vec<(String, String)> = often.into_iter().take(p).collect();
-    let rows: Vec<(String, Option<bevel_core::fb::Icon>)> = often.iter().map(|(n, t)| (n.clone(), window_list::big_icon(t))).collect();
+    // The pictures as far as the store has read them (never read here, on the bar's thread: the
+    // review of brief 114, finding 2); the ones wanted now are there at the next opening.
+    let files: Vec<String> = often.iter().map(|(_, t)| t.clone()).collect();
+    crate::seven_store::want(crate::seven_store::Asker::Menu, &files);
+    let rows: Vec<(String, Option<bevel_core::fb::Icon>)> = often.iter().map(|(n, t)| (n.clone(), crate::seven_store::picture(t))).collect();
     let menu = seven_start::menu(&start_menu::user_name(), &rows, room);
     (Kind::SevenStart(often.into_iter().map(|(_, t)| t).collect()), menu)
 }
