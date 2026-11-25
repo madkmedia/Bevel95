@@ -1074,9 +1074,26 @@ fn toggle_desktop() {
         log(&format!("{}: ignored while the Windows taskbar is shown", bar_menu::DESKTOP_KEY));
         return;
     }
+    if xp_refuses("the classic desktop") {
+        return;
+    }
     popup::close(false);
     log(&format!("{}: the classic desktop {}", bar_menu::DESKTOP_KEY, if on { "off" } else { "on" }));
     set_desktop(!on);
+}
+
+/// Under Windows XP's bar style, a switch that shows nothing there but would change what a classic
+/// look gets (Quick Launch, the classic desktop, 16 or 256 colors) does nothing, and the log says
+/// why once per run (the review of brief 112, finding 4). True if it was refused.
+fn xp_refuses(what: &str) -> bool {
+    static SAID: AtomicBool = AtomicBool::new(false);
+    if !with_app(|app| app.xp()).unwrap_or(false) {
+        return false;
+    }
+    if !SAID.swap(true, Ordering::SeqCst) {
+        log(&format!("{what}: ignored under the Windows XP style (it shows nothing there; choose a classic look first; said once)"));
+    }
+    true
 }
 
 /// Carries out an entry of the desktop's right-click menu or of the menu on an icon (`code`: its
@@ -2753,6 +2770,11 @@ fn run_command(bar: HWND, code: usize, shift: bool) {
             about_window::open_page(bevel_core::about::Part::Updates);
         }
         BarCommand::QuickLaunch => {
+            // Under XP the band never shows: a switch nobody sees would only surprise at the way
+            // back (the review of brief 112, finding 4: it put back deleted icons).
+            if xp_refuses("Toolbars > Quick Launch") {
+                return;
+            }
             let on = with_app(|app| app.quick_launch_on()).unwrap_or(false);
             set_quick_launch(!on);
         }
@@ -2956,8 +2978,10 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     dialogs::close();
     bevel_winkit::confirm::close_asked();
     let widest = widest_time(&regular);
+    // The setting, not whether the band shows (under XP it never shows: the review of brief 112,
+    // finding 1, an open Settings window was told "off" and saved it).
     let quick_launch = with_app(|app| {
-        let before = app.quick_launch_on();
+        let before = app.quick_launch_setting();
         app.era = era;
         app.theme = theme;
         app.regular = regular;
@@ -2965,7 +2989,7 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
         app.clock_widest = widest;
         app.layout = None;
         app.ql.hot = None;
-        let after = app.quick_launch_on();
+        let after = app.quick_launch_setting();
         (before != after).then_some(after)
     })
     .flatten();
@@ -2973,7 +2997,12 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
     if let Some(on) = quick_launch {
         properties_window::quick_launch_changed(on);
     }
-    save_setting("era", era.setting());
+    // Under XP the classic look the person had stays in settings.txt as it was (the review of
+    // brief 112, finding 9): XP runs over 2000 whatever `era` says, and the earlier look is
+    // there to see on the way back.
+    if style != theme::BarStyle::Xp {
+        save_setting("era", era.setting());
+    }
     // Written only when changed, so a settings.txt that never had the line does not get one.
     if style_changed {
         save_setting("bar_style", style.setting());
@@ -2995,6 +3024,9 @@ fn set_era(bar: HWND, era: Era, style: theme::BarStyle) {
 /// Colors menu: switches between True Color, 256 Colors and 16 Colors at once (the look's colors, patterns
 /// and pictures; sizes and font stay) and remembers it in settings.txt.
 fn set_colors(bar: HWND, depth: Depth) {
+    if xp_refuses("the Colors choice") {
+        return;
+    }
     let Some(era) = with_app(|app| (app.colors != depth).then_some(app.era)).flatten() else {
         return;
     };

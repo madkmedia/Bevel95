@@ -233,7 +233,11 @@ fn follow_bar<const OWN: bool>() {
     let Some(drawn) = kit::look_of::<SheetHost<OWN>>() else {
         return;
     };
-    let new_look = drawn.theme.slug != bevel_core::theme::theme(era).slug;
+    // The bar's style is part of the look (brief 112: classic 2000 and XP draw this window alike,
+    // so its pictures cannot tell; the review of brief 112, finding 1: a stale style was put back
+    // at the next OK).
+    let new_style = kit::with::<SheetHost<OWN>, _>(|h| h.form.props.follow_style(&in_effect)).unwrap_or(false);
+    let new_look = new_style || drawn.theme.slug != bevel_core::theme::theme(era).slug;
     let (new_colors, new_size) = (drawn.theme.depth != in_effect.colors, drawn.scale != in_effect.scale);
     if !new_look && !new_colors && !new_size {
         return;
@@ -243,6 +247,7 @@ fn follow_bar<const OWN: bool>() {
         // Only what changed: another choice made in the window and not applied yet stays.
         if new_look {
             p.values.era = in_effect.era;
+            p.values.bar_style = in_effect.bar_style;
         }
         if new_colors {
             p.values.colors = in_effect.colors;
@@ -276,7 +281,11 @@ fn save_ticks(p: &Properties, in_effect: Shown) {
         return;
     }
     if list.edited || in_effect != Shown::Ticked || start_menu::ticked_programs().is_none() {
-        let places: Vec<&str> = programs::ticked_places(&list.rows).collect();
+        let mut places: Vec<&str> = programs::ticked_places(&list.rows).collect();
+        // Under Windows XP's bar style Bevel95's own programs are not listed: their lines stay
+        // (the review of brief 112, finding 5).
+        let kept = if start_menu::own_programs_hidden() { start_menu::ticked_lines_not_listed(&list.rows) } else { Vec::new() };
+        places.extend(kept.iter().map(String::as_str));
         let all = list.rows.iter().filter(|row| row.kind == RowKind::Item).count();
         log(&format!("programs: {} of {all} programs are ticked", places.len()));
         start_menu::save_ticked_programs(places, in_effect);

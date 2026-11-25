@@ -544,6 +544,19 @@ pub fn toggle(rows: &mut [Row], i: usize) {
 }
 
 /// The places of the ticked programs, for programs.txt.
+/// The places of programs.txt (`old`, as written) that name no row of the list `rows`: programs
+/// the list does not show now (Bevel95's own under Windows XP's bar style, brief 112's review,
+/// finding 5), kept as they were when the list is saved.
+pub fn places_not_listed(old: &str, rows: &[Row]) -> Vec<String> {
+    let listed: BTreeSet<String> = rows.iter().filter(|row| row.kind == RowKind::Item).map(|row| Ticked::key(&row.place)).collect();
+    old.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.strip_prefix('\\').unwrap_or(line).to_string())
+        .filter(|place| !listed.contains(&Ticked::key(place)))
+        .collect()
+}
+
 pub fn ticked_places(rows: &[Row]) -> impl Iterator<Item = &str> {
     rows.iter().filter(|row| row.kind == RowKind::Item && row.ticked).map(|row| row.place.as_str())
 }
@@ -648,6 +661,18 @@ impl Folder {
 mod tests {
     use super::*;
     use crate::paint::EntryKind;
+
+    /// The review of brief 112, finding 5: the lines of programs.txt naming no listed row (Bevel95's
+    /// own programs, not listed under XP's bar style) are kept as written; listed ones are not.
+    #[test]
+    fn lines_of_programs_not_listed_are_kept() {
+        let mut tree = Folder::default();
+        tree.add(&[], Item { name: "Notes".into(), target: "C:\\notes.lnk".into() });
+        let rows = rows(&tree, None, |_| (false, None));
+        let old = "# a comment\nNotes\nAccessories\\Games\\Minesweeper\n\\#Odd\n";
+        assert_eq!(places_not_listed(old, &rows), ["Accessories\\Games\\Minesweeper", "#Odd"]);
+        assert!(places_not_listed("", &rows).is_empty());
+    }
 
     fn item(name: &str) -> Item {
         Item { name: name.into(), target: format!("C:\\{name}.lnk") }

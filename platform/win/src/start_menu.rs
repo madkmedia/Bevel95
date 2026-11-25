@@ -48,6 +48,10 @@ const RECENT_COUNT: usize = 15;
 pub fn programs(shown: Shown) -> Folder {
     match shown {
         Shown::Everything => all_programs(),
+        // Under Windows XP's bar style Bevel95's own programs are left out, so "only the classic
+        // programs" would be an empty All Programs: everything instead (the review of brief 112,
+        // finding 5).
+        Shown::Classic if !own_programs_shown() => all_programs(),
         Shown::Classic => {
             let mut root = Folder::default();
             if let Ok(exe) = std::env::current_exe() && let Some(dir) = exe.parent() {
@@ -260,6 +264,17 @@ pub fn set_own_programs(shown: bool) {
 
 fn own_programs_shown() -> bool {
     !NO_OWN_PROGRAMS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Whether Bevel95's own programs are left out now (Windows XP's bar style).
+pub fn own_programs_hidden() -> bool {
+    !own_programs_shown()
+}
+
+/// The lines of programs.txt that name no row of `rows` (as written; none if it cannot be read).
+pub fn ticked_lines_not_listed(rows: &[Row]) -> Vec<String> {
+    let text = bevel_winkit::state_file::read(&ticked_file()).text().unwrap_or_default();
+    bevel_core::programs::places_not_listed(&text, rows)
 }
 
 /// The full path to a program shipped with the running bar (`None` under XP's bar style).

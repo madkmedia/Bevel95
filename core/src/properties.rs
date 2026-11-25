@@ -751,6 +751,8 @@ impl Properties {
             Part::WayList => self.quarters && !self.values.scale.is_whole(),
             // Where the X goes matters only while there are tabs (brief 110).
             Part::TabsCloseList => self.values.folder_tabs != crate::folder::tabs::Place::Off,
+            // Under Windows XP everything is True Color (the review of brief 112, finding 4).
+            Part::Colors(_) => self.values.bar_style == crate::theme::BarStyle::Classic,
             _ => true,
         }
     }
@@ -857,6 +859,18 @@ impl Properties {
             _ => return false,
         }
         self.changed = true;
+        true
+    }
+
+    /// The bar was switched to another style meanwhile (its Theme menu, the window open): the
+    /// window takes the look and the style in effect, so that its next OK or Apply does not put the
+    /// old style back (the review of brief 112, finding 1). True if it changed.
+    pub fn follow_style(&mut self, in_effect: &Values) -> bool {
+        if self.values.bar_style == in_effect.bar_style {
+            return false;
+        }
+        self.values.era = in_effect.era;
+        self.values.bar_style = in_effect.bar_style;
         true
     }
 
@@ -1733,7 +1747,13 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
         });
         let label = label_of(era, part).unwrap_or_default();
         let (tx, ty) = (x + 17, y + 2);
-        font.draw_label(fb, (tx, ty), &label, i32::MAX, c.text, keys);
+        if p.enabled(part) {
+            font.draw_label(fb, (tx, ty), &label, i32::MAX, c.text, keys);
+        } else {
+            // Greyed (the colors under Windows XP: brief 112's review), etched as the lists' labels.
+            font.draw_label(fb, (tx + 1, ty + 1), &label, i32::MAX, c.etch, keys);
+            font.draw_label(fb, (tx, ty), &label, i32::MAX, c.shadow, keys);
+        }
         if p.focus == part && keys {
             let w = font.measure_label(&label);
             dialog::focus_dots(fb, Rect::new(tx - 1, ty - 1, w + 2, font.height + 3), (x, y), c.text);
@@ -2870,6 +2890,31 @@ mod tests {
         assert_eq!((applied.era, applied.options.show_clock), (Era::Win98, false));
     }
 
+    /// The review of brief 112, finding 1: Bevel95 Settings open while the bar is switched from
+    /// its Theme menu follows the style in effect, both ways, so its next OK keeps it.
+    #[test]
+    fn an_open_settings_window_follows_the_bar_style() {
+        use crate::theme::BarStyle;
+        let classic98 = Values { era: Era::Win98, ..values() };
+        let xp = Values { era: Era::Win2000, bar_style: BarStyle::Xp, ..values() };
+        // Open in 98; the bar becomes XP; a box changed; OK.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win98, classic98);
+        assert!(p.follow_style(&xp));
+        assert!(p.choose(Part::Check(Check::StartWithWindows)));
+        let applied = Sheet::Bevel95.merge(p.values, xp);
+        assert_eq!((applied.era, applied.bar_style), (Era::Win2000, BarStyle::Xp), "XP stays");
+        // Open under XP; the bar becomes 98; OK.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win2000, xp);
+        assert!(p.follow_style(&classic98));
+        let applied = Sheet::Bevel95.merge(p.values, classic98);
+        assert_eq!((applied.era, applied.bar_style), (Era::Win98, BarStyle::Classic), "98 stays");
+        // Nothing switched: an unapplied choice of the window's own stays.
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win98, classic98);
+        assert!(p.choose(Part::Look(Era::Win95)));
+        assert!(!p.follow_style(&classic98));
+        assert_eq!(p.values.era, Era::Win95);
+    }
+
     /// The Folders page's hint fits its group in every look's letters (the owner's change of
     /// 2026-11-25: the row only with two tabs or more).
     #[test]
@@ -2894,6 +2939,8 @@ mod tests {
         assert_eq!(p.arrow(Part::Look(Era::Win2000), true), Some(Part::LookXp));
         assert!(p.choose(Part::LookXp));
         assert_eq!((p.values.era, p.values.bar_style), (Era::Win2000, BarStyle::Xp));
+        // The colors greyed under XP (always True Color; the review's finding 4), not Tab stops.
+        assert!(!p.enabled(Part::Colors(Depth::Sixteen)) && !p.tab_stops().contains(&Part::Colors(p.values.colors)));
         assert!(p.tab_stops().contains(&Part::LookXp) && !p.tab_stops().contains(&Part::Look(Era::Win2000)));
         assert!(p.choose(Part::Look(Era::Win98)));
         assert_eq!((p.values.era, p.values.bar_style), (Era::Win98, BarStyle::Classic));
