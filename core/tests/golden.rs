@@ -487,6 +487,8 @@ fn properties_scene(theme: &Theme, era: Era, fonts: &Fonts, sheet: properties::S
         battery_percent: false,
         windows_display: false,
         monitor_lines: bevel_core::monitor_lines::Strength::Off,
+        folder_tabs: bevel_core::folder::tabs::Place::Off,
+        folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -518,6 +520,8 @@ fn quarter_size_scene(theme: &Theme, era: Era, fonts: &Fonts, open: Option<prope
         battery_percent: false,
         windows_display: false,
         monitor_lines: bevel_core::monitor_lines::Strength::Off,
+        folder_tabs: bevel_core::folder::tabs::Place::Off,
+        folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -633,6 +637,8 @@ fn programs_scene(theme: &Theme, era: Era, fonts: &Fonts, shown: Shown) -> Frame
         battery_percent: false,
         windows_display: false,
         monitor_lines: bevel_core::monitor_lines::Strength::Off,
+        folder_tabs: bevel_core::folder::tabs::Place::Off,
+        folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
         quick_launch: bevel_core::quick_launch::on_by_default(era),
         group: true,
     };
@@ -1866,6 +1872,11 @@ fn scenes() -> Vec<Scene> {
             "bevel95-settings-programs-ticked",
             "Programs page, only the ticked programs, every folder open: a folder with some unticked is half ticked",
             programs_scene(theme, era, &fonts, Shown::Ticked),
+        );
+        add(
+            "bevel95-settings-folders",
+            "Bevel95 Settings, Folders page (brief 110): tabs in folder windows, None as it opens; the X's list greyed",
+            properties_scene(theme, era, &fonts, properties::Sheet::Bevel95, 4),
         );
         add(
             "desktop-icons",

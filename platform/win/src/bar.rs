@@ -405,6 +405,9 @@ pub struct App {
     monitor_lines_test_began: Option<Instant>,
     /// A screen-photographing helper's pause (`WM_PAUSE_MONITOR_LINES`): since when.
     monitor_lines_paused: Option<Instant>,
+    /// Tabs in folder windows as settings.txt has them (`folder_tabs`, `folder_tabs_close`;
+    /// brief 110): Bevel95 Settings' Folders page shows them.
+    pub folder_tabs: (bevel_core::folder::tabs::Place, bevel_core::folder::tabs::CloseAt),
 }
 
 impl App {
@@ -732,6 +735,7 @@ pub fn run() -> u32 {
             monitor_lines_test: None,
             monitor_lines_test_began: None,
             monitor_lines_paused: None,
+            folder_tabs: (settings.folder_tabs, settings.folder_tabs_close),
         });
     });
     // The bar's other windows (the kit's, a program's menus, the dragged picture) put the Monitor
@@ -2404,6 +2408,15 @@ pub fn apply_properties(values: bevel_core::properties::Values) {
     // now in force (brief 104, N3): written only when changed.
     if with_app(|app| app.monitor_lines != values.monitor_lines).unwrap_or(false) {
         set_monitor_lines(values.monitor_lines, false);
+    }
+    // Tabs in folder windows (the Folders page; brief 110): written only when changed; the open
+    // folder windows follow at once (they read the settings again as at a change of look).
+    let tabs_now = (values.folder_tabs, values.folder_tabs_close);
+    if with_app(|app| std::mem::replace(&mut app.folder_tabs, tabs_now) != tabs_now).unwrap_or(false) {
+        save_setting("folder_tabs", values.folder_tabs.word());
+        save_setting("folder_tabs_close", values.folder_tabs_close.word());
+        log(&format!("folder windows' tabs: {}, the X {}", values.folder_tabs.word(), values.folder_tabs_close.word()));
+        kit::tell_programs_look_changed();
     }
     sync_desktop();
     reposition(bar);

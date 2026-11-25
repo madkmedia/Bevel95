@@ -353,6 +353,8 @@ fn dialog_cases(out: &mut Vec<Case>, f95: &Fonts, f2k: &Fonts) {
             battery_percent: false,
             windows_display: false,
             monitor_lines: bevel_core::monitor_lines::Strength::Off,
+            folder_tabs: bevel_core::folder::tabs::Place::Off,
+            folder_tabs_close: bevel_core::folder::tabs::CloseAt::End,
             quick_launch: false,
             group: true,
         };

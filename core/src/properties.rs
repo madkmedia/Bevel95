@@ -65,6 +65,10 @@ pub struct Values {
     pub windows_display: bool,
     /// Monitor Lines (Bevel95 Settings, Desktop page; `monitor_lines`; brief 102).
     pub monitor_lines: Strength,
+    /// Tabs in folder windows (Bevel95 Settings, Folders page; `folder_tabs`,
+    /// `folder_tabs_close`; brief 110).
+    pub folder_tabs: crate::folder::tabs::Place,
+    pub folder_tabs_close: crate::folder::tabs::CloseAt,
 }
 
 /// The check boxes.
@@ -155,6 +159,8 @@ pub enum Page {
     Desktop,
     /// Bevel95 Settings' fourth page: what the Programs menu shows.
     Programs,
+    /// Bevel95 Settings' fifth page: the folder windows' own options (tabs, brief 110).
+    Folders,
 }
 
 /// Which of the two windows: Windows' own Taskbar Properties, or Bevel95 Settings.
@@ -169,7 +175,7 @@ impl Sheet {
     pub fn pages(self) -> &'static [Page] {
         match self {
             Sheet::Taskbar => &[Page::TaskbarOptions, Page::StartMenuPrograms],
-            Sheet::Bevel95 => &[Page::Bevel95, Page::OwnTaskbar, Page::Desktop, Page::Programs],
+            Sheet::Bevel95 => &[Page::Bevel95, Page::OwnTaskbar, Page::Desktop, Page::Programs, Page::Folders],
         }
     }
 
@@ -201,6 +207,10 @@ pub enum Part {
     /// (`Way::ALL`; usable only at such a size); one stop each for the keyboard.
     SizeList,
     WayList,
+    /// Bevel95 Settings, Folders page: where the folder windows' tabs go, and where their X
+    /// goes (brief 110).
+    TabsList,
+    TabsCloseList,
     /// An entry of the open drop-down list (its index in the list's choices).
     DropRow(usize),
     /// Bevel95 Settings: the option buttons of what the Windows key opens.
@@ -278,6 +288,7 @@ pub fn page_title(era: Era, page: Page) -> &'static str {
         (Page::OwnTaskbar, _) => "Taskbar",
         (Page::Desktop, _) => "Desktop",
         (Page::Programs, _) => "Programs",
+        (Page::Folders, _) => "Folders",
     }
 }
 
@@ -340,6 +351,14 @@ fn size_text(scale: Scale) -> String {
 /// The labels before the two drop-down lists (ours, PROVISIONAL).
 const SIZE_LIST_LABEL: &str = "Si&ze:";
 const WAY_LIST_LABEL: &str = "&Drawn as:";
+/// The Folders page's two lists (brief 110).
+const TABS_LIST_LABEL: &str = "&Tabs:";
+const TABS_CLOSE_LABEL: &str = "Close &button:";
+
+/// Whether `part` is one of the window's drop-down lists.
+fn is_list(part: Part) -> bool {
+    matches!(part, Part::SizeList | Part::WayList | Part::TabsList | Part::TabsCloseList)
+}
 
 /// The sizes the Size list offers: every size the menus offer with "Allow quarter sizes" ticked
 /// (`quarters`), the whole ones only without.
@@ -353,6 +372,8 @@ fn list_choices(list: Part, quarters: bool) -> Vec<String> {
     match list {
         Part::SizeList => size_choices(quarters).into_iter().map(size_text).collect(),
         Part::WayList => Way::ALL.iter().map(|w| w.title().to_string()).collect(),
+        Part::TabsList => crate::folder::tabs::Place::ALL.iter().map(|p| p.label().to_string()).collect(),
+        Part::TabsCloseList => crate::folder::tabs::CloseAt::ALL.iter().map(|c| c.label().to_string()).collect(),
         _ => Vec::new(),
     }
 }
@@ -404,6 +425,8 @@ fn label_of(era: Era, part: Part) -> Option<String> {
         Part::Lines(s) => Some(lines_label(s).to_string()),
         Part::SizeList => Some(SIZE_LIST_LABEL.to_string()),
         Part::WayList => Some(WAY_LIST_LABEL.to_string()),
+        Part::TabsList => Some(TABS_LIST_LABEL.to_string()),
+        Part::TabsCloseList => Some(TABS_CLOSE_LABEL.to_string()),
         Part::Shown(s) => Some(shown_label(s).to_string()),
         Part::List => Some(LIST_LABEL.to_string()),
         p if p.is_push_button() => Some(button_label(era, p).to_string()),
@@ -529,6 +552,8 @@ impl Properties {
         match list {
             Part::SizeList => size_choices(self.quarters).iter().position(|s| s.quarters() == self.values.scale.quarters()),
             Part::WayList => Way::ALL.iter().position(|&w| w == self.values.scale.way),
+            Part::TabsList => crate::folder::tabs::Place::ALL.iter().position(|&p| p == self.values.folder_tabs),
+            Part::TabsCloseList => crate::folder::tabs::CloseAt::ALL.iter().position(|&c| c == self.values.folder_tabs_close),
             _ => None,
         }
     }
@@ -550,6 +575,8 @@ impl Properties {
         match list {
             Part::SizeList => size_text(self.values.scale),
             Part::WayList => self.values.scale.way.title().to_string(),
+            Part::TabsList => self.values.folder_tabs.label().to_string(),
+            Part::TabsCloseList => self.values.folder_tabs_close.label().to_string(),
             _ => String::new(),
         }
     }
@@ -565,6 +592,14 @@ impl Properties {
             },
             Part::WayList => match Way::ALL.get(i) {
                 Some(&way) => v.scale = v.scale.with_way(way),
+                None => return false,
+            },
+            Part::TabsList => match crate::folder::tabs::Place::ALL.get(i) {
+                Some(&place) => v.folder_tabs = place,
+                None => return false,
+            },
+            Part::TabsCloseList => match crate::folder::tabs::CloseAt::ALL.get(i) {
+                Some(&at) => v.folder_tabs_close = at,
                 None => return false,
             },
             _ => return false,
@@ -708,6 +743,8 @@ impl Properties {
             Part::Check(Check::PersonalizedMenus) => false,
             // How a size is drawn matters only between whole numbers.
             Part::WayList => self.quarters && !self.values.scale.is_whole(),
+            // Where the X goes matters only while there are tabs (brief 110).
+            Part::TabsCloseList => self.values.folder_tabs != crate::folder::tabs::Place::Off,
             _ => true,
         }
     }
@@ -1010,6 +1047,7 @@ fn controls(era: Era, page: Page) -> Vec<Part> {
             .chain(Strength::ALL.iter().map(|&s| Part::Lines(s)))
             .collect(),
         Page::Programs => Shown::ALL.iter().map(|&s| Part::Shown(s)).chain([Part::Programs]).collect(),
+        Page::Folders => vec![Part::TabsList, Part::TabsCloseList],
     }
 }
 
@@ -1177,6 +1215,8 @@ fn drop_frame(font: &Font, p: &Properties, list: Part) -> Option<Rect> {
     let field = match list {
         Part::SizeList => SIZE_FIELD,
         Part::WayList => WAY_FIELD,
+        Part::TabsList => TABS_FIELD,
+        Part::TabsCloseList => TABS_CLOSE_FIELD,
         _ => return None,
     };
     let choices = p.choices(list);
@@ -1232,6 +1272,14 @@ const LINES_ROW_Y: i32 = 256;
 const LINES_ROWS: [(Strength, i32); 4] =
     [(Strength::Off, 36), (Strength::Light, 100), (Strength::Medium, 164), (Strength::Strong, 238)];
 const LINES_TEXT: &str = "Shown at a whole size from 2\u{d7} up.";
+
+/// Bevel95 Settings' Folders page (ours, brief 110): the group "Tabs in folder windows", its two
+/// lists in the Size group's manner (labels on the fields' text line), two lines saying what it is.
+const TABS_GROUP: Rect = Rect::new(24, 68, 296, 115);
+const TABS_LABEL_X: i32 = 36;
+const TABS_FIELD: Rect = Rect::new(124, 84, 184, 21);
+const TABS_CLOSE_FIELD: Rect = Rect::new(124, 111, 184, 21);
+const TABS_TEXT: [&str; 2] = ["Bevel95's own: the old Windows had no tabs", "in a folder window. None: as they were."];
 
 /// Bevel95 Settings' Programs page (ours): one group down to where the General page ends, the
 /// three option rows as the General page has its looks, and under them the list of programs,
@@ -1384,6 +1432,18 @@ pub fn layout(p: &Properties, fonts: &Fonts) -> PropertiesLayout {
                 parts.extend(scroll_parts(scroll, top));
             }
             parts.push((Part::Programs, PROGRAMS_LIST));
+        }
+        Page::Folders => {
+            if let Some((list, _)) = p.drop
+                && let Some(frame) = drop_frame(font, p, list)
+            {
+                for i in 0..p.choices(list).len() {
+                    let row = Rect::new(frame.x + 1, frame.y + 1 + i as i32 * DROP_ROW_H, frame.w - 2, DROP_ROW_H);
+                    parts.insert(i, (Part::DropRow(i), row));
+                }
+            }
+            parts.push((Part::TabsList, TABS_FIELD));
+            parts.push((Part::TabsCloseList, TABS_CLOSE_FIELD));
         }
     }
     for (part, x) in BUTTONS {
@@ -1767,13 +1827,29 @@ pub fn paint(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, p: &Properties,
             }
             paint_program_list(fb, theme, font, p);
         }
+        Page::Folders => {
+            group_box(fb, c, font, TABS_GROUP, "Tabs in folder windows", false);
+            for (list, field) in [(Part::TabsList, TABS_FIELD), (Part::TabsCloseList, TABS_CLOSE_FIELD)] {
+                let enabled = p.enabled(list);
+                let label = label_of(era, list).unwrap_or_default();
+                let at = (TABS_LABEL_X, field.y + 4);
+                if enabled {
+                    font.draw_label(fb, at, &label, i32::MAX, c.text, keys);
+                } else {
+                    font.draw_label(fb, (at.0 + 1, at.1 + 1), &label, i32::MAX, c.etch, keys);
+                    font.draw_label(fb, at, &label, i32::MAX, c.shadow, keys);
+                }
+                paint_list_field(fb, theme, font, p, list, field, enabled, keys);
+            }
+            lines(fb, 36, TABS_CLOSE_FIELD.bottom() + 9, &TABS_TEXT);
+        }
     }
     for (part, _) in BUTTONS {
         button(fb, part);
     }
     // An open drop-down list, over everything (as Shut Down's in Windows 2000: a 1px frame,
     // white rows of 13px, the highlighted one in the menu's highlight).
-    if p.current_page() == Page::Bevel95
+    if matches!(p.current_page(), Page::Bevel95 | Page::Folders)
         && let Some((list, hover)) = p.drop
         && let Some(frame) = drop_frame(font, p, list)
     {
@@ -1999,7 +2075,7 @@ impl kit::Form for PropertiesWindow {
         let p = &mut self.props;
         let (list, programs) = (p.focus == Part::List, p.focus == Part::Programs);
         let options = matches!(p.focus, Part::Look(_) | Part::Colors(_) | Part::WinKey(_) | Part::Lines(_) | Part::Shown(_));
-        let drop_list = matches!(p.focus, Part::SizeList | Part::WayList).then_some(p.focus);
+        let drop_list = is_list(p.focus).then_some(p.focus);
         match key {
             // A drop-down list: Enter takes the highlighted entry and Esc leaves the choice as it
             // was (both only close the open list), F4 opens and closes it, the arrows step.
@@ -2079,7 +2155,7 @@ impl kit::Form for PropertiesWindow {
         }
         p.show_keys = true;
         // In a drop-down list a letter or a digit goes to the next entry that starts with it.
-        if matches!(p.focus, Part::SizeList | Part::WayList) {
+        if is_list(p.focus) {
             let list = p.focus;
             let choices = p.choices(list);
             let from = p.drop.map(|(_, h)| h).or_else(|| p.list_chosen(list)).unwrap_or(0);
@@ -2106,7 +2182,7 @@ impl kit::Form for PropertiesWindow {
                 p.focus = part;
                 p.choose(part);
             }
-            Some(part @ (Part::List | Part::SizeList | Part::WayList)) => {
+            Some(part @ (Part::List | Part::SizeList | Part::WayList | Part::TabsList | Part::TabsCloseList)) => {
                 p.focus = part;
             }
             Some(part) => {
@@ -2149,7 +2225,7 @@ impl kit::Form for PropertiesWindow {
             return Press::Done;
         }
         match part {
-            Some(list @ (Part::SizeList | Part::WayList)) if p.enabled(list) => {
+            Some(list @ (Part::SizeList | Part::WayList | Part::TabsList | Part::TabsCloseList)) if p.enabled(list) => {
                 p.focus = list;
                 p.toggle_list(list);
             }
@@ -2228,7 +2304,7 @@ impl kit::Form for PropertiesWindow {
     /// Alt+Down and Alt+Up open a drop-down list, and close it taking the highlighted entry.
     fn alt_key(&mut self, key: Key) -> bool {
         let p = &mut self.props;
-        if !matches!(p.focus, Part::SizeList | Part::WayList) || !matches!(key, Key::Up | Key::Down) {
+        if !is_list(p.focus) || !matches!(key, Key::Up | Key::Down) {
             return false;
         }
         match p.drop.take() {
@@ -2287,7 +2363,33 @@ mod tests {
             windows_display: false,
             quick_launch: false,
             monitor_lines: Strength::Off,
+            folder_tabs: crate::folder::tabs::Place::Off,
+            folder_tabs_close: crate::folder::tabs::CloseAt::End,
         }
+    }
+
+    /// Brief 110: the Folders page's two lists: where the tabs go (None by default), where their
+    /// X goes (greyed while there are none); a choice enables Apply.
+    #[test]
+    fn the_folders_page_sets_the_tabs() {
+        use crate::folder::tabs::{CloseAt, Place};
+        let mut p = Properties::new(Sheet::Bevel95, Era::Win98, values());
+        assert_eq!(*Sheet::Bevel95.pages().last().unwrap(), Page::Folders);
+        assert_eq!(page_title(Era::Win98, Page::Folders), "Folders");
+        assert_eq!(p.list_text(Part::TabsList), "None");
+        assert!(!p.enabled(Part::TabsCloseList));
+        assert_eq!(p.choices(Part::TabsList), ["None", "Under the address bar", "Over the file list", "Under the menu bar", "Above the menu bar"]);
+        assert!(p.choose_entry(Part::TabsList, 4));
+        assert_eq!(p.values.folder_tabs, Place::AboveMenu);
+        assert!(p.enabled(Part::TabsCloseList) && p.enabled(Part::Apply));
+        assert!(p.choose_entry(Part::TabsCloseList, 1));
+        assert_eq!(p.values.folder_tabs_close, CloseAt::Tab);
+        assert_eq!(p.list_chosen(Part::TabsCloseList), Some(1));
+        assert!(!p.choose_entry(Part::TabsList, 5));
+        // Taskbar Properties never puts them into effect.
+        let shown = p.values;
+        assert_eq!(Sheet::Taskbar.merge(shown, values()).folder_tabs, Place::Off);
+        assert_eq!(Sheet::Bevel95.merge(shown, values()).folder_tabs, Place::AboveMenu);
     }
 
     #[test]
@@ -2711,7 +2813,7 @@ mod tests {
     #[test]
     fn each_window_has_its_own_pages_and_settings() {
         assert_eq!(Sheet::Taskbar.pages(), [Page::TaskbarOptions, Page::StartMenuPrograms]);
-        assert_eq!(Sheet::Bevel95.pages(), [Page::Bevel95, Page::OwnTaskbar, Page::Desktop, Page::Programs]);
+        assert_eq!(Sheet::Bevel95.pages(), [Page::Bevel95, Page::OwnTaskbar, Page::Desktop, Page::Programs, Page::Folders]);
         assert_eq!(title(Sheet::Bevel95, Era::Win2000), "Bevel95 Settings");
         assert_eq!(page_title(Era::Win95, Page::Bevel95), "General");
         assert_eq!(page_title(Era::Win2000, Page::Desktop), "Desktop");
@@ -3070,7 +3172,7 @@ mod tests {
         taskbar.key(Key::Tab, ctrl);
         assert_eq!(taskbar.props.page, 0, "and round again");
         let mut settings = PropertiesWindow::new(Properties::new(Sheet::Bevel95, Era::Win95, values()), &fonts);
-        assert_eq!((settings.layout.title, settings.layout.tabs.len()), ("Bevel95 Settings", 4));
+        assert_eq!((settings.layout.title, settings.layout.tabs.len()), ("Bevel95 Settings", 5));
         settings.key(Key::Tab, ctrl);
         let focus = Part::WinKey(WindowsKey::Find);
         assert_eq!((settings.props.current_page(), settings.props.focus), (Page::OwnTaskbar, focus));
