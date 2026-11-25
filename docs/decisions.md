@@ -7374,6 +7374,23 @@ odd." Then, with a capture of their 7 bar: "Sorry I meant icons at 2x on 7", and
   under the classic looks), `window_list::tests::a_programs_picture_at_its_final_size`,
   `seven_store::tests`, the golden picture `win7-bar-2x-true-icons` (made-up pictures given at
   64); the classic and XP 1x golden pictures unchanged.
+- **At size 1 too** (the owner, after the above: "2x looks great. 1x still isn't what I'd expect";
+  their capture showed stair-stepped edges and coarse inner shapes at 1x). The cause, measured on
+  this PC: the bar is aware of the screen's scale, so the shell hands it its "large" picture at
+  the screen's scale (48×48 at 150%), and drawing that straight at 32 (`DrawIconEx`) shrank it
+  crudely; a test process, not scale-aware, gets a true 32 and hid it. Now, under XP and 7 at every
+  size, the live pictures go through the same path: the file's largest real picture (the 256 list,
+  else the 48 one for sizes up to 48) averaged down to the final size (`read_icon_at`; the store's
+  32s too), placed with `draw_final_icon` (at size 1 the box itself). A program with nothing larger
+  keeps the shell's own picture, which is now also drawn at its own size and averaged down
+  (`read_big_icon`). XP's task buttons take the program file's picture before the window's own
+  large one; a window with a classic picture keeps it. The comparison for the eye, real programs'
+  pictures of this PC (scale-aware as the bar): `private/probes/win7/icons-1x-compare.png`
+  (`window_list::tests::compare_small_pictures`, ignored): per program the shell's 32, 256 shrunk,
+  48 shrunk, the shell's 16, 256 and 48 shrunk, on 7's face and on white, six times enlarged. The
+  shrunk ones are clearly better (the shell's show broken edges and garbled small details). Lost:
+  a few programs' hand-made small details (the console's "C:\_" exists only in its small
+  pictures). Proof: `window_list::tests::a_programs_picture_at_its_final_size` (16 to 96).
 - Left for later (in the to-do list, with the owner's words): "smooth yet faithful" drawing of XP
   and 7 above size 1 (pictures and letters drawn at the final size, equal to the original at 1x);
   the XP Start button looks chunky enlarged.
