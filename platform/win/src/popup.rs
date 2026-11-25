@@ -79,6 +79,9 @@ pub enum Kind {
     GroupMenu(Vec<u64>),
     /// The Start menu: entry i is `start::entry_at(era, i)`.
     Start,
+    /// Windows XP's Start menu (brief 112): entry i is `xp_start::item_at(menu, i)`; the pinned
+    /// programs' and the often-used ones' targets, in the menu's order.
+    XpStart(Vec<String>, Vec<String>),
     /// A folder of the Programs or Favorites menus, by entry indices from that menu down.
     Folder(Tree, Vec<usize>),
     /// Your recently opened documents.
@@ -146,7 +149,7 @@ pub struct Popup {
 
 impl Popup {
     pub fn is_start(&self) -> bool {
-        matches!(self.kind, Kind::Start)
+        matches!(self.kind, Kind::Start | Kind::XpStart(..))
     }
 
     /// Windows 2000's Quick Launch list (its "»" is drawn pushed in while it is open).
@@ -384,9 +387,42 @@ pub fn open_start(bar: HWND, by_keyboard: bool) {
         places.retain(|key, _| place_still_there(app, key));
         app.menu_scroll = places;
     });
+    if with_app(|app| app.xp()).unwrap_or(false) {
+        let (kind, mut menu) = xp_start_menu();
+        menu.show_keys = by_keyboard;
+        open_root(bar, kind, menu, MenuStyle::XpStart, At::StartButton(button));
+        return;
+    }
     let (style, mut menu) = start_menu_shown(era, opts, small);
     menu.show_keys = era.always_shows_keys() || by_keyboard;
     open_root(bar, Kind::Start, menu, style, At::StartButton(button));
+}
+
+/// Windows XP's Start menu (brief 112): the Windows user's name, the shortcuts of Quick Launch as
+/// the pinned programs, the programs started most often through Bevel95's Start menu and Quick
+/// Search (`often::top`). The pictures: the shell's 16×16 ones doubled (PROVISIONAL: XP drew its
+/// own 32×32 ones).
+fn xp_start_menu() -> (Kind, Menu) {
+    use bevel_core::xp_start;
+    let era = Era::Win2000;
+    let pinned: Vec<(String, String)> = with_app(|app| {
+        app.ql.shortcuts.iter().map(|s| (bevel_core::quick_launch::shortcut_tooltip(&s.name).to_string(), s.path.display().to_string())).collect()
+    })
+    .unwrap_or_default();
+    let often: Vec<(String, String)> = crate::often::top(6);
+    let picture = |path: &str| start_menu::file_icon(era, path).map(|i| doubled(&i));
+    let with_pictures = |list: &[(String, String)]| list.iter().map(|(name, path)| (name.clone(), picture(path))).collect::<Vec<_>>();
+    let menu = xp_start::menu(&start_menu::user_name(), &with_pictures(&pinned), &with_pictures(&often));
+    let (p, o) = xp_start::fitting(pinned.len(), often.len());
+    let kind = Kind::XpStart(pinned.into_iter().take(p).map(|(_, t)| t).collect(), often.into_iter().take(o).map(|(_, t)| t).collect());
+    (kind, menu)
+}
+
+/// A picture with every pixel doubled (the shell's 16×16 as XP's 32×32 places).
+fn doubled(icon: &bevel_core::fb::Icon) -> bevel_core::fb::Icon {
+    let (w, h) = (icon.width * 2, icon.height * 2);
+    let pixels = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).map(|(x, y)| icon.pixels[((y / 2) * icon.width + x / 2) as usize]).collect();
+    bevel_core::fb::Icon { width: w, height: h, pixels }
 }
 
 /// The Start menu as the bar shows it: the person's user name in Log Off, each entry's picture;
@@ -449,7 +485,7 @@ fn show_root(bar: HWND, kind: Kind, menu: Menu, style: MenuStyle, layout: MenuLa
     let Some(hwnd) = create(bar, rect, false) else {
         return;
     };
-    let start = matches!(kind, Kind::Start | Kind::QuickList(_));
+    let start = matches!(kind, Kind::Start | Kind::XpStart(..) | Kind::QuickList(_));
     let popup = Popup { hwnd, kind, menu, style, layout, rect, parent_entry: None, previous, tracking: false };
     with_app(|app| app.menus.push(popup));
     // SAFETY: our own windows.
@@ -575,6 +611,13 @@ fn submenu_of(level: usize, index: usize) -> Option<(Kind, Menu, MenuStyle)> {
                 StartEntry::Favorites => Want::Folder(Tree::Favorites, Vec::new(), app.start_favorites.clone()),
                 StartEntry::Documents => Want::Documents,
                 e @ (StartEntry::Settings | StartEntry::Find) => Want::Fixed(e),
+                _ => return None,
+            },
+            // XP's All Programs and My Recent Documents: the classic cascades (2000's look for now,
+            // PROVISIONAL).
+            Kind::XpStart(..) => match bevel_core::xp_start::item_at(&parent.menu, index)? {
+                bevel_core::xp_start::Item::AllPrograms => Want::Folder(Tree::Programs, Vec::new(), app.start_programs.clone()),
+                bevel_core::xp_start::Item::Right(bevel_core::xp_start::Right::MyRecentDocuments) => Want::Documents,
                 _ => return None,
             },
             Kind::Test(path) => {
@@ -904,10 +947,11 @@ enum Action {
 
 /// Runs entry `index` of the menu at `level`.
 fn choose(level: usize, index: usize) {
-    let Some((kind, entry_kind, era, opts)) = with_app(|app| {
+    let Some((kind, entry_kind, era, opts, xp_item)) = with_app(|app| {
         let popup = app.menus.get(level)?;
         let entry = popup.menu.entries.get(index).filter(|e| e.choosable())?;
-        Some((popup.kind.clone(), entry.kind, app.era, app.start_options))
+        let xp_item = matches!(popup.kind, Kind::XpStart(..)).then(|| bevel_core::xp_start::item_at(&popup.menu, index)).flatten();
+        Some((popup.kind.clone(), entry.kind, app.era, app.start_options, xp_item))
     })
     .flatten() else {
         return; // a separator or a grayed-out entry: nothing happens
@@ -967,13 +1011,41 @@ fn choose(level: usize, index: usize) {
         },
         Kind::Start if start::entry_at(era, opts, index).is_some() => Action::Start(index),
         Kind::Start => return,
+        // XP's Start menu (brief 112): a program is started (and counted), the rest goes where the
+        // classic Start menu's matching entry goes (`bar::xp_start_action`).
+        Kind::XpStart(pinned, often) => match xp_item {
+            Some(bevel_core::xp_start::Item::Pinned(i)) => match pinned.get(i) {
+                Some(target) => Action::Open(target.clone()),
+                None => return,
+            },
+            Some(bevel_core::xp_start::Item::Often(i)) => match often.get(i) {
+                Some(target) => {
+                    let name = with_app(|app| app.menus.get(level).and_then(|p| p.menu.entries.get(index)).map(|e| e.label.clone())).flatten().unwrap_or_default();
+                    crate::often::count(&name, target);
+                    Action::Open(target.clone())
+                }
+                None => return,
+            },
+            Some(item) => {
+                close(false);
+                crate::bar::xp_start_action(item);
+                return;
+            }
+            None => return,
+        },
         Kind::Folder(tree, path) => {
             let target = with_app(|app| match app.start_tree(tree).folder_at(&path)?.entry(index)? {
-                Entry::Item(item) => Some(item.target.clone()),
+                Entry::Item(item) => Some((item.name.clone(), item.target.clone())),
                 Entry::Folder(_) => None,
             });
             match target.flatten() {
-                Some(target) => Action::Open(target),
+                Some((name, target)) => {
+                    // A program of the Programs menu: counted for XP's Start menu (brief 112).
+                    if tree == Tree::Programs {
+                        crate::often::count(&name, &target);
+                    }
+                    Action::Open(target)
+                }
                 None => return,
             }
         }

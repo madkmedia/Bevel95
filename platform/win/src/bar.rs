@@ -1808,6 +1808,32 @@ fn arm_leave(bar: HWND) {
     }
 }
 
+/// Carries out an entry of Windows XP's Start menu that has no submenu (brief 112): each goes where
+/// the classic Start menu's matching entry goes; the folders open in Windows' own Explorer (XP's
+/// bar style has no folder windows of Bevel95's); Search is Quick Search; Log Off and Turn Off
+/// Computer open the 2000 look's Log Off and Shut Down windows (PROVISIONAL).
+pub fn xp_start_action(item: bevel_core::xp_start::Item) {
+    use bevel_core::xp_start::{Item, Right};
+    match item {
+        Item::Right(Right::MyDocuments) => match start_menu::documents_folder() {
+            Some(dir) => window_list::launch(&dir.display().to_string()),
+            None => window_list::launch("shell:Personal"),
+        },
+        Item::Right(Right::MyPictures) => window_list::launch("shell:My Pictures"),
+        Item::Right(Right::MyMusic) => window_list::launch("shell:My Music"),
+        Item::Right(Right::MyComputer) => window_list::launch("shell:MyComputerFolder"),
+        Item::Right(Right::ControlPanel) => window_list::launch("shell:ControlPanelFolder"),
+        Item::Right(Right::Printers) => window_list::launch("shell:PrintersFolder"),
+        Item::Right(Right::Help) => window_list::launch("https://support.microsoft.com/windows"),
+        Item::Right(Right::Search) => open_find(),
+        Item::Right(Right::Run) => dialogs::open(DialogKind::Run),
+        Item::LogOff => dialogs::open(DialogKind::LogOff),
+        Item::TurnOff => dialogs::open(DialogKind::ShutDown),
+        // Cascades and programs: opened or started by the menu itself.
+        Item::Right(Right::MyRecentDocuments) | Item::AllPrograms | Item::Pinned(_) | Item::Often(_) => {}
+    }
+}
+
 /// Carries out a Start menu entry that has no submenu.
 fn start_action(index: usize) {
     let (era, opts) = with_app(|app| (app.era, app.start_options)).unwrap_or_default();

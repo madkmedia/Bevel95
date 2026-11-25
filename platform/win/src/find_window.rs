@@ -409,11 +409,15 @@ fn activate(part: Part) {
         Part::TitleClose => close(),
         Part::Divider => save_name_width(),
         Part::Open => {
-            let Some((target, command)) =
-                kit::with::<FindHost, _>(|h| h.form.selected().map(|p| (p.target.clone(), p.command))).flatten()
+            let Some((target, command, name)) =
+                kit::with::<FindHost, _>(|h| h.form.selected().map(|p| (p.target.clone(), p.command, p.name.clone()))).flatten()
             else {
                 return;
             };
+            // A program started: counted for XP's Start menu (brief 112).
+            if command.is_none() {
+                crate::often::count(&name, &target);
+            }
             // A thing to do: the window closes, then the bar does it as its menus would.
             if let Some(action) = command {
                 close();

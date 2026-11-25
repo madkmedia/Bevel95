@@ -2444,7 +2444,33 @@ fn xp_scenes() -> Vec<Scene> {
         Scene { section, name: "winxp-bar-one-front".into(), caption: "XP bar style: one button, in front", image: xp_bar(vec![task("My Computer", &COMPUTER, TaskState::Active)], false, "10:35 AM") },
         Scene { section, name: "winxp-bar-full".into(), caption: "XP bar style: four buttons sharing the room (147 each, as desktop-full)", image: xp_bar(full, false, "10:58 AM") },
         Scene { section, name: "winxp-bar-overfull".into(), caption: "XP bar style: more buttons than fit, the 2000 look's arrows (PROVISIONAL)", image: xp_bar(overfull(), true, "10:58 AM") },
+        Scene { section, name: "winxp-start-menu".into(), caption: "XP bar style: the Start menu (made-up names), as Toasty Tech's default desktop", image: xp_start_scene(None) },
+        Scene { section, name: "winxp-start-menu-hot".into(), caption: "XP bar style: the Start menu, the pointer on an often-used program (316AC5, PROVISIONAL)", image: xp_start_scene(Some(4)) },
     ]
+}
+
+/// The XP Start menu open over the bar on an 800×600 screen, as Toasty Tech's default desktop
+/// (made-up names; the user "User"), with `hover` under the pointer.
+fn xp_start_scene(hover: Option<usize>) -> Framebuffer {
+    let theme = &bevel_core::theme::WINXP;
+    let (regular, bold) = (load_font(theme, false), load_font(theme, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let mut screen = Framebuffer::new(800, 600, rgb(0x5791F5));
+    let bar = xp_bar(vec![], true, "10:35 AM");
+    screen.blit(&bar, 0, 570);
+    let pinned = vec![("Web Browser".to_string(), Some(icon(&COMPUTER, 2))), ("Mail".to_string(), Some(icon(&MAIL, 2)))];
+    let often: Vec<(String, Option<Icon>)> =
+        [("Notes", &DOCUMENT), ("Pictures Viewer", &FOLDER), ("Calculator", &COMPUTER), ("Paint", &DOCUMENT), ("Games", &FOLDER), ("Address Book", &MAIL)]
+            .iter()
+            .map(|(n, a)| (n.to_string(), Some(icon(a, 2))))
+            .collect();
+    let mut menu = bevel_core::xp_start::menu("User", &pinned, &often);
+    menu.hover = hover;
+    let layout = bevel_core::xp_start::layout(&menu);
+    let mut fb = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut fb, theme, &fonts, &menu, MenuStyle::XpStart, &layout);
+    screen.blit(&fb, 0, 570 - layout.height);
+    screen
 }
 
 /// Sizes measured on Windows itself, run in the v86 emulator (docs/theme-spec.md, "Window

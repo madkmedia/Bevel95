@@ -68,3 +68,4 @@ pub mod window;
 pub mod window_icons;
 pub mod window_menu;
 pub mod xp;
+pub mod xp_start;

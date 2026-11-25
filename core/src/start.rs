@@ -368,6 +368,9 @@ pub fn layout_root(
 ) -> crate::paint::MenuLayout {
     use crate::paint::{self, MenuStyle};
     let screen_h = scale.old_fit(screen.h);
+    if style == MenuStyle::XpStart {
+        return crate::xp_start::layout(menu);
+    }
     if style == MenuStyle::Popup {
         return paint::layout_menu(theme, fonts, menu, style, screen_h);
     }

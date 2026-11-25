@@ -568,6 +568,9 @@ pub struct Menu {
     /// Labels the menu is made wide enough for although they are not among its entries (Windows
     /// 2000's Quick Launch list: as wide as the longest name on the band, shown or not).
     pub width_labels: Vec<String>,
+    /// Windows XP's Start menu (`MenuStyle::XpStart`, brief 112): the Windows user's name in its
+    /// band.
+    pub user: String,
 }
 
 /// Runs `f` with the fonts `menu` is drawn with: Explorer's bold for an Explorer menu.
@@ -605,6 +608,8 @@ pub enum MenuStyle {
     Cascade,
     /// The Start menu with "Show small icons in Start menu" on: 16px icons, no banner.
     StartSmall,
+    /// Windows XP's Start menu (brief 112): laid out and painted by `xp_start`.
+    XpStart,
 }
 
 /// Where a menu's entries go, and its size, at 1×.
@@ -648,6 +653,7 @@ fn frame_of(theme: &Theme, style: MenuStyle) -> i32 {
     match style {
         MenuStyle::Popup => theme.popup.frame,
         MenuStyle::Start | MenuStyle::StartSmall | MenuStyle::Cascade => theme.start_menu.frame,
+        MenuStyle::XpStart => 0,
     }
 }
 
@@ -714,6 +720,7 @@ fn item_width(theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle) -> i3
             let pad = if arrows { items.pad_right } else { items.pad_right_no_arrows };
             items.icon_x + items.icon + items.text_gap + widest + pad
         }
+        MenuStyle::XpStart => crate::xp_start::WIDTH,
     }
 }
 
@@ -1024,6 +1031,7 @@ fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Men
         dotted_disabled_keys: menu.dotted_disabled_keys,
         explorer_bold: menu.explorer_bold,
         width_labels: Vec::new(),
+        user: String::new(),
     };
     let part_layout = MenuLayout {
         rects: showing.iter().filter_map(|&i| layout.rects.get(i)).map(|r| Rect::new(r.x, r.y - scroll.offset, r.w, r.h)).collect(),
@@ -1179,6 +1187,10 @@ pub fn paint_menu(
 }
 
 fn paint_menu_with(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Menu, style: MenuStyle, layout: &MenuLayout) {
+    if style == MenuStyle::XpStart {
+        crate::xp_start::paint(fb, fonts, menu, layout);
+        return;
+    }
     if let Some(scroll) = layout.scroll {
         paint_scrolled(fb, theme, fonts, menu, style, layout, scroll);
         return;

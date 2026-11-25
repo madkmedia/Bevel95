@@ -107,6 +107,87 @@ fn compare(name: &str, file: &str, oy: i32, buttons: usize, front: Option<usize>
     }
 }
 
+/// The Start menu's frame against Toasty Tech's default desktop (the menu at 0,92): the band
+/// (the user's picture and name masked), the lines, the body (the left list and the right
+/// column's icons and labels masked: they are the stranger's programs and letters), All Programs,
+/// the bottom band.
+fn compare_menu(report: &mut Vec<String>) {
+    let shot = read_png(&private_dir().join("probes/xp/shots/toastytech/wxpdefaultdesk.png"));
+    let (regular, bold) = (font(&WINXP, false), font(&WINXP, true));
+    let fonts = Fonts { regular: &regular, bold: &bold };
+    let menu = bevel_core::xp_start::menu("", &[("A".into(), None), ("B".into(), None)], &(0..6).map(|i| (format!("{i}"), None)).collect::<Vec<_>>());
+    let layout = bevel_core::xp_start::layout(&menu);
+    let mut ours = Framebuffer::new(layout.width, layout.height, 0);
+    paint::paint_menu(&mut ours, &WINXP, &fonts, &menu, paint::MenuStyle::XpStart, &layout);
+    let mut masks = vec![
+        Rect::new(4, 3, 58, 58),             // the user's picture and its frame (a stranger's)
+        Rect::new(64, 10, 300, 40),           // the user's name
+        Rect::new(2, 67 + 4, 188, 329),       // the left list (the stranger's programs)
+    ];
+    // The rounded corners' outside (the wallpaper in the shot; see-through in the pictures, square
+    // in this version: PROVISIONAL): each see-through pixel of the corners and the band's ends.
+    for (name, x0) in [("menu_corner_left", 0), ("menu_corner_right", 368), ("menu_band_left", 0), ("menu_band_right", 345)] {
+        let p = bevel_core::xp::picture(name).unwrap();
+        for y in 0..p.height {
+            for x in 0..p.width {
+                if p.pixels[(y * p.width + x) as usize] >> 24 == 0 {
+                    masks.push(Rect::new(x0 + x, y, 1, 1));
+                }
+            }
+        }
+    }
+    for r in layout.rects.iter().skip(11).take(12) {
+        if r.h == 32 {
+            masks.push(Rect::new(r.x + 6, r.y + 3, 26, 26)); // the icon
+            masks.push(Rect::new(r.x + 33, r.y + 10, r.w - 33, 14)); // the label and arrow
+        }
+    }
+    let parts = [
+        ("top band", Rect::new(0, 0, 380, 64)),
+        ("dark + orange lines", Rect::new(0, 64, 380, 3)),
+        ("columns, divider, shade", Rect::new(0, 67, 380, 333)),
+        ("All Programs", Rect::new(0, 400, 380, 37)),
+        ("bottom band", Rect::new(0, 437, 380, 41)),
+    ];
+    // Where the band's differing pixels are: by row.
+    let rows: Vec<String> = (0..64)
+        .filter_map(|y| {
+            let d = (0..380).filter(|&x| !masks.iter().any(|m| m.contains(x, y)) && big(ours.get(x, y), shot.get(x, 92 + y))).count();
+            (d > 0).then(|| format!("{y}:{d}"))
+        })
+        .collect();
+    report.push(format!("top band's differing pixels by row: {}", rows.join(" ")));
+    for (what, part) in parts {
+        let (n, d) = count_at(&ours, &shot, (0, 92), part, &masks);
+        report.push(format!("{:<28} {what:<22} {n:>6} compared {d:>5} differ", "Toasty Tech wxpdefaultdesk"));
+    }
+}
+
+/// `count` for a picture that stands at `at` in the shot.
+fn count_at(ours: &Framebuffer, shot: &Framebuffer, at: (i32, i32), part: Rect, masks: &[Rect]) -> (usize, usize) {
+    let (mut n, mut d) = (0, 0);
+    for y in part.y..part.bottom() {
+        for x in part.x..part.right() {
+            if masks.iter().any(|m| m.contains(x, y)) {
+                continue;
+            }
+            n += 1;
+            if big(ours.get(x, y), shot.get(at.0 + x, at.1 + y)) {
+                d += 1;
+            }
+        }
+    }
+    (n, d)
+}
+
+#[test]
+#[ignore]
+fn the_xp_start_menu_against_the_screenshot() {
+    let mut report = Vec::new();
+    compare_menu(&mut report);
+    println!("{}", report.join("\n"));
+}
+
 #[test]
 #[ignore]
 fn the_xp_bar_against_the_screenshots() {

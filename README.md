@@ -163,6 +163,8 @@ All in `%LOCALAPPDATA%\Bevel95` (a portable copy keeps them next to its `bevel95
 - `undo.txt`, `task-order.txt`, `run-history.txt`, `quick-search.txt`: the folder windows' list
   of recent file operations, the order of the task buttons, the commands typed into Run, the
   width of Quick Search's Name column.
+- `often.txt`: under the Windows XP style, the programs you start most often through the Start
+  menu and Quick Search (their names and shortcuts), for the XP Start menu's list.
 - `quick-launch.txt`: the built-in Quick Launch icons you took off the band (your own shortcuts
   stay in Windows' own Quick Launch folder), and the band's width once you have dragged it.
 - `minefield.txt`, `solitaire.txt`, `calculator.txt`: the games' and the Calculator's options
