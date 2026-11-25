@@ -200,8 +200,11 @@ impl Default for Config {
             quick_launch: None,
             windows_display_settings: false,
             monitor_lines: crate::monitor_lines::Strength::Off,
-            folder_tabs: crate::folder::tabs::Place::Off,
-            folder_tabs_close: crate::folder::tabs::CloseAt::End,
+            // On by default since the owner's change of 2026-11-25 (the row shows only when a
+            // window has two tabs or more, so a window looks as always until then): over the file
+            // list, the X on the tab in front, as the owner chose for their own use.
+            folder_tabs: crate::folder::tabs::Place::OverFiles,
+            folder_tabs_close: crate::folder::tabs::CloseAt::Tab,
             bar_style: crate::theme::BarStyle::Classic,
         }
     }
@@ -482,6 +485,21 @@ mod tests {
         let text = with_setting(DEFAULT_FILE, "scroll_programs", "yes");
         assert!(parse(&text).0.start.scroll_programs, "written back, read again");
         assert!(!parse(&with_setting(&text, "scroll_programs", "no")).0.start.scroll_programs);
+    }
+
+    /// The owner's change of 2026-11-25: tabs are on by default (over the file list, the X on the
+    /// tab in front); a file that says otherwise keeps what it says, `off` too.
+    #[test]
+    fn tabs_are_on_unless_the_file_says_otherwise() {
+        use crate::folder::tabs::{CloseAt, Place};
+        let fresh = parse("era = win98\n").0;
+        assert_eq!((fresh.folder_tabs, fresh.folder_tabs_close), (Place::OverFiles, CloseAt::Tab));
+        assert_eq!(parse(DEFAULT_FILE).0.folder_tabs, Place::OverFiles, "a new settings.txt has no line for them");
+        let own = parse("folder_tabs = over_files\nfolder_tabs_close = tab\n").0;
+        assert_eq!((own.folder_tabs, own.folder_tabs_close), (Place::OverFiles, CloseAt::Tab));
+        let other = parse("folder_tabs = above_menu\nfolder_tabs_close = end\n").0;
+        assert_eq!((other.folder_tabs, other.folder_tabs_close), (Place::AboveMenu, CloseAt::End));
+        assert_eq!(parse("folder_tabs = off\n").0.folder_tabs, Place::Off);
     }
 
     #[test]

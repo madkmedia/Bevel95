@@ -122,12 +122,13 @@ mod tests {
         assert_eq!(tabs, None);
         assert_eq!(s.era, config::Config::default().era, "the look falls back to the defaults, as before");
         assert_eq!(settings_and_tabs(Read::Text("  \r\n".into())).1, None);
-        assert_eq!(settings_and_tabs(Read::Missing).1, Some((Place::Off, CloseAt::End)));
+        // The defaults: on since the owner's change of 2026-11-25.
+        assert_eq!(settings_and_tabs(Read::Missing).1, Some((Place::OverFiles, CloseAt::Tab)));
         let text = "era = win2000\nfolder_tabs = above_menu\nfolder_tabs_close = tab\n";
         let (s, tabs) = settings_and_tabs(Read::Text(text.into()));
         assert_eq!(tabs, Some((Place::AboveMenu, CloseAt::Tab)));
         assert_eq!(s.era, Era::Win2000);
         let (_, tabs) = settings_and_tabs(Read::Text("folder_tabs = off\n".into()));
-        assert_eq!(tabs, Some((Place::Off, CloseAt::End)), "a file that says off is off");
+        assert_eq!(tabs.map(|t| t.0), Some(Place::Off), "a file that says off is off");
     }
 }

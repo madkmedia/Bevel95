@@ -6935,10 +6935,29 @@ Manager's maximized documents; `private/probes/tabs/notes.md`). After the mockup
 chose: every place as an option, along with none, a fifth place above the menu bar, the small
 flat X (never the square title-bar button), and "tabs for all, never buttons" (a row of task
 buttons was drawn as a mockup only).
-- **Off unless chosen**: `folder_tabs = off | under_address | over_files | under_menu |
-  above_menu` (default off) and `folder_tabs_close = end | tab` (default end) in settings.txt,
-  written only when changed; Bevel95 Settings' fifth page, Folders: the group "Tabs in folder
-  windows" with the lists Tabs and Close button (the second greyed while Tabs is None). OK or
+- **The row only with two tabs or more** (the owner, 2026-11-25: "I don't think a tab should
+  show if there's is only one window. That keeps it faithful by default. People could just right
+  click or use shortcuts to start the second tab which turns the current window into a first tab.
+  The setting could just be more about which position is used when a tab is made or perhaps
+  whether to show the option to generate a new tab at all (and maybe same setting controls whether
+  short cuts work), on by default."): a window with one tab has no row and is, pixel for pixel, a
+  window without tabs (`FolderWindow::row_place` needs two tabs; the test
+  `one_tab_is_a_window_without_tabs`). The second tab's making puts the row in (the panes move
+  down by its height; the first tab keeps its items, selection and scroll place); closing back to
+  one takes it away. Ctrl+T, Ctrl+W (with one tab it closes the window), Ctrl+Tab, "Open in New
+  Tab" and a middle click on a folder work without a row (`FolderWindow::tabs_on`: the setting is
+  not `off`); a double-click on the row's empty part while it shows.
+- **The setting: where the row goes, on by default**: `folder_tabs = off | under_address |
+  over_files | under_menu | above_menu` (default `over_files` since 2026-11-25; `off` = no tabs
+  at all, no menu entries, no keys, no middle click: exactly as before the feature) and
+  `folder_tabs_close = end | tab` (default `tab`): the place and the X the owner chose for their
+  own use. A file with the two lines keeps what it says. Written only when changed; Bevel95
+  Settings' fifth page, Folders: the group "Tabs in folder windows" with the lists Tabs and Close
+  button (the second greyed while Tabs is None) and a hint: Bevel95's own, the row only with two
+  tabs or more, None takes Open in New Tab and the keys away. The default being on reaches only
+  the folder windows the platform starts: a core `FolderWindow` has no tabs until `set_tabs` gives
+  it the setting, so the golden pictures and the 924 comparisons (and the comparisons of
+  Windows' own right-click menus, made without the entry the platform adds) do not change. OK or
   Apply writes them and tells the open folder windows (`kit::tell_programs_look_changed`), which
   follow at once; switched off, a window keeps only its tab in front. The look and the tabs are
   read from one read of settings.txt (`look::load_with_tabs`); a file that is there but cannot

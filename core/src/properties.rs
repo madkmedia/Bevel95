@@ -1310,7 +1310,9 @@ const TABS_GROUP: Rect = Rect::new(24, 68, 296, 115);
 const TABS_LABEL_X: i32 = 36;
 const TABS_FIELD: Rect = Rect::new(124, 84, 184, 21);
 const TABS_CLOSE_FIELD: Rect = Rect::new(124, 111, 184, 21);
-const TABS_TEXT: [&str; 2] = ["Bevel95's own: the old Windows had no tabs", "in a folder window. None: as they were."];
+/// The hint under the lists (the owner, 2026-11-25: the row only with two tabs or more).
+const TABS_TEXT: [&str; 3] =
+    ["Bevel95's own (the old Windows had none). The row", "shows only when a window has two tabs or more.", "None takes Open in New Tab and the keys away."];
 
 /// Bevel95 Settings' Programs page (ours): one group down to where the General page ends, the
 /// three option rows as the General page has its looks, and under them the list of programs,
@@ -2866,6 +2868,19 @@ mod tests {
         assert!(settings.choose(Part::Look(Era::Win98)));
         let applied = Sheet::Bevel95.merge(settings.values, now);
         assert_eq!((applied.era, applied.options.show_clock), (Era::Win98, false));
+    }
+
+    /// The Folders page's hint fits its group in every look's letters (the owner's change of
+    /// 2026-11-25: the row only with two tabs or more).
+    #[test]
+    fn the_tabs_hint_fits_its_group() {
+        for face in [include_str!("../tests/fixtures/ms-sans-serif-11px.font"), include_str!("../tests/fixtures/tahoma-11px.font")] {
+            let font = Font::parse(face).unwrap();
+            for line in TABS_TEXT {
+                assert!(36 + font.measure(line) <= TABS_GROUP.right() - 8, "{line}: {}", font.measure(line));
+            }
+        }
+        assert!(TABS_CLOSE_FIELD.bottom() + 9 + 3 * 13 <= TABS_GROUP.bottom(), "three lines fit under the lists");
     }
 
     /// Brief 112: Windows XP is the Look group's fourth choice: it sets the XP bar style with the

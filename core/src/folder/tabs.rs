@@ -373,6 +373,68 @@ mod tests {
         assert!(l.tabs[0].is_some() && l.tabs[11].is_none());
     }
 
+    /// The owner's change of 2026-11-25: one tab shows no row, in every place and look: the window
+    /// is pixel for pixel the window without tabs; the keys still ask for a new tab (Ctrl+T) and
+    /// to close (Ctrl+W: with one tab the platform closes the window); a second tab brings the
+    /// row, and closing back to one takes it away; with `Off` there are no keys.
+    #[test]
+    fn one_tab_is_a_window_without_tabs() {
+        use crate::folder::{FolderWindow, Part};
+        use crate::kit::{Effect, Form, Key, Mods};
+        let (r, b) = (font(), Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap());
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let tab = |id: u64| Tab { id, title: format!("Folder {id}"), tip: format!("C:\\Folder {id}") };
+        let ctrl = Mods { ctrl: true, shift: false };
+        for era in [Era::Win95, Era::Win98, Era::Win2000] {
+            let theme = crate::theme::theme(era);
+            for place in [Place::UnderAddress, Place::OverFiles, Place::UnderMenu, Place::AboveMenu] {
+                for tree in [false, true] {
+                    let plain = || {
+                        let mut w = FolderWindow::new(era, "Work", icon.clone(), true, (560, 380));
+                        w.layout(&fonts);
+                        if tree {
+                            w.exploring = true;
+                            w.show_tree(true);
+                        }
+                        w
+                    };
+                    let draw = |w: &FolderWindow| {
+                        let mut fb = crate::fb::Framebuffer::new(560, 380, 0);
+                        w.paint(&mut fb, theme, &fonts);
+                        fb.pixels
+                    };
+                    let without = plain();
+                    let mut one = plain();
+                    one.set_tabs(place, Row { tabs: vec![tab(1)], front: 0, close_at: CloseAt::Tab, close_look: 0 });
+                    assert!(one.tab_layout().is_none(), "{era:?} {place:?}: no row with one tab");
+                    assert!(draw(&one) == draw(&without), "{era:?} {place:?} tree {tree}: one tab is the window without tabs");
+                    assert_eq!(one.key(Key::Other(0x54), ctrl), Some(vec![Effect::Activate(Part::TabNew)]), "Ctrl+T without a row");
+                    assert_eq!(one.key(Key::Other(0x57), ctrl), Some(vec![Effect::Activate(Part::TabClose)]));
+                    one.set_tabs(place, Row { tabs: vec![tab(1), tab(2)], front: 1, close_at: CloseAt::Tab, close_look: 0 });
+                    assert!(one.tab_layout().is_some(), "{era:?} {place:?}: the second tab brings the row");
+                    one.set_tabs(place, Row { tabs: vec![tab(2)], front: 0, close_at: CloseAt::Tab, close_look: 0 });
+                    assert!(draw(&one) == draw(&without), "{era:?} {place:?}: back to one tab, as before");
+                    one.set_tabs(Place::Off, Row::default());
+                    assert_ne!(one.key(Key::Other(0x54), ctrl), Some(vec![Effect::Activate(Part::TabNew)]), "Off: no keys");
+                }
+            }
+        }
+        // The row coming with the second tab leaves the first tab's view as it was: its items, its
+        // selection and its scroll place.
+        use crate::desktop_icons::{Item, Picture};
+        let mut w = FolderWindow::new(Era::Win98, "Work", icon.clone(), true, (560, 380));
+        w.layout(&fonts);
+        w.set_items((0..60).map(|i| Item { id: format!("C:\\W\\f{i}"), name: format!("f{i}"), picture: Picture::Own(None), shortcut: false, folder: false, type_name: String::new(), size: 1, modified: 0 }).collect());
+        w.set_tabs(Place::OverFiles, Row { tabs: vec![tab(1)], front: 0, close_at: CloseAt::Tab, close_look: 0 });
+        w.view.select_only(Some(7));
+        w.scroll = (0, 40);
+        let before = (w.view.items.len(), w.view.selection(), w.scroll);
+        w.set_tabs(Place::OverFiles, Row { tabs: vec![tab(1), tab(2)], front: 0, close_at: CloseAt::Tab, close_look: 0 });
+        assert!(w.tab_layout().is_some());
+        assert_eq!((w.view.items.len(), w.view.selection(), w.scroll), before);
+    }
+
     /// The folder window with a row: its parts are found by the tab's id, a press brings a tab
     /// forward at once, the X acts at its release, Ctrl+T/W/Tab and a double-click on the row's
     /// empty part ask for a new tab, closing, the next and the previous; with `Off` none of it.

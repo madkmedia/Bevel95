@@ -473,7 +473,9 @@ impl FolderWindow {
 
     /// What a middle click at (x, y) acts on.
     fn middle_target(&self, part: Option<Part>, x: i32, y: i32) -> Option<Part> {
-        self.row_place()?;
+        if !self.tabs_on() {
+            return None;
+        }
         match part? {
             Part::Tab(id) => Some(Part::TabCloseOf(id)),
             Part::List => {
@@ -537,7 +539,9 @@ impl FolderWindow {
     /// toolbar (95) are `UnderAddress`.
     fn row_place(&self) -> Option<tabs::Place> {
         use tabs::Place as P;
-        if self.tab_row.tabs.is_empty() {
+        // Only while the window has two tabs or more (the owner, 2026-11-25: "I don't think a tab
+        // should show if there's only one window"): one tab is a window without tabs.
+        if self.tab_row.tabs.len() < 2 {
             return None;
         }
         match self.tab_place {
@@ -546,6 +550,12 @@ impl FolderWindow {
             P::UnderMenu if !self.explorer() => Some(P::UnderAddress),
             p => Some(p),
         }
+    }
+
+    /// Whether tabs can be made (the setting is not `Off`), a row showing or not: Ctrl+T, Ctrl+W,
+    /// Ctrl+Tab and a middle click on a folder work then.
+    fn tabs_on(&self) -> bool {
+        self.tab_place != tabs::Place::Off
     }
 
     /// Rows the row takes above the menu bar, between the menu band and the toolbar band, and
@@ -2386,7 +2396,7 @@ impl Form for FolderWindow {
         }
         // Tabs (brief 110), only while the row shows: Ctrl+T a new tab, Ctrl+W closes the tab in
         // front, Ctrl+Tab and Ctrl+Shift+Tab round the row.
-        if self.row_place().is_some() && mods.ctrl {
+        if self.tabs_on() && mods.ctrl {
             let part = match key {
                 Key::Other(0x54) => Some(Part::TabNew),
                 Key::Other(0x57) => Some(Part::TabClose),

@@ -52,9 +52,10 @@ Website: https://madkmedia.github.io/Bevel95/
 - **Monitor Lines** (right-click the taskbar, then **Bevel95**): the faint dark lines of an old
   monitor over the screen the taskbar is on, Light, Medium or Strong, at sizes 2× and up. Off unless you choose it.
 - **Tabs in folder windows**, Bevel95's own (no old Windows had them): several folders in one
-  window, as a row of the look's own tabs in the place you choose (under the address bar, over
-  the file list, under or above the menu bar). Ctrl+T, Ctrl+W, Ctrl+Tab and **Open in New Tab**
-  in a folder's menu. Off unless you choose it (Bevel95 Settings > Folders).
+  window, as a row of the look's own tabs. Ctrl+T, Ctrl+W, Ctrl+Tab, a middle click on a folder
+  and **Open in New Tab** in a folder's menu. The row shows only while a window has two tabs or
+  more, so a window looks as always until then; Bevel95 Settings > Folders says where the row goes
+  (over the file list unless you choose another place), and **None** switches tabs off.
 - **Bevel95 Settings** (right-click the taskbar, then **Bevel95**) for everything that is
   Bevel95's own.
 
