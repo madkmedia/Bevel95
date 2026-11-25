@@ -2422,6 +2422,42 @@ fn folder_drop(hwnd: HWND, phase: bevel_winkit::dragdrop::Phase, over: &bevel_wi
             });
             return None;
         }
+        // Tabs (brief 110): a drag resting on a tab brings it to the front after the look's delay
+        // for opening a tree row, so the drop goes into its list; nothing is dropped ON the row
+        // in this version (the no-drop pointer).
+        let on_row = kit::with::<FolderHost, _>(|h| match h.form.hit(x, y) {
+            Some(Part::Tab(id)) => Some(Some(id)),
+            Some(Part::TabRow | Part::TabClose) => Some(None),
+            _ => None,
+        })
+        .flatten();
+        if let Some(tab) = on_row {
+            kit::update::<FolderHost>(|h| {
+                h.form.show_drop(DropAt::Nowhere);
+            });
+            if phase == Phase::Drop {
+                HOVER.with(|h| h.borrow_mut().remove(&(hwnd as isize)));
+                return None;
+            }
+            let era = kit::with::<FolderHost, _>(|h| h.form.era).unwrap_or(Era::Win98);
+            let now = std::time::Instant::now();
+            let key = tab.map(|t| format!("tab:{t}"));
+            let bring = HOVER.with(|hv| {
+                let mut hv = hv.borrow_mut();
+                let e = hv.entry(hwnd as isize).or_insert(Hover { row: key.clone(), since: now, at: (x, y), scrolled: now, unreadable: Vec::new() });
+                let moved = e.at != (x, y);
+                if e.row != key {
+                    e.row = key.clone();
+                    e.since = now;
+                }
+                e.at = (x, y);
+                key.is_some() && drop_row_opens(era, moved, now.duration_since(e.since), false)
+            });
+            if bring && let Some(t) = tab {
+                switch_tab(hwnd, t);
+            }
+            return None;
+        }
         // A drag from this very window: the icons it carries.
         let own = OUT.with(|o| o.borrow().as_ref().filter(|o| o.hwnd == hwnd).map(|o| (o.items.clone(), o.from)));
         let mut dragged = over.files.clone();
