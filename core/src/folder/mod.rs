@@ -152,6 +152,11 @@ pub enum Part {
     Tab(u64),
     TabClose,
     TabRow,
+    /// A new tab (Ctrl+T, a double-click on the row's empty part); the next and the previous tab
+    /// (Ctrl+Tab, Ctrl+Shift+Tab).
+    TabNew,
+    TabNext,
+    TabPrev,
 }
 
 /// Where a drag of files over a folder window would drop (`FolderWindow::drop_at`).
@@ -387,6 +392,32 @@ impl FolderWindow {
 
     pub fn tab_place(&self) -> tabs::Place {
         self.tab_place
+    }
+
+    /// Another tab comes to the front of this window (brief 110): what belongs to the window and
+    /// not to the tab is taken from the window as it is (`other`, the tab going to the back): its
+    /// size and place on the screen, whether it is maximized and active, the tree of all folders
+    /// (one per window), the status bar, the row. The view, the place, its history and the like
+    /// stay this tab's own.
+    pub fn take_window_from(&mut self, other: &FolderWindow) {
+        self.size = other.size;
+        self.maximized = other.maximized;
+        self.active = other.active;
+        self.view.active = other.view.active;
+        self.screen = other.screen;
+        self.font = other.font.clone();
+        self.menu_base = other.menu_base.clone();
+        self.tree = other.tree.clone();
+        self.tree_shown = other.tree_shown;
+        self.tree_width = other.tree_width;
+        self.exploring = other.exploring;
+        self.status_bar = other.status_bar;
+        self.bar.show_keys = other.bar.show_keys;
+        self.tab_place = other.tab_place;
+        self.tab_row = other.tab_row.clone();
+        self.pressed = None;
+        self.chosen = None;
+        self.fit();
     }
 
     /// The row's place when a row shows; `OverFiles` without the tree and `UnderMenu` without a
@@ -1798,6 +1829,10 @@ impl FolderWindow {
         self.bar.hot_title = None;
         self.bar.hot_tool = None;
         self.bar.hot_go = false;
+        // The tabs' small X rises under the pointer, as the tree pane's does (brief 110).
+        let x_before = self.tab_row.close_look;
+        self.tab_row.close_look = u8::from(part == Some(Part::TabClose));
+        let x_changed = x_before != self.tab_row.close_look;
         match part {
             Some(Part::Menu(i)) => self.bar.hot_title = Some(i),
             Some(Part::Tool(t)) if self.enabled(Part::Tool(t)) => self.bar.hot_tool = Some((t, false)),
@@ -1810,7 +1845,7 @@ impl FolderWindow {
             }
             _ => {}
         }
-        before != (self.bar.hot_title, self.bar.hot_tool, self.bar.hot_go, self.list.as_ref().and_then(|l| l.1))
+        x_changed || before != (self.bar.hot_title, self.bar.hot_tool, self.bar.hot_go, self.list.as_ref().and_then(|l| l.1))
     }
 
     /// Starts renaming icon `i` (F2, Rename). False if it cannot be renamed.
@@ -2210,6 +2245,20 @@ impl Form for FolderWindow {
             // (brief 95); every other key is swallowed while renaming, as before.
             return Some(self.view.rename_edit_key(key, mods).unwrap_or_default());
         }
+        // Tabs (brief 110), only while the row shows: Ctrl+T a new tab, Ctrl+W closes the tab in
+        // front, Ctrl+Tab and Ctrl+Shift+Tab round the row.
+        if self.row_place().is_some() && mods.ctrl {
+            let part = match key {
+                Key::Other(0x54) => Some(Part::TabNew),
+                Key::Other(0x57) => Some(Part::TabClose),
+                Key::Tab if mods.shift => Some(Part::TabPrev),
+                Key::Tab => Some(Part::TabNext),
+                _ => None,
+            };
+            if let Some(p) = part {
+                return Some(vec![Effect::Activate(p)]);
+            }
+        }
         let command = |c: Command| Some(vec![Effect::Activate(Part::Command(c))]);
         if let Some(effects) = self.list_key(key) {
             return Some(effects);
@@ -2534,6 +2583,8 @@ impl Form for FolderWindow {
     fn double_click(&mut self, x: i32, y: i32) -> Option<Vec<Effect<Part>>> {
         let font = self.font()?;
         match self.hit(x, y) {
+            // A double-click on the row's empty part: a new tab (brief 110).
+            Some(Part::TabRow) if self.view.renaming().is_none() => Some(vec![Effect::Activate(Part::TabNew)]),
             // A word selected; an address without spaces is one word (survey part 3).
             Some(Part::Address) if self.field.focused => {
                 let (tx, _) = self.chrome.address_text_at();

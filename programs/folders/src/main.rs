@@ -33,7 +33,7 @@ use bevel_core::disk_box::{DiskBox, Part as DiskPart};
 use bevel_core::folder::pane::{self, NodeKind, NodeSpec};
 use bevel_core::folder::options::{Choice, FolderOptions, Part as OptionsPart};
 use bevel_core::folder::web::{Guard, Kind as WebKind, Link, WebFonts};
-use bevel_core::folder::{FolderWindow, History, ListRow, Part, Place, Space, Step, Tool, address, status, tree_art};
+use bevel_core::folder::{FolderWindow, History, ListRow, Part, Place, Space, Step, Tool, address, status, tabs, tree_art};
 use bevel_core::kit::Form;
 use bevel_core::paint::{MenuEntry, MenuStyle};
 use bevel_core::text::escape_access_keys;
@@ -137,6 +137,11 @@ const TEST_SLOW_READING: usize = 255;
 /// of C: on 98), as a drag dropped in the same window moves it (`move_ids`, then kept as the look
 /// keeps it). Only on a test item in a test folder's window.
 const TEST_MOVE: usize = 256;
+/// Brief 110: the selected test folder opened in a new tab; the next tab to the front; the tab in
+/// front closed. Only in a test folder's window (the new tab: on a test folder).
+const TEST_NEW_TAB: usize = 257;
+const TEST_TAB_NEXT: usize = 258;
+const TEST_TAB_CLOSE: usize = 259;
 const TEST_MOVE_BY: (i32, i32) = (171, 173);
 const SLOW_READING_MS: u64 = 1500;
 static SLOW_READING: AtomicBool = AtomicBool::new(false);
@@ -331,6 +336,38 @@ struct FolderHost {
     /// stays open (Windows 98 with its web view keeps My Computer's so: brief 103), by folder key,
     /// with the view they were made in (brief 105, 1).
     session: HashMap<String, bevel_core::folder::saved::MovedRecord>,
+    /// Tabs (brief 110): the tab in front (`tab`, an id that never changes), the row's order by
+    /// id, and the tabs behind with all they keep (`TabSlot`). One tab: `back` is empty.
+    tab: u64,
+    order: Vec<u64>,
+    back: Vec<TabSlot>,
+}
+
+/// A tab behind the one in front: its own view and everything the window keeps per place. It has
+/// no reader: the reader stops when a tab goes behind, and a new one (a new window id) reads the
+/// place again when it comes to the front, so a late reading can only reach the tab that asked.
+struct TabSlot {
+    tab: u64,
+    form: FolderWindow,
+    shows: Shows,
+    select: Option<String>,
+    history: History,
+    came: Option<Step>,
+    entries: Vec<address::Entry>,
+    settle: Option<std::time::Instant>,
+    reread: Vec<(std::time::Instant, String)>,
+    asked: Option<std::time::Instant>,
+    facts: Facts,
+    session: HashMap<String, bevel_core::folder::saved::MovedRecord>,
+}
+
+thread_local! {
+    /// Tabs in folder windows (brief 110): where the row goes and where its X goes (settings.txt,
+    /// read at the start and at every change of the look).
+    static TAB_SETTINGS: Cell<(tabs::Place, tabs::CloseAt)> = const { Cell::new((tabs::Place::Off, tabs::CloseAt::End)) };
+    static NEXT_TAB: Cell<u64> = const { Cell::new(1) };
+    /// A new tab is being given its place: the window goes there itself, also in 95.
+    static IN_NEW_TAB: Cell<bool> = const { Cell::new(false) };
 }
 
 thread_local! {
@@ -1160,6 +1197,7 @@ fn show_new_place(h: &mut FolderHost, era: Era) {
     h.form.show_place(&title, art::small(era, small), files, &address, art::listed(era, small));
     place_known(h, era, &title);
     apply_web(h, era);
+    show_row(h);
 }
 
 /// More is known of the place the window shows (its late reading, `apply_facts`): only what was
@@ -1172,6 +1210,7 @@ fn show_what_is_known(h: &mut FolderHost, era: Era) {
     let address = bevel_core::folder::address::wording(era, &h.shows.place(), &title);
     h.form.update_place(&title, art::small(era, small), &address, art::listed(era, small));
     place_known(h, era, &title);
+    show_row(h);
     if era != Era::Win95 {
         let (kind, art, space) = web_place(era, &h.shows, &h.facts);
         h.form.set_web_known(kind, art, space);
@@ -1725,10 +1764,15 @@ fn create_window(shows: Shows, exploring: bool, facts: Facts) -> Option<HWND> {
         asked: Some(std::time::Instant::now()),
         facts,
         session: HashMap::new(),
+        tab: NEXT_TAB.with(|n| n.replace(n.get() + 1)),
+        order: Vec::new(),
+        back: Vec::new(),
     };
+    host.order.push(host.tab);
     if era != Era::Win95 || with_tree {
         show_new_place(&mut host, era);
     }
+    show_row(&mut host);
     if with_tree {
         let chain = tree_chain(era, &shows, false, &host.facts);
         host.form.tree.follow(chain, 20);
@@ -1806,7 +1850,8 @@ fn navigate(hwnd: HWND, to: Option<Shows>, go: Go) {
     }
     // Windows 95 opened a window per folder; its Explorer went to the folder in the same window.
     let with_tree = kit::with::<FolderHost, _>(|h| h.form.tree_shown || h.form.exploring).unwrap_or(false);
-    if era == Era::Win95 && !with_tree {
+    // A new tab goes to its place in its own window, in 95 too (brief 110).
+    if era == Era::Win95 && !with_tree && !IN_NEW_TAB.with(Cell::get) {
         if let Some(s) = to {
             open(s);
         }
@@ -3025,8 +3070,17 @@ impl Hosted for FolderHost {
             Part::TitleMenu => menu::track_window::<FolderHost>(Part::Icon, |f| f.era, true, false),
             Part::KeyMenu => menu::track_window::<FolderHost>(Part::Icon, |f| f.era, false, true),
             Part::Menu(first) => menu_bar(hwnd, first),
-            // Tabs (brief 110): no row shows until the folder windows take tabs (step 2).
-            Part::Tab(_) | Part::TabClose | Part::TabRow => {}
+            // Tabs (brief 110).
+            Part::Tab(tab) => switch_tab(hwnd, tab),
+            Part::TabClose => {
+                if let Some(tab) = kit::with::<FolderHost, _>(|h| h.tab) {
+                    close_tab(hwnd, tab);
+                }
+            }
+            Part::TabRow => {}
+            Part::TabNew => new_tab(hwnd, Shows::MyComputer),
+            Part::TabNext => step_tab(hwnd, true),
+            Part::TabPrev => step_tab(hwnd, false),
             Part::Open => open_selected(hwnd),
             Part::ItemMenu => item_menu(hwnd),
             Part::BackgroundMenu => background_menu(hwnd),
@@ -3159,6 +3213,7 @@ impl Hosted for FolderHost {
     fn look_changed() {
         let (era, look) = look::load();
         ERA_LOOK.with(|l| *l.borrow_mut() = Some((era, look.clone())));
+        TAB_SETTINGS.with(|t| t.set(look::folder_tabs()));
         // A record of the new look that its window could not use (2000, another view) went.
         let mut dropped_record = false;
         for hwnd in kit::windows::<FolderHost>() {
@@ -3202,6 +3257,25 @@ impl Hosted for FolderHost {
                         start_reader(h.id, h.shows.clone(), era, h.stop.clone(), HUB.with(Cell::get), StartedBy::LookChange);
                     }
                     h.form.set_font(&look.regular);
+                    // Tabs (brief 110): switched off, the tabs behind go (the one in front stays
+                    // the window); the tabs behind take the new look too, the old look's
+                    // arrangement forgotten (each look stays pure); the row as now set.
+                    if TAB_SETTINGS.with(Cell::get).0 == tabs::Place::Off {
+                        h.back.clear();
+                        h.order = vec![h.tab];
+                    }
+                    for s in &mut h.back {
+                        if s.form.era != era {
+                            s.form.set_era(era);
+                            s.form.view.forget_moved();
+                            let (title, small) = title_from(era, &s.shows, &s.facts);
+                            s.form.title = title;
+                            s.form.icon = art::small(era, small);
+                            s.session.clear();
+                        }
+                        s.form.set_font(&look.regular);
+                    }
+                    show_row(h);
                     if icon.is_some() {
                         dropped_record |= load_places(h, Relaid::Reopened);
                     }
@@ -3563,6 +3637,216 @@ fn run(hwnd: HWND, command: Command, by_keyboard: bool) {
             }
             _ => {}
         },
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tabs in folder windows (Bevel95's own, brief 110).
+
+/// The row as the window shows it now (`TAB_SETTINGS`): each tab's name (the folder's own, as the
+/// title bar shows it) and whole path (its tooltip), the one in front; `Off`: no row.
+fn show_row(h: &mut FolderHost) {
+    let (place, close_at) = TAB_SETTINGS.with(Cell::get);
+    if place == tabs::Place::Off {
+        if h.form.tab_place() != tabs::Place::Off || !h.form.tab_row.tabs.is_empty() {
+            h.form.set_tabs(tabs::Place::Off, tabs::Row::default());
+        }
+        return;
+    }
+    let tip = |s: &Shows, name: &str| match s {
+        Shows::Folder(p) => p.to_string_lossy().into_owned(),
+        _ => name.to_string(),
+    };
+    let mut row = tabs::Row { close_at, ..tabs::Row::default() };
+    for (k, &id) in h.order.iter().enumerate() {
+        let (title, tip) = if id == h.tab {
+            row.front = k;
+            (h.form.place_name.clone(), tip(&h.shows, &h.form.place_name))
+        } else if let Some(s) = h.back.iter().find(|s| s.tab == id) {
+            (s.form.place_name.clone(), tip(&s.shows, &s.form.place_name))
+        } else {
+            continue;
+        };
+        row.tabs.push(tabs::Tab { id, title, tip });
+    }
+    h.form.set_tabs(place, row);
+}
+
+/// The tab in front goes behind as it is (its reader stops; its view, place and history stay
+/// in its slot).
+fn to_back(h: &mut FolderHost, form: FolderWindow) -> TabSlot {
+    h.stop.store(true, Ordering::SeqCst);
+    h.stop = Arc::new(AtomicBool::new(false));
+    if let Ok(mut g) = GENERATIONS.lock()
+        && let Some(g) = g.as_mut()
+    {
+        g.forget(h.id);
+    }
+    remember_view(h);
+    TabSlot {
+        tab: h.tab,
+        form: std::mem::replace(&mut h.form, form),
+        shows: h.shows.clone(),
+        select: h.select.take(),
+        history: std::mem::replace(&mut h.history, History::new(h.shows.place())),
+        came: h.came.take(),
+        entries: std::mem::take(&mut h.entries),
+        settle: h.settle.take(),
+        reread: std::mem::take(&mut h.reread),
+        asked: h.asked.take(),
+        facts: h.facts.clone(),
+        session: std::mem::take(&mut h.session),
+    }
+}
+
+/// A new tab at the row's right end showing `shows`, in front (Ctrl+T, a double-click on the
+/// row: My Computer; Open in New Tab: a folder). At most `tabs::MOST`: a 33rd is refused with
+/// the look's default sound.
+fn new_tab(hwnd: HWND, shows: Shows) {
+    let made = kit::with::<FolderHost, _>(|h| {
+        if TAB_SETTINGS.with(Cell::get).0 == tabs::Place::Off || h.order.len() >= tabs::MOST {
+            return false;
+        }
+        // The window as it is goes behind; the new tab starts as its copy and goes to its place.
+        let copy = h.form.clone();
+        let slot = to_back(h, copy);
+        h.back.push(slot);
+        h.tab = NEXT_TAB.with(|n| n.replace(n.get() + 1));
+        h.order.push(h.tab);
+        true
+    })
+    .unwrap_or(false);
+    if !made {
+        // SAFETY: a plain call.
+        unsafe { windows_sys::Win32::System::Diagnostics::Debug::MessageBeep(0) };
+        return;
+    }
+    let same = kit::with::<FolderHost, _>(|h| h.shows == shows).unwrap_or(false);
+    if same {
+        // The same place: a reader of its own (the one copied was stopped).
+        restart_reader(hwnd);
+    } else {
+        IN_NEW_TAB.with(|t| t.set(true));
+        navigate(hwnd, Some(shows), Go::New);
+        IN_NEW_TAB.with(|t| t.set(false));
+    }
+    kit::update::<FolderHost>(|h| {
+        // Its own history begins at its place.
+        h.history = History::new(h.shows.place());
+        h.came = None;
+        show_row(h);
+    });
+}
+
+/// A new window id and a reader for the place the tab in front shows (it came to the front),
+/// the title bar, the task button's picture and the tree following it.
+fn restart_reader(hwnd: HWND) {
+    let Some((era, _)) = the_look() else { return };
+    let started = kit::with::<FolderHost, _>(|h| {
+        let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
+        h.id = id;
+        h.stop = Arc::new(AtomicBool::new(false));
+        h.asked = Some(std::time::Instant::now());
+        if h.form.tree_shown {
+            let chain = tree_chain(era, &h.shows, false, &h.facts);
+            let page = h.form.tree_page();
+            h.form.tree.follow(chain, page);
+            h.form.tree_selection_shown();
+        }
+        show_row(h);
+        (id, h.shows.clone(), h.stop.clone(), h.form.title.clone(), h.form.icon.clone(), h.form.exploring)
+    });
+    let Some((id, shows, stop, title, icon, exploring)) = started else { return };
+    let key = window_key(&shows, exploring);
+    WINDOWS.with(|w| {
+        if let Some(entry) = w.borrow_mut().iter_mut().find(|(_, h, _)| *h == hwnd) {
+            *entry = (id, hwnd, key);
+        }
+    });
+    let text = wide(&title);
+    // SAFETY: our own window and a null-terminated title (the task button shows it).
+    unsafe { SetWindowTextW(hwnd, text.as_ptr()) };
+    kit::set_program_icons::<FolderHost>(&icon, &icon);
+    kit::update::<FolderHost>(|_| {});
+    start_reader(id, shows, era, stop, HUB.with(Cell::get), StartedBy::LookChange);
+}
+
+/// Tab `tab` comes to the front (a press on it, Ctrl+Tab): found by its id, nothing if it is
+/// gone or in front already.
+fn switch_tab(hwnd: HWND, tab: u64) {
+    let switched = kit::with::<FolderHost, _>(|h| {
+        if tab == h.tab {
+            return false;
+        }
+        let Some(k) = h.back.iter().position(|s| s.tab == tab) else { return false };
+        let mut slot = h.back.remove(k);
+        slot.form.take_window_from(&h.form);
+        let out = to_back(h, slot.form);
+        h.back.push(out);
+        h.tab = slot.tab;
+        h.shows = slot.shows;
+        h.select = slot.select;
+        h.history = slot.history;
+        h.came = slot.came;
+        h.entries = slot.entries;
+        h.settle = slot.settle;
+        h.reread = slot.reread;
+        h.asked = slot.asked;
+        h.facts = slot.facts;
+        h.session = slot.session;
+        true
+    })
+    .unwrap_or(false);
+    if switched {
+        restart_reader(hwnd);
+    }
+}
+
+/// The next (or the previous) tab round the row comes to the front.
+fn step_tab(hwnd: HWND, forward: bool) {
+    let to = kit::with::<FolderHost, _>(|h| {
+        let n = h.order.len();
+        let k = h.order.iter().position(|&t| t == h.tab)?;
+        (n > 1).then(|| h.order[if forward { (k + 1) % n } else { (k + n - 1) % n }])
+    })
+    .flatten();
+    if let Some(t) = to {
+        switch_tab(hwnd, t);
+    }
+}
+
+/// Closes tab `tab` (the small X, Ctrl+W: the one in front). The last tab closes the window. A
+/// tab behind has no reader; its view goes with it. A file job it started outlives it as it
+/// outlives a window (`winkit::jobs`); a question it asked acts on the items by their ids.
+fn close_tab(hwnd: HWND, tab: u64) {
+    let state = kit::with::<FolderHost, _>(|h| {
+        if h.order.len() <= 1 {
+            return Some(None);
+        }
+        let k = h.order.iter().position(|&t| t == tab)?;
+        if tab != h.tab {
+            h.order.remove(k);
+            h.back.retain(|s| s.tab != tab);
+            show_row(h);
+            return Some(Some(None));
+        }
+        // The one in front: its right-hand neighbour comes forward (the left one at the end).
+        let next = if k + 1 < h.order.len() { h.order[k + 1] } else { h.order[k - 1] };
+        Some(Some(Some(next)))
+    })
+    .flatten();
+    match state {
+        Some(None) => kit::close::<FolderHost>(),
+        Some(Some(Some(next))) => {
+            switch_tab(hwnd, next);
+            kit::update::<FolderHost>(|h| {
+                h.order.retain(|&t| t != tab);
+                h.back.retain(|s| s.tab != tab);
+                show_row(h);
+            });
+        }
+        Some(Some(None)) => kit::update::<FolderHost>(|_| {}),
+        None => {}
     }
 }
 
@@ -4784,6 +5068,21 @@ fn test_command(window: HWND, l: u64) {
                 SLOW_READING.store(true, Ordering::SeqCst);
                 log("folders: a test made test folders' readings slow");
             }
+            // Tabs (brief 110): the selected test folder in a new tab; the next tab; the tab in
+            // front closed (all in a test folder's window only: `test_allowed`).
+            TEST_NEW_TAB => {
+                let into = kit::with::<FolderHost, _>(|h| {
+                    let v = &h.form.view;
+                    v.selection().first().and_then(|&i| v.items.get(i)).filter(|i| i.folder && i.name.starts_with("Bevel95 test")).map(|i| PathBuf::from(&i.id))
+                })
+                .flatten();
+                match into {
+                    Some(p) => new_tab(window, Shows::Folder(p)),
+                    None => log("folders: no test folder selected for a new tab"),
+                }
+            }
+            TEST_TAB_NEXT => step_tab(window, true),
+            TEST_TAB_CLOSE => FolderHost::activate(Part::TabClose),
             TEST_MOVE => {
                 let before = saved_text();
                 kit::update::<FolderHost>(|h| {
@@ -5052,6 +5351,7 @@ fn main() {
     // Windows' drag and drop for files between the windows and other programs.
     bevel_winkit::dragdrop::init();
     ERA_LOOK.with(|l| *l.borrow_mut() = Some((era, look)));
+    TAB_SETTINGS.with(|t| t.set(look::folder_tabs()));
     file_ops::set_hooks("folders", || {});
     // Unreadable: logged, kept as it is and not saved over (`state_file`).
     let saved = bevel_winkit::state_file::load(&saved_path()).text().map(|t| Saved::parse(&t)).unwrap_or_default();
@@ -5494,6 +5794,9 @@ mod tests {
                 asked: None,
                 facts: Facts::default(),
                 session: std::collections::HashMap::new(),
+                tab: 1,
+                order: vec![1],
+                back: Vec::new(),
             };
             let items: Vec<Item> = (0..30)
                 .map(|i| Item {

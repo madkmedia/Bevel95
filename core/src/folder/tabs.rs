@@ -373,6 +373,50 @@ mod tests {
         assert!(l.tabs[0].is_some() && l.tabs[11].is_none());
     }
 
+    /// The folder window with a row: its parts are found by the tab's id, a press brings a tab
+    /// forward at once, the X acts at its release, Ctrl+T/W/Tab and a double-click on the row's
+    /// empty part ask for a new tab, closing, the next and the previous; with `Off` none of it.
+    #[test]
+    fn the_window_with_a_row() {
+        use crate::folder::{FolderWindow, Part};
+        use crate::kit::{Effect, Form, Key, Mods, Press};
+        let (r, b) = (font(), Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap());
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        for era in [Era::Win95, Era::Win98, Era::Win2000] {
+            for place in [Place::UnderAddress, Place::OverFiles, Place::UnderMenu, Place::AboveMenu] {
+                let mut w = FolderWindow::new(era, "Work", icon.clone(), true, (560, 380));
+                w.layout(&fonts);
+                let row = Row { tabs: vec![Tab { id: 7, title: "Work".into(), tip: "C:\\Work".into() }, Tab { id: 9, title: "Maps".into(), tip: "C:\\Maps".into() }], front: 0, close_at: CloseAt::End, close_look: 0 };
+                w.set_tabs(place, row);
+                let l = w.tab_layout().expect("a row");
+                let maps = l.tabs[1].unwrap();
+                assert_eq!(w.hit(maps.x + 4, maps.y + 8), Some(Part::Tab(9)), "{era:?} {place:?}");
+                assert_eq!(w.press(Some(Part::Tab(9)), maps.x + 4, maps.y + 8), Press::Act(Part::Tab(9)));
+                let x = l.close.unwrap();
+                assert_eq!(w.hit(x.x + 3, x.y + 3), Some(Part::TabClose));
+                assert_eq!(w.press(Some(Part::TabClose), x.x + 3, x.y + 3), Press::Hold(Part::TabClose));
+                let ctrl = Mods { ctrl: true, shift: false };
+                assert_eq!(w.key(Key::Other(0x54), ctrl), Some(vec![Effect::Activate(Part::TabNew)]));
+                assert_eq!(w.key(Key::Other(0x57), ctrl), Some(vec![Effect::Activate(Part::TabClose)]));
+                assert_eq!(w.key(Key::Tab, ctrl), Some(vec![Effect::Activate(Part::TabNext)]));
+                assert_eq!(w.key(Key::Tab, Mods { ctrl: true, shift: true }), Some(vec![Effect::Activate(Part::TabPrev)]));
+                let empty = (l.strip.right() - 40, l.strip.y + 6);
+                assert_eq!(w.hit(empty.0, empty.1), Some(Part::TabRow));
+                assert_eq!(w.double_click(empty.0, empty.1), Some(vec![Effect::Activate(Part::TabNew)]));
+                // Another tab's window takes the window's own state (its size, the row).
+                let mut other = FolderWindow::new(era, "Maps", icon.clone(), true, (300, 200));
+                other.take_window_from(&w);
+                assert_eq!(other.size_now(), (560, 380));
+                assert_eq!(other.tab_place(), place);
+                // Off: no row, no keys.
+                w.set_tabs(Place::Off, Row::default());
+                assert!(w.tab_layout().is_none());
+                assert_ne!(w.key(Key::Other(0x54), ctrl), Some(vec![Effect::Activate(Part::TabNew)]));
+            }
+        }
+    }
+
     #[test]
     fn the_x_on_the_tab_in_front() {
         let f = font();
