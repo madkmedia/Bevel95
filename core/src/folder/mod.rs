@@ -451,6 +451,7 @@ impl FolderWindow {
     }
 
     pub fn take_window_from(&mut self, other: &FolderWindow) {
+        let tree_was = self.tree_shown;
         self.size = other.size;
         self.maximized = other.maximized;
         self.active = other.active;
@@ -466,8 +467,16 @@ impl FolderWindow {
         self.bar.show_keys = other.bar.show_keys;
         self.tab_place = other.tab_place;
         self.tab_row = other.tab_row.clone();
+        // The tree shown or hidden in another tab (the second review's N4): 2000's Folders
+        // button as the tree is, and the icons in rows for the new width, as `show_tree` does.
+        self.bar.checked = if self.tree_shown && self.era == Era::Win2000 { vec![Tool::Folders] } else { Vec::new() };
+        self.tree_focus &= self.tree_shown;
         self.forget_passing();
         self.fit();
+        if tree_was != self.tree_shown && self.font.is_some() {
+            self.view.repack();
+            self.fit();
+        }
     }
 
     /// The row's place when a row shows; `OverFiles` without the tree and `UnderMenu` without a
@@ -900,6 +909,19 @@ impl FolderWindow {
     pub fn set_nav(&mut self, nav: menus::Nav) {
         self.nav = nav;
         self.update_grayed();
+    }
+
+    /// Back and Forward as a history now is, the rest of `nav` kept (a new tab's own history
+    /// begins at its place: Back is grayed from the start; the second review's Q2).
+    pub fn set_history_ends(&mut self, back: bool, forward: bool) {
+        self.nav.back = back;
+        self.nav.forward = forward;
+        self.update_grayed();
+    }
+
+    /// Whether Back and Forward can go (as the toolbar and the menus show them).
+    pub fn history_ends(&self) -> (bool, bool) {
+        (self.nav.back, self.nav.forward)
     }
 
     fn update_grayed(&mut self) {

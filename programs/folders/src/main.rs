@@ -354,8 +354,6 @@ struct TabSlot {
     history: History,
     came: Option<Step>,
     entries: Vec<address::Entry>,
-    settle: Option<std::time::Instant>,
-    reread: Vec<(std::time::Instant, String)>,
     asked: Option<std::time::Instant>,
     facts: Facts,
     session: HashMap<String, bevel_core::folder::saved::MovedRecord>,
@@ -1684,6 +1682,10 @@ fn apply_facts(hwnd: HWND, id: usize, facts: Facts) {
             h.form.icon = art::small(era, small);
             if era != Era::Win95 || h.form.tree_shown {
                 show_what_is_known(h, era);
+            } else {
+                // 95's plain windows: the tab's name follows the title now too (the second
+                // review, finding 5's rest: "C:\" stayed after the title became "(C:)").
+                show_row(h);
             }
             if before > 0 {
                 log(&format!("folders: a place's reading came after its items: {before} items shown, {} after it", h.form.view.items.len()));
@@ -2624,11 +2626,16 @@ fn right_drop_menu(hwnd: HWND, era: Era, default: bevel_core::drag::Effect, offe
 struct DiskBoxHost {
     form: DiskBox,
     owner: HWND,
+    /// The tab that asked (the second review's N2: the answer acts only on it).
+    tab: u64,
     node: Option<String>,
 }
 
+/// A drive box's answer: (the window, its tab that asked, a tree row's id, Retry).
+type DiskAnswer = (HWND, u64, Option<String>, bool);
+
 thread_local! {
-    static DISK_ANSWER: RefCell<Option<(HWND, Option<String>, bool)>> = const { RefCell::new(None) };
+    static DISK_ANSWER: RefCell<Option<DiskAnswer>> = const { RefCell::new(None) };
 }
 
 impl Hosted for DiskBoxHost {
@@ -2642,11 +2649,15 @@ impl Hosted for DiskBoxHost {
     fn activate(part: DiskPart) {
         if part == DiskPart::Ok {
             // The address bar's message: the typed address stays, selected, with the keyboard.
-            let owner = kit::with::<DiskBoxHost, _>(|h| h.owner);
+            // Only in the tab that typed it, if it is still in front (the second review's N2).
+            let owner = kit::with::<DiskBoxHost, _>(|h| (h.owner, h.tab));
             kit::close::<DiskBoxHost>();
-            if let Some(owner) = owner.filter(|o| kit::windows::<FolderHost>().contains(o)) {
+            if let Some((owner, tab)) = owner.filter(|(o, _)| kit::windows::<FolderHost>().contains(o)) {
                 kit::scope::<FolderHost, _>(owner, || {
                     kit::update::<FolderHost>(|h| {
+                        if h.tab != tab {
+                            return;
+                        }
                         h.form.field.focus();
                         h.form.field.key(address::EditKey::SelectAll, false);
                     })
@@ -2655,8 +2666,8 @@ impl Hosted for DiskBoxHost {
             return;
         }
         let retry = part == DiskPart::Retry;
-        if let Some((owner, node)) = kit::with::<DiskBoxHost, _>(|h| (h.owner, h.node.clone())) {
-            DISK_ANSWER.with(|a| *a.borrow_mut() = Some((owner, node, retry)));
+        if let Some((owner, tab, node)) = kit::with::<DiskBoxHost, _>(|h| (h.owner, h.tab, h.node.clone())) {
+            DISK_ANSWER.with(|a| *a.borrow_mut() = Some((owner, tab, node, retry)));
         }
         kit::close::<DiskBoxHost>();
         // Carried out once the box is gone (from the program's own message).
@@ -2704,7 +2715,8 @@ fn ask_drive(owner: HWND, letter: char, node: Option<String>) {
         return;
     }
     let Some((era, look)) = the_look() else { return };
-    let title = kit::scope::<FolderHost, _>(owner, || kit::with::<FolderHost, _>(|h| h.form.title.clone())).unwrap_or_default();
+    // The tab in front asked: the reading that found no disc was its reader's.
+    let (title, tab) = kit::scope::<FolderHost, _>(owner, || kit::with::<FolderHost, _>(|h| (h.form.title.clone(), h.tab))).unwrap_or_default();
     let kind = read_my_computer(era, false).items.iter().find_map(|i| match i.picture {
         Picture::Art(Art::Drive(k)) if i.id.starts_with(letter) => Some(k),
         _ => None,
@@ -2713,7 +2725,7 @@ fn ask_drive(owner: HWND, letter: char, node: Option<String>) {
     let form = DiskBox::new(era, &title, letter, picture, true, |l| look.regular.measure(l));
     let screen = work_area(Some(owner));
     let scale = look.scale;
-    let opened = kit::open_as(Kind::Owned { owner }, DiskBoxHost { form, owner, node }, look, |w, h| {
+    let opened = kit::open_as(Kind::Owned { owner }, DiskBoxHost { form, owner, tab, node }, look, |w, h| {
         let (x, y) = bevel_core::rename_warning::place((rect_w(&screen), rect_h(&screen)), (w, h));
         (screen.left + x + (scale.len(7) - 7) / 2, screen.top + y + (scale.len(17) - 17) / 2)
     });
@@ -2782,13 +2794,15 @@ fn check_front() {
 
 /// What was typed into a window's address bar and could not be opened (from the thread that
 /// tried), shown as the look's message on the program's thread.
-static ADDRESS_FAILED: std::sync::Mutex<Vec<(isize, String)>> = std::sync::Mutex::new(Vec::new());
+static ADDRESS_FAILED: std::sync::Mutex<Vec<AddressFailed>> = std::sync::Mutex::new(Vec::new());
+/// (the window, its tab that typed it, what was typed).
+type AddressFailed = (isize, u64, String);
 
 /// The look's message for an address that is no folder and cannot be opened (98 and 2000
 /// showed it; the typed text stays in the field, selected, once it is answered).
 fn address_failed() {
     let failed = ADDRESS_FAILED.lock().map(|mut f| std::mem::take(&mut *f)).unwrap_or_default();
-    for (owner, typed) in failed {
+    for (owner, tab, typed) in failed {
         let owner = owner as HWND;
         if !kit::windows::<DiskBoxHost>().is_empty() || !kit::windows::<FolderHost>().contains(&owner) {
             continue;
@@ -2797,7 +2811,7 @@ fn address_failed() {
         let scale = look.scale;
         let screen = work_area(Some(owner));
         let form = DiskBox::address(era, &typed, scale.old_fit(rect_w(&screen)), &look.regular);
-        let opened = kit::open_as(Kind::Owned { owner }, DiskBoxHost { form, owner, node: None }, look, |w, h| {
+        let opened = kit::open_as(Kind::Owned { owner }, DiskBoxHost { form, owner, tab, node: None }, look, |w, h| {
             let (x, y) = bevel_core::rename_warning::place((rect_w(&screen), rect_h(&screen)), (w, h));
             (screen.left + x + (scale.len(7) - 7) / 2, screen.top + y + (scale.len(17) - 17) / 2)
         });
@@ -2807,26 +2821,58 @@ fn address_failed() {
     }
 }
 
-/// The drive box's answer: Retry reads again, Cancel goes back to where the window was.
+/// What the drive box's answer does (`disk_answered`).
+#[derive(Debug, PartialEq)]
+enum DiskDoes {
+    Nothing,
+    /// Retry on a tree row: the row is read again (the tree is the window's).
+    OpenRow,
+    Refresh,
+    Back,
+    /// Cancel on a tab with nothing to go back to, in a window of several tabs.
+    CloseTab,
+}
+
+/// The drive box's answer, by the tab that asked (`asked`; the tree's rows belong to the window
+/// and are answered whatever tab is in front): Retry reads again, Cancel goes back where the tab
+/// was; with nothing to go back to, a tab of several closes (as for a drive found locked). An
+/// answer for a tab now behind, or gone, does nothing (the second review's N2: the tab in front
+/// moved instead): a tab behind reads its place again when it comes forward, and the box comes
+/// again then if the drive still has no disc.
+fn disk_answer_does(retry: bool, row: bool, asked: u64, front: u64, tabs: usize, can_back: bool) -> DiskDoes {
+    match (retry, row) {
+        (true, true) => DiskDoes::OpenRow,
+        (false, true) => DiskDoes::Nothing,
+        _ if asked != front => DiskDoes::Nothing,
+        (true, false) => DiskDoes::Refresh,
+        (false, false) if can_back => DiskDoes::Back,
+        (false, false) if tabs > 1 => DiskDoes::CloseTab,
+        (false, false) => DiskDoes::Nothing,
+    }
+}
+
+/// The drive box's answer (`disk_answer_does`).
 fn disk_answered() {
-    let Some((owner, node, retry)) = DISK_ANSWER.with(|a| a.borrow_mut().take()) else { return };
+    let Some((owner, tab, node, retry)) = DISK_ANSWER.with(|a| a.borrow_mut().take()) else { return };
     if !kit::windows::<FolderHost>().contains(&owner) {
         return;
     }
-    kit::scope::<FolderHost, _>(owner, || match (retry, node) {
-        (true, Some(id)) => kit::update::<FolderHost>(|h| {
-            if let Some(i) = h.form.tree.find(&id) {
-                let page = h.form.tree_page();
-                h.form.tree.open(i, page);
-            }
-        }),
-        (true, None) => run(owner, Command::Shared(D::Refresh), false),
-        (false, None) => {
-            if kit::with::<FolderHost, _>(|h| h.history.can_back()).unwrap_or(false) {
-                navigate(owner, None, Go::Back(1));
-            }
+    kit::scope::<FolderHost, _>(owner, || {
+        let Some(does) = kit::with::<FolderHost, _>(|h| disk_answer_does(retry, node.is_some(), tab, h.tab, h.order.len(), h.history.can_back())) else {
+            return;
+        };
+        match does {
+            DiskDoes::OpenRow => kit::update::<FolderHost>(|h| {
+                if let Some(i) = node.as_ref().and_then(|id| h.form.tree.find(id)) {
+                    let page = h.form.tree_page();
+                    h.form.tree.open(i, page);
+                }
+            }),
+            DiskDoes::Refresh => run(owner, Command::Shared(D::Refresh), false),
+            DiskDoes::Back => navigate(owner, None, Go::Back(1)),
+            DiskDoes::CloseTab => close_tab(owner, tab),
+            DiskDoes::Nothing => {}
         }
-        (false, Some(_)) => {}
     });
 }
 
@@ -3789,6 +3835,10 @@ fn to_back(h: &mut FolderHost, mut form: FolderWindow) -> TabSlot {
         g.forget(h.id);
     }
     remember_view(h);
+    // A tree selection resting for its icons to follow goes: it would fire at once in the tab
+    // coming forward (the early review's D2). The tree's rows owed a reading again stay with the
+    // window, as the tree does (eread; the second review's N6: they went with the tab).
+    h.settle = None;
     TabSlot {
         tab: h.tab,
         form: std::mem::replace(&mut h.form, form),
@@ -3797,13 +3847,6 @@ fn to_back(h: &mut FolderHost, mut form: FolderWindow) -> TabSlot {
         history: std::mem::replace(&mut h.history, History::new(h.shows.place())),
         came: h.came.take(),
         entries: std::mem::take(&mut h.entries),
-        // A tree selection resting for its icons to follow is not carried behind: it would fire
-        // at once when the tab comes forward (the early review's D2).
-        settle: {
-            h.settle = None;
-            None
-        },
-        reread: std::mem::take(&mut h.reread),
         asked: h.asked.take(),
         facts: h.facts.clone(),
         session: std::mem::take(&mut h.session),
@@ -3891,9 +3934,11 @@ fn new_tab(hwnd: HWND, shows: Shows) {
         }
     }
     kit::update::<FolderHost>(|h| {
-        // Its own history begins at its place.
+        // Its own history begins at its place, and Back and Forward show it at once (the second
+        // review's Q2: Back stayed enabled, from the tab it was copied from, until the facts came).
         h.history = History::new(h.shows.place());
         h.came = None;
+        h.form.set_history_ends(h.history.can_back(), h.history.can_forward());
         show_row(h);
     });
 }
@@ -3955,8 +4000,6 @@ fn switch_tab(hwnd: HWND, tab: u64) {
         h.history = slot.history;
         h.came = slot.came;
         h.entries = slot.entries;
-        h.settle = slot.settle;
-        h.reread = slot.reread;
         h.asked = slot.asked;
         h.facts = slot.facts;
         h.session = slot.session;
@@ -4014,9 +4057,13 @@ fn close_tab(hwnd: HWND, tab: u64) {
         Some(None) => kit::close::<FolderHost>(),
         Some(Some(Some(next))) => {
             switch_tab(hwnd, next);
+            // Only if it really left the front (a switch can be refused: the second review's N3;
+            // taken out of the order while in front, it was a tab no longer in the row).
             kit::update::<FolderHost>(|h| {
-                h.order.retain(|&t| t != tab);
-                h.back.retain(|s| s.tab != tab);
+                if h.tab != tab {
+                    h.order.retain(|&t| t != tab);
+                    h.back.retain(|s| s.tab != tab);
+                }
                 show_row(h);
             });
         }
@@ -4520,6 +4567,8 @@ fn go_typed(hwnd: HWND) {
             let target = found.unwrap_or_else(|| text.trim().to_string());
             let start_in = shown.or_else(bevel_winkit::shell::profile_folder).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
             let owner = hwnd as isize;
+            // The tab that typed it: its message's OK acts only there (the second review's N2).
+            let tab = kit::with::<FolderHost, _>(|h| h.tab).unwrap_or(0);
             let hub = HUB.with(Cell::get) as isize;
             let spawned = std::thread::Builder::new().name("folder address".into()).spawn(move || {
                 bevel_winkit::com::init();
@@ -4531,7 +4580,7 @@ fn go_typed(hwnd: HWND) {
                 let r = unsafe { ShellExecuteW(null_mut(), null(), file.as_ptr(), params, folder.as_ptr(), SW_SHOWNORMAL) };
                 if r as usize <= 32 {
                     log(&format!("folders: what was typed into the address bar could not be opened (ShellExecute error {})", r as usize));
-                    ADDRESS_FAILED.lock().map(|mut f| f.push((owner, target))).ok();
+                    ADDRESS_FAILED.lock().map(|mut f| f.push((owner, tab, target))).ok();
                     // SAFETY: posting to the program's own hidden window.
                     unsafe { PostMessageW(hub as HWND, WM_ITEMS.id(), 0, 4) };
                 } else {
@@ -5764,8 +5813,6 @@ mod tests {
                 history: History::new(place.place()),
                 came: None,
                 entries: Vec::new(),
-                settle: None,
-                reread: Vec::new(),
                 asked: None,
                 facts: Facts::default(),
                 session: HashMap::new(),
@@ -5783,6 +5830,24 @@ mod tests {
         // An icon never moved: nothing to write.
         assert!(!renamed_behind(&mut slot, r"Z:\Bevel95 test\a.txt", r"Z:\Bevel95 test\new a.txt", "new a.txt"));
         SAVED.with(|s| *s.borrow_mut() = Saved::default());
+    }
+
+    /// The second review of brief 110, N2: the "no disc" box answers the tab that asked. Behind
+    /// or gone, nothing moves (it was the tab in front that went Back or was read again); Cancel
+    /// with nothing to go back to closes that tab in a window of several, and does nothing with
+    /// one tab, as before; a tree row's Retry is the window's.
+    #[test]
+    fn the_no_disc_box_answers_only_the_tab_that_asked() {
+        use super::{DiskDoes, disk_answer_does};
+        // (retry, a tree row, asked, front, tabs, can go back)
+        assert_eq!(disk_answer_does(false, false, 2, 2, 3, true), DiskDoes::Back);
+        assert_eq!(disk_answer_does(true, false, 2, 2, 3, true), DiskDoes::Refresh);
+        assert_eq!(disk_answer_does(false, false, 2, 5, 3, true), DiskDoes::Nothing, "behind: the front stays");
+        assert_eq!(disk_answer_does(true, false, 2, 5, 3, true), DiskDoes::Nothing);
+        assert_eq!(disk_answer_does(false, false, 2, 2, 3, false), DiskDoes::CloseTab);
+        assert_eq!(disk_answer_does(false, false, 2, 2, 1, false), DiskDoes::Nothing, "one tab: as before");
+        assert_eq!(disk_answer_does(true, true, 2, 5, 3, false), DiskDoes::OpenRow);
+        assert_eq!(disk_answer_does(false, true, 2, 2, 3, false), DiskDoes::Nothing);
     }
 
     /// The second review of brief 110, N5: a drag resting over another tab never brings it

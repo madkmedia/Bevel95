@@ -465,6 +465,45 @@ mod tests {
         assert!(copy.view.renaming().is_none());
     }
 
+    /// The second review's N4: the tree shown or hidden in another tab; the tab coming forward
+    /// has 2000's Folders button as the tree is (it was drawn out with the tree shown).
+    #[test]
+    fn the_folders_button_follows_the_tree_into_a_tab() {
+        use crate::folder::FolderWindow;
+        use crate::folder::explorer::Tool;
+        use crate::kit::Form;
+        let (r, b) = (font(), Font::parse(include_str!("../../tests/fixtures/ms-sans-serif-11px-bold.font")).unwrap());
+        let fonts = crate::text::Fonts { regular: &r, bold: &b };
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let mut front = FolderWindow::new(Era::Win2000, "W", icon.clone(), true, (560, 380));
+        front.layout(&fonts);
+        let mut behind = front.clone();
+        front.show_tree(true);
+        assert_eq!(front.bar.checked, vec![Tool::Folders]);
+        behind.take_window_from(&front);
+        assert!(behind.tree_shown);
+        assert_eq!(behind.bar.checked, vec![Tool::Folders], "pushed in, as the tree shows");
+        front.show_tree(false);
+        behind.take_window_from(&front);
+        assert!(!behind.tree_shown && behind.bar.checked.is_empty() && !behind.tree_focus);
+    }
+
+    /// The second review's Q2: a new tab copied from a tab that could go Back shows Back
+    /// grayed at once (its own history begins at its place).
+    #[test]
+    fn a_new_tab_starts_with_back_grayed() {
+        use crate::folder::FolderWindow;
+        use crate::folder::menus::Nav;
+        let icon = crate::fb::Icon { width: 16, height: 16, pixels: vec![0; 256] };
+        let mut w = FolderWindow::new(Era::Win98, "W", icon, true, (560, 380));
+        w.set_nav(Nav { back: true, forward: true, up: true, ..Nav::default() });
+        let mut copy = w.clone();
+        copy.set_history_ends(false, false);
+        assert_eq!(copy.history_ends(), (false, false));
+        assert!(copy.nav.up, "Up stays as the place has it");
+        assert_eq!(w.history_ends(), (true, true));
+    }
+
     #[test]
     fn the_x_on_the_tab_in_front() {
         let f = font();

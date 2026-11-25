@@ -7006,6 +7006,20 @@ buttons was drawn as a mockup only).
   stays pure; the early review's finding 2).
 - **A drive found locked** in a new tab: that tab closes; with one tab the window closes, as
   before. A new tab whose place is refused (a drive known locked) goes again at once.
+- **The "no disc" box and the address bar's message** belong to the tab that asked (the second
+  review's N2: the answer moved the tab in front). Their answer acts only on that tab while it
+  is in front: Retry reads its place again, Cancel goes Back; Cancel with nothing to go back to
+  closes that tab in a window of several (as a drive found locked does), and does nothing with
+  one tab, as before. An answer for a tab now behind, or closed, does nothing: the tab reads its
+  place again when it comes forward, and the box comes again then if the drive still has no
+  disc (`disk_answer_does`). The address message's OK selects the typed text only in the tab
+  that typed it. A tree row's Retry reads the row again whatever tab is in front (the tree is
+  the window's).
+- **What stays with the window, not the tab**: the tree and the rows it owes a reading again
+  after a file command (the second review's N6); 2000's Folders button and the icons' rows
+  follow a tree shown or hidden in another tab when a tab comes forward (N4). A new tab's Back
+  and Forward are grayed from the start (Q2). In 95's plain windows a tab's name follows the
+  title when the place's facts come (finding 5).
 - **Dragging over a tab**: a drag resting on a tab for the look's delay of opening a tree row
   brings it to the front, so the drop goes into its list; nothing is dropped on the row itself
   (the no-drop pointer). While the tab in front has a rename box open, a drag resting over
