@@ -388,7 +388,10 @@ pub fn open_start(bar: HWND, by_keyboard: bool) {
         app.menu_scroll = places;
     });
     if with_app(|app| app.xp()).unwrap_or(false) {
-        let (kind, mut menu) = xp_start_menu();
+        // The room above the Start button, in the look's pixels (the menu shortens to it: the
+        // review of brief 112, finding 3).
+        let room = with_app(|app| app.scale.old_fit(button.y - app.monitor.top)).unwrap_or(bevel_core::xp_start::HEIGHT);
+        let (kind, mut menu) = xp_start_menu(room);
         menu.show_keys = by_keyboard;
         open_root(bar, kind, menu, MenuStyle::XpStart, At::StartButton(button));
         return;
@@ -402,19 +405,25 @@ pub fn open_start(bar: HWND, by_keyboard: bool) {
 /// the pinned programs, the programs started most often through Bevel95's Start menu and Quick
 /// Search (`often::top`). The pictures: the shell's 16×16 ones doubled (PROVISIONAL: XP drew its
 /// own 32×32 ones).
-fn xp_start_menu() -> (Kind, Menu) {
+fn xp_start_menu(room: i32) -> (Kind, Menu) {
     use bevel_core::xp_start;
     let era = Era::Win2000;
+    // Quick Launch's folder as last read, whatever its band shows (under XP it never paints, and
+    // only its paint took the readings in: the review of brief 112, finding 2).
     let pinned: Vec<(String, String)> = with_app(|app| {
+        let era = app.era;
+        app.ql.refresh(era);
         app.ql.shortcuts.iter().map(|s| (bevel_core::quick_launch::shortcut_tooltip(&s.name).to_string(), s.path.display().to_string())).collect()
     })
     .unwrap_or_default();
     let often: Vec<(String, String)> = crate::often::top(6);
+    // Only those that fit get their pictures read (the review's doubt 14).
+    let (p, o, ..) = xp_start::fit(pinned.len(), often.len(), room);
+    let (pinned, often): (Vec<_>, Vec<_>) = (pinned.into_iter().take(p).collect(), often.into_iter().take(o).collect());
     let picture = |path: &str| start_menu::file_icon(era, path).map(|i| doubled(&i));
     let with_pictures = |list: &[(String, String)]| list.iter().map(|(name, path)| (name.clone(), picture(path))).collect::<Vec<_>>();
-    let menu = xp_start::menu(&start_menu::user_name(), &with_pictures(&pinned), &with_pictures(&often));
-    let (p, o) = xp_start::fitting(pinned.len(), often.len());
-    let kind = Kind::XpStart(pinned.into_iter().take(p).map(|(_, t)| t).collect(), often.into_iter().take(o).map(|(_, t)| t).collect());
+    let menu = xp_start::menu_in(&start_menu::user_name(), &with_pictures(&pinned), &with_pictures(&often), room);
+    let kind = Kind::XpStart(pinned.into_iter().map(|(_, t)| t).collect(), often.into_iter().map(|(_, t)| t).collect());
     (kind, menu)
 }
 
@@ -1026,11 +1035,15 @@ fn choose(level: usize, index: usize) {
                 }
                 None => return,
             },
-            Some(item) => {
-                close(false);
-                crate::bar::xp_start_action(item);
-                return;
-            }
+            Some(item) => match crate::bar::xp_start_place(item) {
+                // A folder or Windows' own window: as the classic entries open theirs.
+                Some(place) => Action::Open(place),
+                None => {
+                    close(false);
+                    crate::bar::xp_start_action(item);
+                    return;
+                }
+            },
             None => return,
         },
         Kind::Folder(tree, path) => {

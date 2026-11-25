@@ -79,8 +79,8 @@ const ITEM_H: i32 = 40;
 const SEP_H: i32 = 8;
 /// The list's room, down to the line over All Programs (body row 333: two pinned, their line and six used fit, as in the screenshots).
 const LEFT_ROOM: i32 = 329;
-/// All Programs: its picture 188×35 at body row 335.
-const ALL_PROGRAMS_Y: i32 = 335;
+/// All Programs: its picture 188×35 at body row 335 (the body's last 35 rows).
+const ALL_PROGRAMS_H: i32 = 35;
 /// The right column: x 191 to 372, items 32 high, icons 24×24 7 in, labels 34 in.
 const RIGHT_X: i32 = 191;
 const RIGHT_W: i32 = 182;
@@ -95,16 +95,42 @@ const TURN_OFF: Rect = Rect::new(245, BOTTOM_Y + 7, 130, 28);
 /// How many programs stand in the left column: all pinned that fit, then up to six of the most
 /// often used (brief 112), as many as fit above All Programs.
 pub fn fitting(pinned: usize, often: usize) -> (usize, usize) {
-    let p = pinned.min((LEFT_ROOM / ITEM_H) as usize);
-    let left = LEFT_ROOM - p as i32 * ITEM_H - if p > 0 { SEP_H } else { 0 };
+    fitting_in(pinned, often, LEFT_ROOM)
+}
+
+fn fitting_in(pinned: usize, often: usize, room: i32) -> (usize, usize) {
+    let p = pinned.min((room.max(0) / ITEM_H) as usize);
+    let left = room - p as i32 * ITEM_H - if p > 0 { SEP_H } else { 0 };
     let o = often.min(6).min((left.max(0) / ITEM_H) as usize);
     (p, o)
+}
+
+/// The body's rows the right column's first `r` entries need.
+fn right_needs(r: usize) -> i32 {
+    if r == 0 { 0 } else { RIGHT[r - 1].4 + 28 + 4 }
+}
+
+/// The menu for a room `max_h` rows high (the screen above the bar, in the look's pixels): as the
+/// screenshots while 478 fit; on a shorter screen the body shrinks, the often-used programs go
+/// first, then the pinned ones, then the right column's entries from its bottom; All Programs and
+/// the bottom band always stay (the review of brief 112, finding 3: the menu covered the bar and
+/// ran off the screen). Returns the counts (pinned, often, right) and the body's height.
+pub fn fit(pinned: usize, often: usize, max_h: i32) -> (usize, usize, usize, i32) {
+    let body = (max_h - (HEIGHT - BODY_H)).clamp(ALL_PROGRAMS_H + 6, BODY_H);
+    let (p, o) = fitting_in(pinned, often, LEFT_ROOM - (BODY_H - body));
+    let r = (0..=RIGHT.len()).rev().find(|&r| right_needs(r) <= body).unwrap_or(0);
+    (p, o, r, body)
 }
 
 /// The XP Start menu for the Windows user `user`, the pinned programs (names and 32×32 pictures)
 /// and the most often used ones.
 pub fn menu(user: &str, pinned: &[(String, Option<Icon>)], often: &[(String, Option<Icon>)]) -> Menu {
-    let (p, o) = fitting(pinned.len(), often.len());
+    menu_in(user, pinned, often, HEIGHT)
+}
+
+/// `menu` for a room `max_h` rows high (`fit`).
+pub fn menu_in(user: &str, pinned: &[(String, Option<Icon>)], often: &[(String, Option<Icon>)], max_h: i32) -> Menu {
+    let (p, o, r, body) = fit(pinned.len(), often.len(), max_h);
     let mut entries: Vec<MenuEntry> = Vec::new();
     for (name, icon) in &pinned[..p] {
         let mut e = MenuEntry::item(name, icon.clone());
@@ -119,7 +145,7 @@ pub fn menu(user: &str, pinned: &[(String, Option<Icon>)], often: &[(String, Opt
     let mut all = MenuEntry::submenu("All &Programs", None);
     all.bold = true;
     entries.push(all);
-    for (k, &(which, label, bold, ..)) in RIGHT.iter().enumerate() {
+    for (k, &(which, label, bold, ..)) in RIGHT.iter().enumerate().take(r) {
         if k == 5 || k == 7 {
             entries.push(MenuEntry::separator());
         }
@@ -129,7 +155,26 @@ pub fn menu(user: &str, pinned: &[(String, Option<Icon>)], often: &[(String, Opt
     }
     entries.push(MenuEntry::item("&Log Off", None));
     entries.push(MenuEntry::item("T&urn Off Computer", None));
-    Menu { entries, user: user.to_string(), ..Menu::default() }
+    let xp_fit = (body < BODY_H || r < RIGHT.len()).then_some((body, r));
+    Menu { entries, user: user.to_string(), xp_fit, ..Menu::default() }
+}
+
+/// The body's height and the right column's entries of a menu made by `menu_in`.
+fn shape(menu: &Menu) -> (i32, usize) {
+    menu.xp_fit.unwrap_or((BODY_H, RIGHT.len()))
+}
+
+/// What the entries after the often-used list's line are, in order (`None`: a separator).
+fn tail(r: usize) -> Vec<Option<Item>> {
+    let mut t = vec![Some(Item::AllPrograms)];
+    for (k, entry) in RIGHT.iter().enumerate().take(r) {
+        if k == 5 || k == 7 {
+            t.push(None);
+        }
+        t.push(Some(Item::Right(entry.0)));
+    }
+    t.extend([Some(Item::LogOff), Some(Item::TurnOff)]);
+    t
 }
 
 /// The pinned and often-used counts of a menu made by `menu` (from its first two separators).
@@ -149,17 +194,9 @@ pub fn item_at(menu: &Menu, index: usize) -> Option<Item> {
     if index > p && index <= p + o {
         return Some(Item::Often(index - p - 1));
     }
-    let tail = index.checked_sub(p + o + 2)?;
+    let k = index.checked_sub(p + o + 2)?;
     // All Programs, then the right column with its separators after its 5th and 7th, then the two.
-    match tail {
-        0 => Some(Item::AllPrograms),
-        1..=5 => Some(Item::Right(RIGHT[tail - 1].0)),
-        7..=8 => Some(Item::Right(RIGHT[tail - 2].0)),
-        10..=12 => Some(Item::Right(RIGHT[tail - 3].0)),
-        13 => Some(Item::LogOff),
-        14 => Some(Item::TurnOff),
-        _ => None,
-    }
+    tail(shape(menu).1).get(k).copied().flatten()
 }
 
 /// Where each entry goes (`MenuLayout`, one rectangle per entry: the part filled under the pointer;
@@ -180,19 +217,27 @@ pub fn layout(menu: &Menu) -> MenuLayout {
         rects.push(Rect::new(LEFT.0, y, LEFT.1, ITEM_H));
         y += ITEM_H;
     }
+    let (body, r) = shape(menu);
+    let all_y = all_programs_y(body);
     // The line over All Programs (its picture's 3 rows from body row 333, the last under All
     // Programs' picture).
-    rects.push(Rect::new(0, BODY_Y + ALL_PROGRAMS_Y - 2, 191, 2));
-    rects.push(Rect::new(LEFT.0, BODY_Y + ALL_PROGRAMS_Y, LEFT.1, 35));
-    for (k, &(.., icon_y)) in RIGHT.iter().enumerate() {
+    rects.push(Rect::new(0, BODY_Y + all_y - 2, 191, 2));
+    rects.push(Rect::new(LEFT.0, BODY_Y + all_y, LEFT.1, ALL_PROGRAMS_H));
+    for (k, &(.., icon_y)) in RIGHT.iter().enumerate().take(r) {
         if k == 5 || k == 7 {
             rects.push(Rect::new(RIGHT_X - 1, BODY_Y + icon_y - 8, 190, 3));
         }
         rects.push(Rect::new(RIGHT_X, BODY_Y + icon_y - 4, RIGHT_W, 32));
     }
-    rects.push(LOG_OFF);
-    rects.push(TURN_OFF);
-    MenuLayout { width: WIDTH, height: HEIGHT, rects, shortcut_x: 0, frame: 0, columns: vec![(0, WIDTH)], lines: Vec::new(), scroll: None }
+    let shift = body - BODY_H;
+    rects.push(Rect { y: LOG_OFF.y + shift, ..LOG_OFF });
+    rects.push(Rect { y: TURN_OFF.y + shift, ..TURN_OFF });
+    MenuLayout { width: WIDTH, height: HEIGHT + shift, rects, shortcut_x: 0, frame: 0, columns: vec![(0, WIDTH)], lines: Vec::new(), scroll: None }
+}
+
+/// All Programs' row in a body `body` high (335 in the screenshots' 370).
+fn all_programs_y(body: i32) -> i32 {
+    body - ALL_PROGRAMS_H
 }
 
 /// One picture of several side by side (all as tall as the first), for slicing.
@@ -245,17 +290,18 @@ pub fn paint(fb: &mut Framebuffer, fonts: &Fonts, menu: &Menu, layout: &MenuLayo
         font.draw(fb, 67, y, &menu.user, rgb(0xFFFFFF));
     }
     // The body: one row of the left column, its line, the right column and its shade, the frame.
+    let bottom_y = BODY_Y + shape(menu).0;
     if let Some(row) = picture("menu_body_row") {
-        for y in BODY_Y..BOTTOM_Y {
+        for y in BODY_Y..bottom_y {
             fb.draw_icon(&row, 0, y);
         }
         // Beside All Programs the frame's inner column is 738BD0 (the survey's round 2).
-        for y in BODY_Y + 341..BOTTOM_Y {
+        for y in bottom_y - 29..bottom_y {
             fb.set(1, y, rgb(0x738BD0));
         }
     }
     if let Some(bottom) = picture("menu_bottom") {
-        fb.draw_icon(&bottom, 0, BOTTOM_Y);
+        fb.draw_icon(&bottom, 0, bottom_y);
     }
     let keys = menu.show_keys;
     for (i, entry) in menu.entries.iter().enumerate() {
@@ -364,8 +410,26 @@ pub fn often_counted(text: &str, name: &str, target: &str) -> String {
         None => lines.push((1, name.to_string(), target.to_string())),
     }
     lines.sort_by_key(|l| std::cmp::Reverse(l.0));
-    lines.truncate(50);
+    // At most 50: the least used go, never the one just counted (the review of brief 112, finding
+    // 6: a new program came last among the ones at 1 and was dropped at once, for good).
+    while lines.len() > 50 {
+        match lines.iter().rposition(|(_, _, t)| !t.eq_ignore_ascii_case(target)) {
+            Some(k) => {
+                lines.remove(k);
+            }
+            None => break,
+        }
+    }
     lines.iter().map(|(n, name, target)| format!("{n}\t{name}\t{target}\n")).collect()
+}
+
+/// Whether `target` is a program for the often-used list (a shortcut, a program file, an app of
+/// Windows' own list): never a document or a folder that Quick Search also lists (the review of
+/// brief 112, finding 7).
+pub fn often_counts(target: &str) -> bool {
+    let lower = target.to_ascii_lowercase();
+    target.starts_with(crate::programs::APP_PREFIX)
+        || [".lnk", ".exe", ".appref-ms", ".url", ".com", ".bat", ".cmd"].iter().any(|e| lower.ends_with(e))
 }
 
 /// The `n` programs started most often (name, target), the most first; equal counts in the file's
@@ -395,6 +459,19 @@ mod tests {
         assert_eq!(text.lines().count(), 3);
         assert_eq!(often_top("x\tbroken\n2\tNotes\tC:\\n.lnk\n", 6), [("Notes".into(), "C:\\n.lnk".into())]);
         assert!(often_top("", 6).is_empty(), "it starts empty");
+        // Finding 6: past 50, a new program still comes in (the least used other goes).
+        let mut text = String::new();
+        for i in 0..50 {
+            text = often_counted(&text, &format!("P{i}"), &format!("C:\\p{i}.lnk"));
+        }
+        text = often_counted(&text, "New", "C:\\new.lnk");
+        assert_eq!(text.lines().count(), 50);
+        assert!(text.contains("C:\\new.lnk"), "the one just counted stays");
+        text = often_counted(&text, "New", "C:\\new.lnk");
+        assert_eq!(often_top(&text, 1), [("New".into(), "C:\\new.lnk".into())], "and climbs");
+        // Finding 7: programs only.
+        assert!(often_counts("C:\\Users\\x\\Start Menu\\Notes.lnk") && often_counts("C:\\Tools\\tool.EXE"));
+        assert!(!often_counts("C:\\Users\\x\\Documents\\letter.docx") && !often_counts("C:\\Users\\x\\Pictures"));
     }
 
     fn names(n: usize) -> Vec<(String, Option<Icon>)> {
@@ -430,6 +507,42 @@ mod tests {
         assert_eq!(item_at(&m, 16), Some(Item::TurnOff));
         let l = layout(&m);
         assert_eq!((l.rects[0].w, l.rects[1].w), (0, 191), "the empty list's line is not drawn; the one over All Programs is");
+    }
+
+    /// The review of brief 112, finding 3: on a short screen the menu shortens to its room (never
+    /// over the bar, never off the screen): the often-used programs go first, then the pinned
+    /// ones, then the right column's entries from its bottom; All Programs and the bottom band
+    /// stay; every entry still lies inside the menu and is found by its place.
+    #[test]
+    fn the_menu_shortens_to_a_short_screen() {
+        use crate::paint::MenuStyle;
+        assert_eq!(fit(2, 6, 478), (2, 6, 10, 370), "room enough: as the screenshots");
+        assert_eq!(fit(2, 6, 900), (2, 6, 10, 370));
+        let mut last = (usize::MAX, usize::MAX, usize::MAX);
+        for room in [478, 460, 420, 384, 354, 300, 250, 200, 150, 100] {
+            let m = menu_in("User", &names(2), &names(6), room);
+            let l = layout(&m);
+            assert!(l.height <= room.max(HEIGHT - BODY_H + ALL_PROGRAMS_H + 6), "{room}: {}", l.height);
+            let (p, o, r, _) = fit(2, 6, room);
+            // Dropped in the order asked: often first, then pinned, then the right column.
+            assert!(o <= last.1 && p <= last.0 && r <= last.2, "{room}");
+            if p < 2 {
+                assert_eq!(o, 0, "{room}: the pinned go only after every often-used one");
+            }
+            last = (p, o, r);
+            let kinds: Vec<Item> = (0..m.entries.len()).filter_map(|i| item_at(&m, i)).collect();
+            assert!(kinds.contains(&Item::AllPrograms) && kinds.contains(&Item::LogOff) && kinds.contains(&Item::TurnOff), "{room}");
+            assert_eq!(kinds.iter().filter(|k| matches!(k, Item::Right(_))).count(), r);
+            for i in (0..m.entries.len()).filter(|&i| m.selectable(i, MenuStyle::XpStart)) {
+                let rect = l.rects[i];
+                assert!(rect.bottom() <= l.height, "{room}: entry {i} inside");
+                assert_eq!(l.hit(&m, MenuStyle::XpStart, rect.x + 5, rect.y + 5), Some(i), "{room}: entry {i}");
+            }
+        }
+        // 1366×768 at Size 2: 384 rows less the bar's 30.
+        let (p, o, r, body) = fit(2, 6, 354);
+        assert_eq!(body, 354 - 108);
+        assert!(r < 10 || o < 6 || p < 2);
     }
 
     /// The keys: the menu machinery's arrows go through the entries that can be highlighted, in

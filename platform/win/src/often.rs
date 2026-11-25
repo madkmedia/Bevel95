@@ -14,7 +14,8 @@ fn path() -> std::path::PathBuf {
 /// Program `target` (shown as `name`) was started once more. Counted only under XP's bar style:
 /// a classic look writes no new file and behaves as before.
 pub fn count(name: &str, target: &str) {
-    if name.is_empty() || target.is_empty() || !crate::bar::with_app(|app| app.xp()).unwrap_or(false) {
+    // Programs only, never a document or folder (the review of brief 112, finding 7).
+    if name.is_empty() || !bevel_core::xp_start::often_counts(target) || !crate::bar::with_app(|app| app.xp()).unwrap_or(false) {
         return;
     }
     if let Err(e) = bevel_winkit::state_file::change(&path(), "", |text| often_counted(text, name, target))

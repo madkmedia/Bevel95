@@ -1831,24 +1831,39 @@ fn arm_leave(bar: HWND) {
 /// Computer open the 2000 look's Log Off and Shut Down windows (PROVISIONAL).
 pub fn xp_start_action(item: bevel_core::xp_start::Item) {
     use bevel_core::xp_start::{Item, Right};
+    if let Some(place) = xp_start_place(item) {
+        window_list::launch(&place);
+        return;
+    }
     match item {
-        Item::Right(Right::MyDocuments) => match start_menu::documents_folder() {
-            Some(dir) => window_list::launch(&dir.display().to_string()),
-            None => window_list::launch("shell:Personal"),
-        },
-        Item::Right(Right::MyPictures) => window_list::launch("shell:My Pictures"),
-        Item::Right(Right::MyMusic) => window_list::launch("shell:My Music"),
-        Item::Right(Right::MyComputer) => window_list::launch("shell:MyComputerFolder"),
-        Item::Right(Right::ControlPanel) => window_list::launch("shell:ControlPanelFolder"),
-        Item::Right(Right::Printers) => window_list::launch("shell:PrintersFolder"),
-        Item::Right(Right::Help) => window_list::launch("https://support.microsoft.com/windows"),
         Item::Right(Right::Search) => open_find(),
         Item::Right(Right::Run) => dialogs::open(DialogKind::Run),
         Item::LogOff => dialogs::open(DialogKind::LogOff),
         Item::TurnOff => dialogs::open(DialogKind::ShutDown),
-        // Cascades and programs: opened or started by the menu itself.
-        Item::Right(Right::MyRecentDocuments) | Item::AllPrograms | Item::Pinned(_) | Item::Often(_) => {}
+        // Places (`xp_start_place`), cascades and programs: opened or started by the menu itself.
+        _ => {}
     }
+}
+
+/// The place an entry of XP's Start menu opens (a folder, Windows' own window, the Help page):
+/// started by the menu as the classic entries' folders are, while its vanished window still
+/// holds the focus, so the new window may come to the front (the review of brief 112,
+/// finding 8). `None`: a dialog, Quick Search, a cascade or a program.
+pub fn xp_start_place(item: bevel_core::xp_start::Item) -> Option<String> {
+    use bevel_core::xp_start::{Item, Right};
+    Some(match item {
+        Item::Right(Right::MyDocuments) => match start_menu::documents_folder() {
+            Some(dir) => dir.display().to_string(),
+            None => "shell:Personal".into(),
+        },
+        Item::Right(Right::MyPictures) => "shell:My Pictures".into(),
+        Item::Right(Right::MyMusic) => "shell:My Music".into(),
+        Item::Right(Right::MyComputer) => "shell:MyComputerFolder".into(),
+        Item::Right(Right::ControlPanel) => "shell:ControlPanelFolder".into(),
+        Item::Right(Right::Printers) => "shell:PrintersFolder".into(),
+        Item::Right(Right::Help) => "https://support.microsoft.com/windows".into(),
+        _ => return None,
+    })
 }
 
 /// Carries out a Start menu entry that has no submenu.

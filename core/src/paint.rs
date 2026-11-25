@@ -571,6 +571,9 @@ pub struct Menu {
     /// Windows XP's Start menu (`MenuStyle::XpStart`, brief 112): the Windows user's name in its
     /// band.
     pub user: String,
+    /// Windows XP's Start menu shortened for a short screen (`xp_start::fit`): its body's height
+    /// and how many right-column entries it keeps; `None`: as the screenshots.
+    pub xp_fit: Option<(i32, usize)>,
 }
 
 /// Runs `f` with the fonts `menu` is drawn with: Explorer's bold for an Explorer menu.
@@ -1032,6 +1035,7 @@ fn paint_scrolled(fb: &mut Framebuffer, theme: &Theme, fonts: &Fonts, menu: &Men
         explorer_bold: menu.explorer_bold,
         width_labels: Vec::new(),
         user: String::new(),
+        xp_fit: None,
     };
     let part_layout = MenuLayout {
         rects: showing.iter().filter_map(|&i| layout.rects.get(i)).map(|r| Rect::new(r.x, r.y - scroll.offset, r.w, r.h)).collect(),
